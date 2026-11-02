@@ -84,9 +84,8 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
         for name, c in counts.items():
             if c > 0:
                 penalties.append(gs["weight"] * c * heavy(name))
-        for name in capable:
-            if counts.get(name, 0) == 0:
-                m.add(heavy(name) <= before[name] + gs["max_increase"])   # ④
+        for name in capable:  # ④ 引き受けた人どうしで移す時も、増える人は1人 max_increase 回まで（Astra の指摘6）
+            m.add(heavy(name) <= before[name] + gs["max_increase"])
         hi = m.new_int_var(0, len(days), "giveback_hi")
         lo = m.new_int_var(0, len(days), "giveback_lo")
         hs = []
@@ -111,7 +110,7 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
         "1_total_same": sum(after.values()) == sum(before.values()),
         "2_no_hard_broken": _hard_broken(give) == 0,
         "3_spread": (max(after[n] for n in capable) - min(after[n] for n in capable)) <= spread0 + gs["spread_slack"],
-        "4_increase": all(after[n] - before[n] <= gs["max_increase"] for n in receivers),
+        "4_increase": all(after[n] - before[n] <= gs["max_increase"] for n in capable),
         "5_wish_not_more": _wish_broken(give) <= _wish_broken(base),
         "returned": sum(after.get(n, 0) for n in counts) < sum(before.get(n, 0) for n in counts),
     }

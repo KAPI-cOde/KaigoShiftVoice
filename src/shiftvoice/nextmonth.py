@@ -26,6 +26,9 @@ def copy_next_month(store: Store, year: int, month: int, *, overwrite: bool = Fa
     try:
         existing = store.month(ny, nm)
         if not overwrite:
+            if existing.table is None:  # まだ作っていない翌月は、前の月の末5日をいまの表から取り直す（Astra の指摘8）
+                existing.prev_tail = {name: list(row[-TAIL:]) for name, row in cur.table.items()}
+                store.save_month(existing)
             return existing
     except FileNotFoundError:
         pass

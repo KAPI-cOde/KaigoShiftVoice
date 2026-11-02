@@ -341,6 +341,18 @@ function renderReply(r) {
     box.appendChild(ob);
     return;
   }
+  if (r.kind === "fix_offer") {  // 配った後のほかの直し。［これで直す］まで表は変えない
+    box.appendChild(el("div", "offer", r.message || ""));
+    var fb = el("div", "btns");
+    [["これで直す", "accept", "primary"], ["やめる", "cancel", ""]].forEach(function (p) {
+      var b = el("button", p[2], p[0]);
+      b.type = "button";
+      b.addEventListener("click", function () { sendOffer(p[1], r.uid); });
+      fb.appendChild(b);
+    });
+    box.appendChild(fb);
+    return;
+  }
   if (r.kind === "applied") {
     if (r.summary) {
       var sm = el("div", "summary", r.summary);
@@ -429,7 +441,7 @@ function handle(res, isUndo) {
     shown[k] = c.before;
   });
   S = res.state;
-  offerR = r && r.kind === "standby_offer" ? r : null;
+  offerR = r && (r.kind === "standby_offer" || r.kind === "fix_offer") ? r : null;
   if (offerR) (r.changes || []).forEach(function (c) { glowCells[c.staff + "|" + c.day] = true; });
   ask = r && r.kind === "ask_period" ? r : null;
   if (r && r.kind === "applied") {
@@ -831,9 +843,11 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
     var pr = function (n) { return rest[n] ? n + "さん " + rest[n][0] + "日 → " + rest[n][1] + "日" : ""; };
     saidList.push(of.text);
     renderSaid();
-    offerR = { kind: "standby_offer", uid: of.id, changes: o.changes || [],
+    offerR = o.duty ? { kind: "standby_offer", uid: of.id, changes: o.changes || [],
                message: "その日の待機の" + o.duty + "さんに頼む案です（" + (o.changes || []).length + "マス）",
-               summary: "公休　" + pr(o.requester) + "　" + pr(o.duty) };
+               summary: "公休　" + pr(o.requester) + "　" + pr(o.duty) }
+             : { kind: "fix_offer", uid: of.id, changes: o.changes || [],
+                 message: (o.summary || "") + "。" + (o.changes || []).length + "マス動きます" };
     (offerR.changes).forEach(function (c) { glowCells[c.staff + "|" + c.day] = true; });
     renderTable();
     renderReply(offerR);

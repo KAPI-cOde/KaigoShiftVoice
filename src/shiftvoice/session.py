@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import calendar
+import json
 import datetime as dt
 from dataclasses import dataclass, field
 
@@ -84,7 +85,10 @@ class Session:
                 m.table, m.built_rev = rr.table, led.rev
                 self.store.save_month(m)
         for u in pend:
-            if u["id"] in applied:
+            if u["id"] in applied and u.get("status") == "offer":
+                # 案を当てる途中で止まった。記録と表を案どおりにそろえる（何度呼んでも同じ）
+                self._commit_offer(u, self.store.ledger(), self.store.month(self.year, self.month))
+            elif u["id"] in applied:
                 self.store.resolve_pending(self.year, self.month, u["id"])
         return self.state()
 
@@ -143,8 +147,7 @@ class Session:
             return Reply("ask", u["id"], str(e))
         if m.distributed and p.kind == "cells":
             offer = self._standby_offer(u, p, m)
-            if offer is not None:
-                return offer
+            return offer if offer is not None else self._fix_offer(u, p, m)
         scope = u.get("scope") or p.scope
         if scope is None:
             self.store.update_pending(self.year, self.month, u["id"], status="ask_period")
@@ -297,7 +300,9 @@ class Session:
         helper = r["duty"]
         offer = {"requester": name, "day": day, "duty": helper, "table": r["table"], "changes": r["changes"],
                  "rest": r["rest"], "rest_adjust": r["rest_adjust"], "support": r["support"],
-                 "layer": layer["def"]["id"]}
+                 "layer": layer["def"]["id"], "base_rev": self.store.ledger().rev, "base_table": json.dumps(m.table),
+                 "rules": [{"name": f"{name}さん {day}日 休み", "kind": "cell", "flex": "wish",
+                            "params": {"in": ["公"]}, "who": [name], "when": [day]}], "scope": "once"}
         self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
         n = self._accepted(helper)
         rb, ra = r["rest"][helper]
@@ -309,39 +314,83 @@ class Session:
                      extra={"duty": helper, "requester": name, "day": day, "accepted": [n, n + 1]})
 
     def accept(self, uid: str) -> Reply:
-        """［了承をもらって直す］。ここでだけ引き受けの記録が増える（17章 A23 の13）。"""
+        """［了承をもらって直す］（待機の人に頼む案）と［これで直す］（配った後のほかの直し）。
+        待機の案の時だけ引き受けの記録が増える（17章 A23 の13）。案を作った後に表か帳面が変わっていたら、
+        古い案で上書きせずに作り直す（Astra 2026-11-02 の指摘1）。"""
         u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
         if u is None or u.get("status") != "offer":
             return Reply("error", uid, "了承をもらう案が見つかりません")
         o = u["offer"]
         m = self.store.month(self.year, self.month)
         led = self.store.ledger()
-        at = self.now().isoformat(timespec="seconds")
-        start, end = self._span()
-        if not any(t.get("op_id") == uid for t in led.txs):
-            n = max([int(r[1:]) for r in led.rules_at() if r[1:].isdigit()] + [100]) + 1
-            rd = {"id": f"r{n}", "name": f"{o['requester']}さん {o['day']}日 休み", "kind": "cell", "flex": "wish",
-                  "params": {"in": ["公"]}, "who": [o["requester"]], "when": [o["day"]], "scope": "once",
-                  "meta": {"said": u["text"], "who": self.who, "at": at, "reason": None, "until": end,
-                           "source": "直した（配った後）", "uid": uid, "duty": o["duty"]}}
-            led.append("add", rule=rd, op_id=uid, frm=start, until=end, meta={"said": u["text"], "at": at})
-        acc = Acceptance(id=f"a-{uid}", staff=o["duty"], date=f"{self.ym}-{o['day']:02d}", layer=o["layer"],
-                         op_id=uid, tx_rev=led.rev, note=f"{o['requester']}さんの休みの穴埋め")
-        before_n = self._accepted(o["duty"])
-        self.store.save_ledger(led)                                  # 1 帳面
-        m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": u["text"],
-                          "rest_adjust": m.rest_adjust, "support": m.support, "acceptance_id": acc.id})
-        m.table, m.built_rev = o["table"], led.rev
-        m.rest_adjust, m.support = o["rest_adjust"], o["support"]
-        self.store.save_month(m)                                     # 2 月の表
-        items = [a for a in self.store.acceptances() if a.id != acc.id] + [acc]
-        self.store.save_acceptances(items)                           # 3 引き受けの記録
-        self.store.resolve_pending(self.year, self.month, uid)       # 4 未反映の発言
+        if (led.rev != o.get("base_rev") or json.dumps(m.table) != o.get("base_table")) \
+                and not any(t.get("op_id") == uid for t in led.txs):
+            self.store.update_pending(self.year, self.month, uid, status="read")
+            r = self._propose({**u, "status": "read"})
+            r.message = "表が変わったので、案を作り直しました。" + r.message
+            return r
+        before_n = self._accepted(o["duty"]) if o.get("duty") else 0
+        self._commit_offer(u, led, m)
+        if not o.get("duty"):
+            return Reply("applied", uid, "直しました", changes=o["changes"], summary=o.get("summary", ""))
         after_n = self._accepted(o["duty"])
         return Reply("applied", uid, f"{o['duty']}さんの了承をもらって直しました", changes=o["changes"],
                      summary=f"{self.month}月の引き受け {before_n}回 → {after_n}回",
                      extra={"duty": o["duty"], "accepted": [before_n, after_n],
                             "note": "引き受け＝了承をもらって表を直した回数"})
+
+    def _commit_offer(self, u: dict, led, m) -> None:
+        """案を当てる。何度呼んでも同じ結果（保存の途中で止まった後の立て直しにも使う）。
+        保存の順は 帳面 → 引き受けの記録 → 月の表 → 未反映の発言（記録が表より先。Astra の指摘3）。"""
+        uid, o = u["id"], u["offer"]
+        at = self.now().isoformat(timespec="seconds")
+        start, end = self._span()
+        if not any(t.get("op_id") == uid for t in led.txs):
+            n = max([int(r[1:]) for r in led.rules_at() if r[1:].isdigit()] + [100]) + 1
+            for rd in o["rules"]:
+                rd = {**rd, "id": f"r{n}", "scope": o.get("scope", "once"),
+                      "meta": {**rd.get("meta", {}), "said": u["text"], "who": self.who, "at": at, "reason": None,
+                               "until": end, "source": "直した（配った後）", "uid": uid, "duty": o.get("duty")}}
+                n += 1
+                until = end if rd["scope"] == "once" else None
+                led.append("add", rule=rd, op_id=uid, frm=start, until=until, meta={"said": u["text"], "at": at})
+            self.store.save_ledger(led)                                  # 1 帳面
+        acc_id = None
+        if o.get("duty"):
+            acc = Acceptance(id=f"a-{uid}", staff=o["duty"], date=f"{self.ym}-{o['day']:02d}", layer=o["layer"],
+                             op_id=uid, tx_rev=led.rev, note=f"{o['requester']}さんの休みの穴埋め")
+            acc_id = acc.id
+            items = self.store.acceptances()
+            if not any(a.id == acc.id for a in items):
+                self.store.save_acceptances(items + [acc])               # 2 引き受けの記録
+        if not any(h.get("op_id") == uid for h in m.history):
+            m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": u["text"],
+                              "rest_adjust": m.rest_adjust, "support": m.support, "acceptance_id": acc_id})
+            m.table, m.built_rev = o["table"], led.rev
+            m.rest_adjust, m.support = o.get("rest_adjust", m.rest_adjust), o.get("support", m.support)
+            self.store.save_month(m)                                     # 3 月の表
+        self.store.resolve_pending(self.year, self.month, uid)           # 4 未反映の発言
+
+    def _fix_offer(self, u: dict, p, m) -> Reply:
+        """配った後のほかの直し（待機の案にならない頼み）。表は［これで直す］を押すまで変えない（画面3。Astra の指摘2）。"""
+        led = Ledger.from_list(self.store.ledger().to_list())
+        start, end = self._span()
+        added = []
+        for i, rd in enumerate(p.rules):
+            rd = {**rd, "id": f"t-fix{i}", "scope": "once"}
+            added.append(Rule.from_dict(led.append("add", rule=rd, frm=start, until=end)["rule"]))
+        rules = [clip_to_month(r, start, end) for r in led.rules_at(between=self._span()).values()]
+        fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
+        rr = resolve(fac, staff, rules, m, m.table, [r for r in rules if r.id.startswith("t-fix")])
+        if not rr.ok:
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("failed_solve", u["id"], rr.staged.message or "直せませんでした")
+        offer = {"rules": p.rules, "scope": "once", "table": rr.table, "changes": rr.changes,
+                 "summary": p.summary, "base_rev": self.store.ledger().rev, "base_table": json.dumps(m.table)}
+        self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
+        who = sorted({c["staff"] for c in rr.changes})
+        return Reply("fix_offer", u["id"], f"{p.summary}。{len(rr.changes)}マス動きます（{'・'.join(who)}さん）",
+                     changes=rr.changes, seconds=rr.seconds, summary=p.summary)
 
     def refuse(self, uid: str) -> Reply:
         """［断られた］。表も引き受けの記録も変えず、案Eの聞き返しへ。"""

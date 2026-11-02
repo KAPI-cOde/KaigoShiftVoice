@@ -99,7 +99,8 @@ class NextFlow:
         })
         self._pair = gb
         m = self.store.month(self.ny, self.nm)
-        m.layers["_plans"] = {"base": gb.base.table, "give": gb.give.table}
+        m.layers["_plans"] = {"base": gb.base.table, "give": gb.give.table, "rev": self.store.ledger().rev,
+                              "tail": m.prev_tail}
         self.store.save_month(m)
         return out
 
@@ -107,8 +108,12 @@ class NextFlow:
         """［12月はこれで作る］。選んだ案を12月の表にする（施設が決める）。"""
         m = self.store.month(self.ny, self.nm)
         plans = m.layers.get("_plans")
-        if not plans or plan not in plans:
+        if not plans or plan not in ("base", "give"):
             return {"error": "先に2つの案を作ってください"}
+        cur = self.store.month(self.year, self.month).table
+        if plans.get("rev") != self.store.ledger().rev or plans.get("tail") != {n: r[-5:] for n, r in cur.items()}:
+            # 案を作った後にルールか前の月の末が変わった。古い案は採らない（Astra の指摘7）
+            return {"error": "案を作った後にルールか11月の表が変わりました。もう一度［12月の表を作る］を押してください"}
         m.table = plans[plan]
         m.built_rev = self.store.ledger().rev
         m.layers["_adopted"] = plan

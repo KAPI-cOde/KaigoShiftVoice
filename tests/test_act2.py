@@ -85,3 +85,53 @@ def test_d7_already_off_via_words(act2):
     act2.distribute()
     r = act2.say("小島さん、1日休みで")
     assert r.kind == "ask" and r.message == "もう休みです"
+
+
+def test_astra1_stale_offer_is_rebuilt(act2):
+    """古い待機の案を了承しても、その後の直しを上書きしない（作り直す）。"""
+    act2.say(STANDBY)
+    act2.distribute()
+    r = act2.say(CALL)
+    x = act2.say("石田さん、木曜は早番にしないで。毎月")   # 案の後に別の直しが入った
+    assert x.kind == "applied"
+    after_other = act2.store.month(2026, 11).table
+    a = act2.accept(r.uid)
+    assert a.kind == "standby_offer" and "作り直しました" in a.message, a.message
+    assert act2.accept(a.uid).kind == "applied"
+    t = act2.store.month(2026, 11).table
+    assert all(t["石田"][d - 1] != "早" for d in (5, 12, 19, 26))   # 後の直しが消えていない（木曜）
+    assert t["青木"][0] == "公"
+    assert {n for n in t if t[n] != after_other[n]} <= {"青木", "小島"}
+
+
+def test_astra2_multi_day_after_distribution_needs_ok(act2):
+    """配った後の複数日の休みは、［これで直す］まで表を変えない。"""
+    act2.say(STANDBY)
+    act2.distribute()
+    t0 = json.dumps(act2.store.month(2026, 11).table)
+    r = act2.say("篠原さん、20日は遅番で")   # 20日は金曜（待機の日ではない）
+    assert r.kind == "fix_offer"
+    assert json.dumps(act2.store.month(2026, 11).table) == t0     # ［これで直す］の前は変えない
+    assert act2.accept(r.uid).kind == "applied"
+    assert act2.store.month(2026, 11).table["篠原"][19] == "遅"
+
+
+def test_astra3_crash_before_record_recovers(act2, monkeypatch):
+    """了承の途中（帳面の後）で止まっても、開き直すと記録と表がそろう。"""
+    act2.say(STANDBY)
+    act2.distribute()
+    r = act2.say(CALL)
+    st = act2.store
+    orig = st.save_acceptances
+    monkeypatch.setattr(st, "save_acceptances", lambda items: (_ for _ in ()).throw(OSError("止まった")))
+    with pytest.raises(OSError):
+        act2.accept(r.uid)
+    monkeypatch.setattr(st, "save_acceptances", orig)
+    from shiftvoice.reader import RecordedReader
+    from shiftvoice.session import Session
+    from shiftvoice.store import Store
+    s2 = Session(Store(st.root), 2026, 11, RecordedReader({}), now=act2.now)
+    s2.open()
+    assert [a.staff for a in s2.store.acceptances() if a.op_id == r.uid] == ["小島"]
+    assert s2.store.month(2026, 11).table["小島"][0] == "日"
+    assert s2.store.pending(2026, 11) == []

@@ -35,3 +35,14 @@ def test_act3_flow(act2):
     assert k["after"] <= k["before"]
     assert fl.adopt("give")["ok"]
     assert st.month(2026, 12).table == b["tables"]["give"]
+
+
+def test_astra7_stale_plan_rejected(act2):
+    act2.say(STANDBY)
+    fl = NextFlow(act2.store, 2026, 11)
+    v = fl.review()
+    for c in v["cards"]:
+        fl.answer(c["rule_id"], "archive" if c["reason"] == "expired" else "keep")
+    assert fl.build()["status"] == "ok"
+    fl.undo(v["cards"][1]["rule_id"])      # 案を作った後にルールが変わった
+    assert "error" in fl.adopt("give")
