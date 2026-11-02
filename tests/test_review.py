@@ -80,3 +80,19 @@ def test_m11_undo_one_keeps_others(nov_done):
     undo_answer(sess.store, 2026, 12, late)
     a = answers_for(sess.store.ledger(), 2026, 12)
     assert list(a) == [kojima] and a[kojima]["answer"] == "archive"
+
+
+def test_m2_keep_then_not_again(nov_done):
+    """M2 先月増えた札は「今月も使いますか」で出て、おすすめは付かない。［今月も使う］で札はそのまま残り、
+    次の月（1月）には「先月増えた」で出ない。"""
+    from shiftvoice.nextflow import card_lines
+    sess, late, kojima = nov_done
+    v = review_cards(sess.store.ledger(), 2026, 12)
+    c = next(c for c in v["cards"] if c.rule_id == late)
+    lines = card_lines(c, 12, 11)
+    assert lines["lines"] == ["今月も使いますか"] and not any("おすすめ" in b[1] for b in lines["buttons"])
+    answer(sess.store, 2026, 12, late, "keep")
+    led = sess.store.ledger()
+    assert late in led.rules_at(between=("2026-12-01", "2026-12-31"))
+    jan = review_cards(led, 2027, 1)
+    assert late not in [x.rule_id for x in jan["cards"]]

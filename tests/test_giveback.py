@@ -37,7 +37,7 @@ def test_b1_both_plans_same_conditions(pair):
           "返す", {n: gb.after.get(n) for n in ("小島", "田村", "菊池")},
           "増", gb.increased, "減", gb.decreased, f"{gb.give.seconds:.1f}秒")
     assert gb.status == "ok", (gb.message, gb.checks)
-    assert all(gb.checks.values()), gb.checks
+    assert all(gb.checks.values()), gb.checks   # B2 違反0・合格基準①〜④、B7 本人の希望の外れが増えない（⑤）
     three = ("小島", "田村", "菊池")
     assert sum(gb.after[n] for n in three) < sum(gb.before[n] for n in three)
     # 増えた回数と減った回数が合う（B3）
