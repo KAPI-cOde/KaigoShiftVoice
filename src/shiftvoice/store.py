@@ -17,6 +17,8 @@ from pathlib import Path
 from .ledger import Ledger
 from .model import Acceptance, Facility, Month, Staff
 
+SEED = Path(__file__).resolve().parents[2] / "data" / "hidamari"
+
 
 def atomic_write_json(path: Path, obj) -> None:
     path = Path(path)
@@ -130,6 +132,11 @@ class Store:
 
     def save_acceptances(self, items: list[Acceptance]) -> None:
         atomic_write_json(self.root / "acceptances.json", [a.to_dict() for a in items])
+
+    # 待機が無い時の穴埋めの試算（tools/absence_sim.py が作る。前から使っている置き場には無いので、初めのデータも見る）
+    def absence_sim(self, year: int, month: int) -> dict | None:
+        name = f"absence-sim-{year:04d}-{month:02d}.json"
+        return read_json(self.root / name) or read_json(SEED / name)
 
     # 撮影・試験用の前提
     def premise(self, year: int, month: int) -> dict | None:

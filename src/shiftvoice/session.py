@@ -553,4 +553,5 @@ class Session:
                                         self.base_date or self.now().date().isoformat()),
             "last_said": m.history[-1]["said"] if m.history else None,
             "symbols": [{"symbol": st.symbol, "name": st.name} for st in fac.shift_types],
+            "absence_sim": self.store.absence_sim(self.year, self.month),
         }

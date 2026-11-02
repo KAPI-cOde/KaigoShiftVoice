@@ -60,6 +60,7 @@
   .grid tr.standby td.cell { overflow: hidden; white-space: nowrap; }
   .grid .acc { font-size: 10px; margin-left: 4px; font-weight: 700; }
   .card .explain { border: 0; }
+  .card .sim .note { font-size: 10px; color: #555; }
   .card .explain div.box { border: 1px solid #000; border-radius: 3px; padding: 1px 6px; margin: 2px 0; display: inline-block; }
   .reply .offer { font-weight: 700; margin-bottom: 2px; }
   .reply .offer2 { margin-bottom: 6px; }
@@ -316,6 +317,14 @@ function renderCards() {
         });
         ex.appendChild(el("div", "", "待機でない人は、穴埋めの電話なし"));  // D6（待機だけで埋められる時の説明。埋められない時は案E）
         b.appendChild(ex);
+        var sim = S && S.absence_sim;
+        if (sim && sim.top2 && sim.top2.length === 2) {  // 画面5の2行（台本 v3 の1分10秒）。矢印でつながない
+          var sm = el("div", "detail sim");
+          sm.appendChild(el("div", "", "架空の表の累計の試算　" + sim.top2.map(function (t) { return t.name + "さん" + t.count + "回"; }).join("・")));
+          sm.appendChild(el("div", "note", "待機が無い時に穴埋めに入った回数。11月の土日の急な休み" + sim.cases + "件を1件ずつ試算"));
+          sm.appendChild(el("div", "", "欠勤1件の最初の連絡先は当番1人"));
+          b.appendChild(sm);
+        }
       }
     }
     b.addEventListener("click", function () {
