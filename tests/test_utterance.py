@@ -76,7 +76,7 @@ def test_l1_l7_kojima_until_29(sess):
     card = next(c for c in sess.state()["cards"] if c["id"] in r.rule_ids)
     meta = card["meta"]
     assert meta["said"] == text and meta["who"] == "作成者" and meta["at"].startswith("2026-10-28")
-    assert "試験" in meta["reason"] and meta["until"] == "2026-11-29"   # 台本は「ルールに『試験』が残る」。言い方は本物の返事でぶれる
+    assert meta["reason"] == "29日に試験" and meta["until"] == "2026-11-29"
     assert card["scope"] == "rule" and card["flex"] == "operational"
     assert card["when"] == list(range(1, 30))
     row = sess.store.month(2026, 11).table["小島"]
