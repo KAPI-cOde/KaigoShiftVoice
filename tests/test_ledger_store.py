@@ -57,7 +57,8 @@ def test_atomic_write_keeps_old_on_failure(tmp_path):
 
 def test_acceptance_record_links_op(tmp_path, store):
     s = Store.from_seed(store.root, tmp_path / "rt")
-    assert s.acceptances() == []
+    seed = s.acceptances()
+    assert {a.staff for a in seed} == {"田村", "菊池"}   # B0 用意した記録（田村さん2回・菊池さん1回）
     s.save_acceptances([Acceptance(id="a1", staff="小島", date="2026-11-01", layer="standby", op_id="op-1", tx_rev=13)])
     a = s.acceptances()[0]
     assert (a.staff, a.op_id, a.tx_rev) == ("小島", "op-1", 13)

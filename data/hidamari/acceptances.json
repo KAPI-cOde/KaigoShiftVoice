@@ -1,1 +1,29 @@
-[]
+[
+ {
+  "id": "a-prep-1",
+  "staff": "田村",
+  "date": "2026-11-08",
+  "layer": "standby",
+  "op_id": "prepared",
+  "tx_rev": null,
+  "note": "用意した記録（作り話）"
+ },
+ {
+  "id": "a-prep-2",
+  "staff": "田村",
+  "date": "2026-11-22",
+  "layer": "standby",
+  "op_id": "prepared",
+  "tx_rev": null,
+  "note": "用意した記録（作り話）"
+ },
+ {
+  "id": "a-prep-3",
+  "staff": "菊池",
+  "date": "2026-11-15",
+  "layer": "standby",
+  "op_id": "prepared",
+  "tx_rev": null,
+  "note": "用意した記録（作り話）"
+ }
+]

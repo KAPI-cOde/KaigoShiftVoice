@@ -65,7 +65,8 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                 hint: dict[str, list[str]] | None = None, stage: int = 1,
                 fixed_cells: dict[tuple[str, int], str] | None = None,
                 max_dtime: float | None = None,
-                skip: set[tuple[str, str]] | None = None) -> SolveResult:
+                skip: set[tuple[str, str]] | None = None,
+                extra=None) -> SolveResult:
     """fixed_cells は 動かさないマス（人, 日）→ 記号。狭い範囲の直しで、範囲の外を止めるのに使う。
     skip は課さない場面（決まりの id, 場面の名前）。相談できる決まりで前の表で既に外れていた場面に使う。"""
     st = facility.settings.get("solve", {})
@@ -184,6 +185,9 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                 if old in allowed[(s.name, d)]:
                     m.add_hint(x[(s.name, d, old)], 1)
                     penalties.append(w_keep * (1 - x[(s.name, d, old)]))
+
+    if extra is not None:  # 目的と制約を足す口（返す案など）。extra(model, x, penalties)
+        extra(m, x, penalties)
 
     m.minimize(sum(penalties))
 
