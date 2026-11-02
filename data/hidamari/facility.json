@@ -1,0 +1,83 @@
+{
+ "id": "hidamari",
+ "name": "ひだまりの郷（作り話）",
+ "units": [
+  "東",
+  "西"
+ ],
+ "shift_types": [
+  {
+   "symbol": "早",
+   "name": "早番",
+   "kind": "work",
+   "start": "07:00",
+   "hours": 9
+  },
+  {
+   "symbol": "日",
+   "name": "日勤",
+   "kind": "work",
+   "start": "09:00",
+   "hours": 9
+  },
+  {
+   "symbol": "遅",
+   "name": "遅番",
+   "kind": "work",
+   "start": "11:00",
+   "hours": 9
+  },
+  {
+   "symbol": "夜",
+   "name": "夜勤",
+   "kind": "work",
+   "start": "16:00",
+   "hours": 17,
+   "next_is_ake": true
+  },
+  {
+   "symbol": "明",
+   "name": "明け",
+   "kind": "ake"
+  },
+  {
+   "symbol": "公",
+   "name": "公休",
+   "kind": "rest"
+  },
+  {
+   "symbol": "有",
+   "name": "有給",
+   "kind": "leave",
+   "on_request_only": true
+  },
+  {
+   "symbol": "研",
+   "name": "研修",
+   "kind": "work",
+   "start": "09:00",
+   "hours": 9,
+   "on_request_only": true
+  }
+ ],
+ "settings": {
+  "solve": {
+   "seed": 11,
+   "workers": 1,
+   "max_deterministic_time": 20.0,
+   "note": "2026-11-02 に測った。上限5では目的600、20では240（約13秒）。同じ入力で同じ表になるよう、秒でなく計算の量で止める（A24 の7）"
+  },
+  "weights": {
+   "wish": 100000,
+   "operational": 20000,
+   "negotiable": 5000
+  },
+  "light_weight": 100,
+  "quality": {
+   "weekend_off_spread": 300,
+   "tobiishi": 60,
+   "same_shift_3run": 80
+  },
+  "keep_weight": 500
+ }
+}

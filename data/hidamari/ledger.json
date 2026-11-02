@@ -1,0 +1,385 @@
+[
+ {
+  "rev": 1,
+  "op": "add",
+  "op_id": "seed-r001",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "人員基準",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r001",
+   "ver": 1,
+   "name": "早番の人数",
+   "kind": "coverage",
+   "flex": "fixed",
+   "params": {
+    "shifts": [
+     "早"
+    ],
+    "scope": "each_unit",
+    "op": "==",
+    "n": 1
+   },
+   "who": null,
+   "when": null,
+   "scope": "rule"
+  }
+ },
+ {
+  "rev": 2,
+  "op": "add",
+  "op_id": "seed-r002",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "人員基準",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r002",
+   "ver": 1,
+   "name": "遅番の人数",
+   "kind": "coverage",
+   "flex": "fixed",
+   "params": {
+    "shifts": [
+     "遅"
+    ],
+    "scope": "each_unit",
+    "op": "==",
+    "n": 1
+   },
+   "who": null,
+   "when": null,
+   "scope": "rule"
+  }
+ },
+ {
+  "rev": 3,
+  "op": "add",
+  "op_id": "seed-r003",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "人員基準",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r003",
+   "ver": 1,
+   "name": "夜勤の人数",
+   "kind": "coverage",
+   "flex": "fixed",
+   "params": {
+    "shifts": [
+     "夜"
+    ],
+    "scope": "each_unit",
+    "op": "==",
+    "n": 1
+   },
+   "who": null,
+   "when": null,
+   "scope": "rule"
+  }
+ },
+ {
+  "rev": 4,
+  "op": "add",
+  "op_id": "seed-r004",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "研修も数えた施設全体で2人以上",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r004",
+   "ver": 1,
+   "name": "日勤の人数",
+   "kind": "coverage",
+   "flex": "negotiable",
+   "params": {
+    "shifts": [
+     "日",
+     "研"
+    ],
+    "scope": "all",
+    "op": ">=",
+    "n": 2
+   },
+   "who": null,
+   "when": null,
+   "scope": "rule"
+  }
+ },
+ {
+  "rev": 5,
+  "op": "add",
+  "op_id": "seed-r005",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "就業規則",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r005",
+   "ver": 1,
+   "name": "公休の数",
+   "kind": "count",
+   "flex": "fixed",
+   "params": {
+    "shifts": [
+     "公"
+    ],
+    "min": 9,
+    "max": 9
+   },
+   "who": null,
+   "when": null,
+   "scope": "rule"
+  }
+ },
+ {
+  "rev": 6,
+  "op": "add",
+  "op_id": "seed-r006",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "ユニットの夜勤を分ける",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r006",
+   "ver": 1,
+   "name": "夜勤の回数",
+   "kind": "count",
+   "flex": "operational",
+   "params": {
+    "shifts": [
+     "夜"
+    ],
+    "min": 3,
+    "max": 5
+   },
+   "who": [
+    "青木",
+    "石田",
+    "上野",
+    "江口",
+    "小川",
+    "加藤",
+    "岡田",
+    "落合",
+    "菊池",
+    "久保",
+    "小島",
+    "斉藤",
+    "篠原",
+    "田村",
+    "千葉"
+   ],
+   "when": null,
+   "scope": "rule"
+  }
+ },
+ {
+  "rev": 7,
+  "op": "add",
+  "op_id": "seed-r007",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "16時間夜勤のため2連続にしない",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r007",
+   "ver": 1,
+   "name": "夜勤の翌日は明け",
+   "kind": "sequence",
+   "flex": "fixed",
+   "params": {
+    "if": [
+     "夜"
+    ],
+    "next_in": [
+     "明"
+    ]
+   },
+   "who": null,
+   "when": null,
+   "scope": "rule"
+  }
+ },
+ {
+  "rev": 8,
+  "op": "add",
+  "op_id": "seed-r008",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "明けの意味",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r008",
+   "ver": 1,
+   "name": "明けは夜勤の翌日だけ",
+   "kind": "sequence",
+   "flex": "fixed",
+   "params": {
+    "if": [
+     "明"
+    ],
+    "prev_in": [
+     "夜"
+    ]
+   },
+   "who": null,
+   "when": null,
+   "scope": "rule"
+  }
+ },
+ {
+  "rev": 9,
+  "op": "add",
+  "op_id": "seed-r009",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "健康",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r009",
+   "ver": 1,
+   "name": "明けの翌日は公休",
+   "kind": "sequence",
+   "flex": "fixed",
+   "params": {
+    "if": [
+     "明"
+    ],
+    "next_in": [
+     "公"
+    ]
+   },
+   "who": null,
+   "when": null,
+   "scope": "rule"
+  }
+ },
+ {
+  "rev": 10,
+  "op": "add",
+  "op_id": "seed-r010",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "明けと研修は勤務の日として数える",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r010",
+   "ver": 1,
+   "name": "連勤の上限",
+   "kind": "max_run",
+   "flex": "fixed",
+   "params": {
+    "shifts": "work",
+    "max": 5
+   },
+   "who": null,
+   "when": null,
+   "scope": "rule"
+  }
+ },
+ {
+  "rev": 11,
+  "op": "add",
+  "op_id": "seed-r011",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "朝が続くと疲れる",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r011",
+   "ver": 1,
+   "name": "早番の2連続を避ける",
+   "kind": "max_run",
+   "flex": "negotiable",
+   "params": {
+    "shifts": [
+     "早"
+    ],
+    "max": 1
+   },
+   "who": null,
+   "when": null,
+   "scope": "rule"
+  }
+ },
+ {
+  "rev": 12,
+  "op": "add",
+  "op_id": "seed-r012",
+  "from": null,
+  "until": null,
+  "meta": {
+   "by": "作成者",
+   "at": "2026-10-01",
+   "reason": "子どもの送り",
+   "how": "初めの帳面"
+  },
+  "rule": {
+   "id": "r012",
+   "ver": 1,
+   "name": "水曜は早番に入れない（子どもの送り）",
+   "kind": "weekday",
+   "flex": "wish",
+   "params": {
+    "weekdays": [
+     "wed"
+    ],
+    "not_in": [
+     "早"
+    ]
+   },
+   "who": [
+    "斉藤"
+   ],
+   "when": null,
+   "scope": "rule"
+  }
+ }
+]

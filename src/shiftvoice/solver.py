@@ -1,0 +1,196 @@
+"""ソルバーの芯（CP-SAT）。
+
+- 変数は 職員×日×記号 の0か1で、1マスにちょうど1つ
+- 置ける記号は、その人が入れる勤務・公休・明け（夜勤に入れる人）・決まりが指す休暇だけ
+- 決まりは rules.expand の場面ごとにスイッチを持つ。fixed は常に守る
+- 段1は 本人の希望（wish）と運用の都合（operational）も外せなくして解く。相談できる決まりは重みつきで外せる
+- 再現性のため、種・並列数・計算の量（max_deterministic_time）は施設の設定から取る。秒数では区切らない
+"""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+
+from ortools.sat.python import cp_model
+
+from .model import Facility, Month, Rule, Staff
+from .rules import Instance, cell_value, check_table, expand
+
+DEFAULT_WEIGHTS = {"wish": 100000, "operational": 20000, "negotiable": 5000}
+
+
+@dataclass
+class SolveResult:
+    status: str                       # ok / infeasible / timeout
+    table: dict[str, list[str]] | None
+    broken: list[dict] = field(default_factory=list)
+    objective: float | None = None
+    seconds: float = 0.0
+    deterministic_time: float = 0.0
+    stage: int = 1
+    solver_broken: list = field(default_factory=list)  # ソルバーが外した場面（スイッチ=0）
+
+
+def _allowed(s: Staff, facility: Facility, requested: set[str]) -> list[str]:
+    syms = []
+    for st in facility.shift_types:
+        if st.on_request_only:
+            if st.symbol in requested:
+                syms.append(st.symbol)
+        elif st.kind == "ake":
+            if any(facility.shift(c).next_is_ake for c in s.can):
+                syms.append(st.symbol)
+        elif st.kind == "rest":
+            syms.append(st.symbol)
+        elif st.symbol in s.can:
+            syms.append(st.symbol)
+    return syms
+
+
+def _requested_leaves(rules: list[Rule], facility: Facility) -> dict[tuple[str, int], set[str]]:
+    """頼まれた時だけ置く記号（有給・研修）を、決まり（cell の in）が指す人・日に限って開ける。"""
+    req_syms = {st.symbol for st in facility.shift_types if st.on_request_only}
+    out: dict[tuple[str, int], set[str]] = {}
+    for r in rules:
+        if r.kind == "cell" and "in" in r.params:
+            syms = set(r.params["in"]) & req_syms
+            if syms:
+                for w in (r.who or []):
+                    for d in (r.when or []):
+                        out.setdefault((w, d), set()).update(syms)
+    return out
+
+
+def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month, *,
+                hint: dict[str, list[str]] | None = None, stage: int = 1) -> SolveResult:
+    st = facility.settings.get("solve", {})
+    weights = {**DEFAULT_WEIGHTS, **facility.settings.get("weights", {})}
+    quality = facility.settings.get("quality", {})
+    D = month.days
+    days = range(1, D + 1)
+    req = _requested_leaves(rules, facility)
+
+    m = cp_model.CpModel()
+    x: dict[tuple[str, int, str], cp_model.IntVar] = {}
+    allowed: dict[tuple[str, int], list[str]] = {}
+    for s in staff:
+        for d in days:
+            syms = _allowed(s, facility, req.get((s.name, d), set()))
+            allowed[(s.name, d)] = syms
+            vs = []
+            for sym in syms:
+                v = m.new_bool_var(f"x[{s.name},{d},{sym}]")
+                x[(s.name, d, sym)] = v
+                vs.append(v)
+            m.add_exactly_one(vs)
+
+    def lin(inst: Instance):
+        expr, const = [], 0
+        for t in inst.terms:
+            if t.day < 1:
+                v = cell_value({}, month, t.staff, t.day)
+                if v is not None and v in t.symbols:
+                    const += t.coef
+                continue
+            for sym in t.symbols:
+                var = x.get((t.staff, t.day, sym))
+                if var is not None:
+                    expr.append(t.coef * var)
+        return sum(expr) + const if expr else const
+
+    hard_flex = {"fixed"} if stage >= 4 else ({"fixed", "wish", "operational"} if stage == 1 else
+                                              {"fixed", "operational"} if stage == 2 else {"fixed", "wish"})
+    penalties = []
+    switches: list[tuple[Instance, cp_model.IntVar | None]] = []
+    for r in rules:
+        for inst in expand(r, facility, staff, month):
+            e = lin(inst)
+            if isinstance(e, int):  # 定数だけの場面（前の月だけ）は課せない
+                continue
+            hard = r.flex in hard_flex
+            if hard:
+                if inst.lo is not None:
+                    m.add(e >= inst.lo)
+                if inst.hi is not None:
+                    m.add(e <= inst.hi)
+                switches.append((inst, None))
+            else:
+                b = m.new_bool_var(f"keep[{r.id}:{inst.key}]")
+                if inst.lo is not None:
+                    m.add(e >= inst.lo).only_enforce_if(b)
+                if inst.hi is not None:
+                    m.add(e <= inst.hi).only_enforce_if(b)
+                w = r.weight or (weights[r.flex] if not r.light else facility.settings.get("light_weight", 100))
+                penalties.append(w * (1 - b))
+                switches.append((inst, b))
+
+    # 質の物差し（施設の設定。既定は控えめ）
+    work = set(facility.workday_symbols())
+    rest_syms = [t.symbol for t in facility.shift_types if t.kind in ("rest", "leave")]
+
+    def is_rest(name, d):
+        return sum(x[(name, d, sym)] for sym in rest_syms if (name, d, sym) in x)
+
+    w_tobi = quality.get("tobiishi", 0)
+    if w_tobi:
+        for s in staff:
+            for d in range(2, D):
+                t = m.new_bool_var("")
+                # 休み・勤務・休み の時 t=1
+                m.add(is_rest(s.name, d - 1) + (1 - is_rest(s.name, d)) + is_rest(s.name, d + 1) - 2 <= t)
+                penalties.append(w_tobi * t)
+    w_same3 = quality.get("same_shift_3run", 0)
+    if w_same3:
+        for s in staff:
+            for sym in s.can:
+                if facility.shift(sym).next_is_ake:
+                    continue
+                for d in range(1, D - 1):
+                    vs = [x.get((s.name, dd, sym)) for dd in (d, d + 1, d + 2)]
+                    if all(v is not None for v in vs):
+                        t = m.new_bool_var("")
+                        m.add(sum(vs) - 2 <= t)
+                        penalties.append(w_same3 * t)
+    w_wk = quality.get("weekend_off_spread", 0)
+    if w_wk:
+        night = [s for s in staff if any(facility.shift(c).next_is_ake for c in s.can)]
+        wk_days = [d for d in days if month.is_weekend_or_holiday(d)]
+        offs = []
+        for s in night:
+            v = m.new_int_var(0, len(wk_days), "")
+            m.add(v == sum(is_rest(s.name, d) for d in wk_days))
+            offs.append(v)
+        if offs:
+            hi, lo = m.new_int_var(0, len(wk_days), ""), m.new_int_var(0, len(wk_days), "")
+            m.add_max_equality(hi, offs)
+            m.add_min_equality(lo, offs)
+            penalties.append(w_wk * (hi - lo))
+    if hint:
+        w_keep = facility.settings.get("keep_weight", 500)
+        for s in staff:
+            for d in days:
+                old = hint.get(s.name, [None] * D)[d - 1]
+                if old in allowed[(s.name, d)]:
+                    m.add_hint(x[(s.name, d, old)], 1)
+                    penalties.append(w_keep * (1 - x[(s.name, d, old)]))
+
+    m.minimize(sum(penalties))
+
+    solver = cp_model.CpSolver()
+    solver.parameters.random_seed = st.get("seed", 11)
+    solver.parameters.num_workers = st.get("workers", 1)
+    solver.parameters.max_deterministic_time = st.get("max_deterministic_time", 30.0)
+    t0 = time.perf_counter()
+    code = solver.solve(m)
+    secs = time.perf_counter() - t0
+    if code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        table = {s.name: [next(sym for sym in allowed[(s.name, d)] if solver.value(x[(s.name, d, sym)]))
+                          for d in days] for s in staff}
+        res = SolveResult("ok", table, objective=solver.objective_value, seconds=secs,
+                          deterministic_time=solver.deterministic_time, stage=stage)
+        res.broken = check_table(rules, facility, staff, month, table)
+        res.solver_broken = [{"rule": i.rule.id, "key": i.key} for i, b in switches
+                             if b is not None and not solver.value(b)]
+        return res
+    status = "infeasible" if code == cp_model.INFEASIBLE else "timeout"
+    return SolveResult(status, None, seconds=secs, deterministic_time=solver.deterministic_time, stage=stage)
