@@ -235,3 +235,19 @@ def test_period_words():
     assert read_period("早番は5回くらいまで") is None
     assert read_answer("毎月") == "rule" and read_answer("今月だけ") == "once"
     assert read_answer("毎月じゃなくて") == "once" and read_answer("えっと") is None
+
+
+def test_undo_restores_table_and_card(sess):
+    t0 = json.dumps(sess.store.month(2026, 11).table)
+    r = sess.say("岡田さん、15と16は法事で休み")
+    t1 = json.dumps(sess.store.month(2026, 11).table)
+    a = sess.say("遅番の次の日に早番はきついから、やめてあげて")
+    r2 = sess.answer(a.uid, "毎月")
+    u = sess.undo()
+    assert u.kind == "applied" and "遅番" in u.message
+    assert json.dumps(sess.store.month(2026, 11).table) == t1
+    ids = {c["id"] for c in sess.state()["cards"]}
+    assert r2.rule_ids[0] not in ids and r.rule_ids[0] in ids
+    sess.undo()
+    assert json.dumps(sess.store.month(2026, 11).table) == t0
+    assert sess.undo().kind == "ask"

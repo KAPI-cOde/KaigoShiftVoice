@@ -179,6 +179,8 @@ class Session:
                 return Reply("failed_solve", u["id"], rr.staged.message or "直せませんでした", seconds=secs)
             changes = rr.changes
             self.store.save_ledger(led)            # 1 帳面
+            m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev,
+                              "said": u["text"]})
             m.table, m.built_rev = rr.table, led.rev
             self.store.save_month(m)               # 2 月の表
         if p.staff_changes:
@@ -191,6 +193,23 @@ class Session:
         self.store.resolve_pending(self.year, self.month, u["id"])  # 4 未反映の発言
         return Reply("applied", u["id"], p.summary, changes=changes, rule_ids=[r.id for r in added],
                      summary=p.summary, seconds=secs)
+
+    def undo(self) -> Reply:
+        """［ひとつ戻す］。最後に採用した一言の札を取り消し（帳面に取り消しの1行）、表を直す前に戻す。"""
+        m = self.store.month(self.year, self.month)
+        if not m.history:
+            return Reply("ask", None, "戻せる一言がありません")
+        h = m.history.pop()
+        led = self.store.ledger()
+        for t in [t for t in led.txs if t.get("op_id") == h["op_id"] and t["op"] != "undo"]:
+            led.append("undo", target_rev=t["rev"], op_id=f"undo-{h['op_id']}",
+                       meta={"at": self.now().isoformat(timespec="seconds")})
+        before = m.table
+        self.store.save_ledger(led)
+        m.table, m.built_rev = h["table"], led.rev
+        self.store.save_month(m)
+        return Reply("applied", h["op_id"], f"戻しました（「{h['said']}」）",
+                     changes=changed_cells(before, m.table), summary="ひとつ戻す")
 
     # 画面へ渡す
     def state(self) -> dict:
@@ -207,5 +226,7 @@ class Session:
                        "when": r.when, "kind": r.kind, "params": r.params, "meta": r.meta}
                       for r in rules.values()],
             "pending": self.store.pending(self.year, self.month),
+            "can_undo": bool(m.history),
+            "last_said": m.history[-1]["said"] if m.history else None,
             "symbols": [{"symbol": st.symbol, "name": st.name} for st in fac.shift_types],
         }

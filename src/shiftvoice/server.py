@@ -5,6 +5,7 @@ API（すべて JSON）
 - POST /api/say     {"text"}          一言
 - POST /api/answer  {"uid", "text"}   「毎月ですか、今月だけですか」への返事（"rule"/"once" か話し言葉）
 - POST /api/retry   {"uid"}           送り直す
+- POST /api/undo    {}                ひとつ戻す
 鍵は環境変数 ANTHROPIC_API_KEY（.env からも読む）。画面にも記録にも出さない。
 """
 from __future__ import annotations
@@ -94,6 +95,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool):
                     r = session.say(data["text"])
                 elif self.path == "/api/answer":
                     r = session.answer(data.get("uid", ""), data.get("text", ""))
+                elif self.path == "/api/undo":
+                    r = session.undo()
                 elif self.path == "/api/retry":
                     r = session.retry(data.get("uid", ""))
                 else:
