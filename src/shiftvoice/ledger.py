@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 from .model import Rule
 
-OPS = ("add", "change", "remove", "exclude", "undo")
+OPS = ("add", "change", "remove", "exclude", "undo", "review")
 
 
 class LedgerError(Exception):
@@ -57,6 +57,11 @@ class Ledger:
                 tx["rule"] = dict(rule)
             if op == "exclude":
                 tx["rule"] = dict(rule or {})  # 例 {"staff": ["杉山"]}
+        elif op == "review":
+            # 見直しの答え（片付けた・延ばした・今月も使う・変えた）。決まりは変えない。
+            # 答え・tx・続きの場所を同じ帳面の1回の保存に入れるため、帳面の1行にする（13章・A23 の36）
+            tx["rule_id"] = rule_id
+            tx["review"] = dict(rule or {})
         elif op == "undo":
             if target_rev is None or not any(t["rev"] == target_rev for t in self.txs):
                 raise LedgerError("取り消す tx がない")
@@ -71,7 +76,7 @@ class Ledger:
         for t in reversed(txs):  # 後の取り消しが先の取り消しを打ち消す
             if t["op"] == "undo" and not cancelled.get(t["rev"], False):
                 cancelled[t["target_rev"]] = not cancelled.get(t["target_rev"], False)
-        return [t for t in txs if t["op"] != "undo" and not cancelled.get(t["rev"], False)]
+        return [t for t in txs if t["op"] not in ("undo", "review") and not cancelled.get(t["rev"], False)]
 
     def rules_at(self, at_rev: int | None = None, on: str | None = None,
                  between: tuple[str, str] | None = None) -> dict[str, Rule]:

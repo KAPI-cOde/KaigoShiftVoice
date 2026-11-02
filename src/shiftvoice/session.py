@@ -12,7 +12,7 @@ import calendar
 import datetime as dt
 from dataclasses import dataclass, field
 
-from .build import build_original, month_rules
+from .build import build_original, clip_to_month, month_rules
 from .intake import Clarify, Proposal, to_proposal
 from .ledger import Ledger
 from .model import Rule
@@ -169,7 +169,7 @@ class Session:
         secs = 0.0
         if added:
             tmp = Ledger.from_list(led.to_list())
-            rules = list(tmp.rules_at(between=self._span()).values())
+            rules = [clip_to_month(r, *self._span()) for r in tmp.rules_at(between=self._span()).values()]
             fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
             ids = {r.id for r in added}
             rr = resolve(fac, staff, rules, m, m.table, [r for r in rules if r.id in ids])

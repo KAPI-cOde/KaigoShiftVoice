@@ -84,12 +84,28 @@ def premise_rules(premise: dict | None) -> list[Rule]:
     return out
 
 
+def clip_to_month(rule: Rule, start: str, end: str) -> Rule:
+    """効く期間（from・until）が月の途中で始まる・終わる時は、その日までだけに効かせる。
+    適用する日は対象の表の日付で判定する（13章）。期限つきの回数は、その月の初めから終わりの日までの累計になる"""
+    frm, until = rule.meta.get("from"), rule.meta.get("until")
+    last = int(end[-2:])
+    lo = int(frm[-2:]) if frm and start < frm <= end else 1
+    hi = int(until[-2:]) if until and start <= until < end else last
+    if lo == 1 and hi == last:
+        return rule
+    days = [d for d in (rule.when or range(1, last + 1)) if lo <= d <= hi]
+    import copy
+    r = copy.deepcopy(rule)
+    r.when = days
+    return r
+
+
 def month_rules(store: Store, year: int, month: int, *, with_premise: bool = True) -> list[Rule]:
     import calendar
     last = calendar.monthrange(year, month)[1]
     ledger = store.ledger()
-    rules = list(ledger.rules_at(between=(f"{year:04d}-{month:02d}-01",
-                                          f"{year:04d}-{month:02d}-{last:02d}")).values())
+    start, end = f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last:02d}"
+    rules = [clip_to_month(r, start, end) for r in ledger.rules_at(between=(start, end)).values()]
     if with_premise:
         rules += premise_rules(store.premise(year, month))
     return rules
