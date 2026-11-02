@@ -22,6 +22,7 @@ uv run shiftvoice demo
 | 部品 | 使い道 | ライセンス |
 |---|---|---|
 | OR-Tools（CP-SAT） | 勤務表を作る計算 | Apache-2.0 |
+| Anthropic Python SDK | 一言の読み取り（Claude Haiku 5.5）を呼ぶ | MIT |
 
 ## ライセンス
 
