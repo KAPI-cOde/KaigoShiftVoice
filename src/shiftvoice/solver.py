@@ -47,11 +47,19 @@ def _allowed(s: Staff, facility: Facility, requested: set[str]) -> list[str]:
     return syms
 
 
-def _requested_leaves(rules: list[Rule], facility: Facility) -> dict[tuple[str, int], set[str]]:
-    """頼まれた時だけ置く記号（有給・研修）を、決まり（cell の in）が指す人・日に限って開ける。"""
+def _requested_leaves(rules: list[Rule], facility: Facility, days: int) -> dict[tuple[str, int], set[str]]:
+    """頼まれた時だけ置く記号（有給・研修）を、決まり（cell の in）が指す人・日に限って開ける。
+    日付を任せる頼み（回数の下限がある決まり。日数のない有給）は、その人の全日（when があればその日）に開ける。"""
     req_syms = {st.symbol for st in facility.shift_types if st.on_request_only}
     out: dict[tuple[str, int], set[str]] = {}
     for r in rules:
+        if r.kind == "count" and r.params.get("min") and r.who:
+            syms = set(r.params.get("shifts") or []) & req_syms
+            if syms:
+                for w in r.who:
+                    for d in (r.when or range(1, days + 1)):
+                        out.setdefault((w, d), set()).update(syms)
+            continue
         if r.kind == "cell" and "in" in r.params:
             syms = set(r.params["in"]) & req_syms
             if syms:
@@ -74,7 +82,7 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     quality = facility.settings.get("quality", {})
     D = month.days
     days = range(1, D + 1)
-    req = _requested_leaves(rules, facility)
+    req = _requested_leaves(rules, facility, D)
 
     m = cp_model.CpModel()
     x: dict[tuple[str, int, str], cp_model.IntVar] = {}

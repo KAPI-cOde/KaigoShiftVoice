@@ -19,5 +19,11 @@
  "毎月、土日は休みの人から待機1人。急な休みの電話はその人にだけ。引き受けた回数は、翌月も覚えておいて": "{\"items\": [{\"type\": \"custom\", \"summary\": \"土日の待機当番\"}]}",
  "職員01さんから電話で、11月1日の日曜、お休みしたいって": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員01\", \"days\": [1], \"reason\": null}]}",
  "職員11さん、1日休みで": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員11\", \"days\": [1], \"reason\": null}]}",
- "遅番の次の日は、早番も日勤もやめて": "{\"items\": [{\"type\": \"forbid_sequence\", \"staff\": null, \"first\": \"遅\", \"next\": [\"早\", \"日\"], \"strength\": \"negotiable\", \"reason\": null}]}"
+ "遅番の次の日は、早番も日勤もやめて": "{\"items\": [{\"type\": \"forbid_sequence\", \"staff\": null, \"first\": \"遅\", \"next\": [\"早\", \"日\"], \"strength\": \"negotiable\", \"reason\": null}]}",
+ "職員11さん、29日まで夜勤3回までにして": "{\"items\": [{\"type\": \"count_limit\", \"staff\": [\"職員11\"], \"shift\": \"夜\", \"min\": null, \"max\": 3, \"until_day\": 29, \"strength\": \"operational\", \"reason\": null}]}",
+ "職員07さんの15日の休み、やっぱりいらない。あ、16日はそのままで。職員06さんは触らないで": "{\"items\": [{\"type\": \"cancel\", \"staff\": \"職員07\", \"days\": [15], \"shift\": \"公\"}]}",
+ "職員12さん、有給とりたいって言ってたよ。いつとは聞いてないけど": "{\"items\": [{\"type\": \"leave_count\", \"staff\": \"職員12\", \"count\": null, \"reason\": null}]}",
+ "職員15さん、23日の祝日は絶対日勤にして。これは外せないって": "{\"items\": [{\"type\": \"set_cell\", \"staff\": \"職員15\", \"days\": [23], \"shift\": \"日\", \"strength\": \"fixed\", \"reason\": null}]}",
+ "職員07さん、法事で14日、あ、違う、15日休み": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員07\", \"days\": [15], \"reason\": \"法事\"}]}",
+ "職員09さんの早番を4回までにして、毎月ね": "{\"items\": [{\"type\": \"count_limit\", \"staff\": [\"職員09\"], \"shift\": \"早\", \"min\": null, \"max\": 4, \"until_day\": null, \"strength\": \"operational\", \"reason\": null}]}"
 }

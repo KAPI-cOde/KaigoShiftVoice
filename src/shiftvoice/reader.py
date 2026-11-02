@@ -17,7 +17,7 @@ MAX_TOKENS = 400
 
 TYPES = ("day_off", "set_cell", "avoid_cell", "move", "swap", "forbid_sequence", "pair_apart",
          "count_limit", "weekday_pref", "consecutive_limit", "rest_after_night", "around_off",
-         "leave_count", "weigh", "explain", "custom", "staff_info", "none", "unclear")
+         "leave_count", "weigh", "explain", "custom", "staff_info", "cancel", "none", "unclear")
 
 
 class ReadError(Exception):
@@ -40,7 +40,9 @@ SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係で�
 - weekday_pref 曜日の頼み。staff, weekdays(mon〜sun), shift, avoid(避けるなら true), reason
 - consecutive_limit 続けて働く日数の上限。staff, max, reason
 - staff_info 職員の情報の変更（できる勤務など）。staff, from_month, can_add(記号の並び), can_remove
-- swap / pair_apart / rest_after_night / around_off / leave_count / weigh / explain / custom はその名前の type だけ書き、summary に一言
+- leave_count 有給の日数の頼み（日付は任せる）。staff, count(日数。言っていなければ null), reason
+- cancel 前の頼みの取り消し（「やっぱりいらない」）。staff, days(取り消す日だけ), shift(取り消す勤務の記号。休みなら 公)。「そのままで」「触らないで」の日と人は書かない
+- swap / pair_apart / rest_after_night / around_off / weigh / explain / custom はその名前の type だけ書き、summary に一言
 - none 頼みがない。unclear 読めない時は question に聞き返しの1文
 
 strength は fixed(「絶対」「動かせない」と言った時と研修など外の予定) / operational(施設の運用の事情。試験まで・人手など) / wish(本人の希望) / negotiable(配慮の言い方。「きつい」「〜してあげて」)

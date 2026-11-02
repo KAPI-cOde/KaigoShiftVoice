@@ -13,16 +13,17 @@ from .model import WEEKDAYS, Facility, Month, Staff
 from .period import read_period
 
 DATE_TYPES = ("day_off", "set_cell", "avoid_cell", "move")
-NOT_YET = ("swap", "pair_apart", "rest_after_night", "around_off", "leave_count", "weigh",
+NOT_YET = ("swap", "pair_apart", "rest_after_night", "around_off", "weigh",
            "explain", "custom")
 FLEX_OK = ("fixed", "operational", "wish", "negotiable")
 
 
 @dataclass
 class Proposal:
-    kind: str                          # cells / rule / staff
+    kind: str                          # cells / rule / staff / cancel
     rules: list[dict] = field(default_factory=list)   # id なしの決まり（帳面に足す時に id を振る）
     staff_changes: list[dict] = field(default_factory=list)
+    removes: list[dict] = field(default_factory=list)  # 取り消す頼み（人・日・勤務）。当てる先は帳面で探す
     scope: str | None = None           # rule / once。None は未決（聞く）
     until: str | None = None           # YYYY-MM-DD
     reason: str | None = None
@@ -75,8 +76,13 @@ def _who(names: list[str] | None) -> str:
     return "・".join(f"{n}さん" for n in names) if names else "全員"
 
 
+def _leave_sym(facility: Facility) -> str:
+    return next(st.symbol for st in facility.shift_types if st.kind == "leave")
+
+
 def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[Staff],
-                month: Month) -> Proposal:
+                month: Month, leave_caps: dict[str, int] | None = None) -> Proposal:
+    """leave_caps は人ごとの有給の上限（帳面の回数の決まりから。日数のない有給の頼みに使う。13章）。"""
     names = {s.name for s in staff}
     real = [it for it in items if it.get("type") != "none"]
     if not real:
@@ -87,7 +93,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         if it["type"] in NOT_YET:
             raise Clarify("この形の頼みは、まだ扱えません。別の言い方で言ってください")
     kinds = {"cells" if it["type"] in DATE_TYPES else "staff" if it["type"] == "staff_info"
-             else "layer" if it["type"] == "layer_def" else "rule" for it in real}
+             else "layer" if it["type"] == "layer_def" else "cancel" if it["type"] == "cancel"
+             else "rule" for it in real}
     if len(kinds) > 1:
         raise Clarify("頼みが混ざっています。1つずつ言ってください")
     kind = kinds.pop()
@@ -190,6 +197,34 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             p.rules.append({"name": f"{_who(who)} 連勤は{mx}日まで", "kind": "max_run",
                             "flex": _flex(it.get("strength"), "operational"),
                             "params": {"shifts": "work", "max": mx}, "who": who, "when": None})
+        elif t == "cancel":
+            # 取り消しは指定を外すだけ。反対の勤務を命じない（13章。T2-03）
+            who = _names(it.get("staff"), names)
+            ds = _days(it.get("days"), month)
+            if not who or not ds:
+                raise Clarify("誰の、何日の頼みを取り消すか教えてください")
+            sym = _sym(it.get("shift"), facility) if it.get("shift") else None
+            p.removes.append({"who": who, "days": ds, "shift": sym})
+            what = f"{facility.shift(sym).name}の" if sym and sym != "公" else "休みの" if sym == "公" else ""
+            sums.append(f"{_who(who)}の{'・'.join(map(str, ds))}日の{what}指定を外しました")
+        elif t == "leave_count":
+            # 日数がなければその人の上限まで、日付は任せる下限だけの決まり（13章。T2-06）
+            who = _names(it.get("staff"), names)
+            if not who or len(who) != 1:
+                raise Clarify("誰の有給か教えてください")
+            n = _num(it.get("count"))
+            if n is None:
+                cap = (leave_caps or {}).get(who[0])
+                if cap is None:
+                    raise Clarify(f"{who[0]}さんの有給は何日ですか")
+                if cap == 0:
+                    raise Clarify(f"{who[0]}さんの有給の上限は0日になっています。何日にするか教えてください")
+                n = cap
+            elif n <= 0:
+                raise Clarify("有給の日数を教えてください")
+            lv = _leave_sym(facility)
+            p.rules.append({"name": f"{who[0]}さん 有給{n}日（日付は任せる）", "kind": "count", "flex": "wish",
+                            "params": {"shifts": [lv], "min": n}, "who": who, "when": None})
         elif t == "staff_info":
             who = _names(it.get("staff"), names) or []
             fm = _num(it.get("from_month"))
@@ -204,6 +239,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             sums.append(f"{_who(who)} {fm}月から" + "・".join(facility.shift(s).name for s in add) + "もできる")
     if kind == "cells":
         p.scope = "once"
+    elif kind == "cancel":
+        p.scope = "once"   # 取り消しは前の頼みを外すだけ。聞かない
     elif kind in ("rule", "layer"):
         p.scope = "rule" if p.until else read_period(text)
     else:  # 職員の情報は言われた月から。聞かない

@@ -88,6 +88,7 @@
   .rv-card .ext { margin-top: 12px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
   .rv-card .ext input { font: inherit; border: 1px solid #000; border-radius: 3px; padding: 5px 8px; }
   .rv-card .ext input.chtext { flex: 1; min-width: 0; }
+  .btns select { font: inherit; font-size: 13px; border: 1px solid #000; border-radius: 3px; padding: 6px 8px; background: #fff; }
   .rv-card .ext button.on { background: #000; color: #fff; }
   .rv-err { color: #c0392b; font-size: 13px; min-height: 18px; }
   .sumrows { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; }
@@ -384,7 +385,35 @@ function renderReply(r) {
     box.appendChild(rb);
     return;
   }
+  if (r.extra && r.extra.ask_name) {  // 名簿にない名前。選ぶまで何も送らず、表も動かさない
+    var an = r.extra.ask_name;
+    box.appendChild(el("div", "q", r.message || ""));
+    var nb = el("div", "btns");
+    an.candidates.forEach(function (n) {
+      var b = el("button", "primary", n + "さん");
+      b.type = "button";
+      b.addEventListener("click", function () { chooseName(r.uid, an.wrong, n); });
+      nb.appendChild(b);
+    });
+    var sel = el("select");
+    sel.appendChild(el("option", "", an.candidates.length ? "ほかの人" : "名簿から選ぶ"));
+    an.roster.forEach(function (n) { var o = el("option", "", n + "さん"); o.value = n; sel.appendChild(o); });
+    sel.addEventListener("change", function () { if (sel.value && an.roster.indexOf(sel.value) >= 0) chooseName(r.uid, an.wrong, sel.value); });
+    nb.appendChild(sel);
+    box.appendChild(nb);
+    return;
+  }
   box.appendChild(el("div", "", r.message || ""));
+}
+
+function chooseName(uid, wrong, right) {
+  if (busy) return;
+  setBusy(true);
+  post("choose_name", { uid: uid, wrong: wrong, right: right }).then(function (res) {
+    setBusy(false);
+    if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
+    handle(res);
+  }).catch(fail);
 }
 
 function renderDist() {

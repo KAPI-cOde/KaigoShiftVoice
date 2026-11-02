@@ -64,6 +64,18 @@ class Masker:
                    if not re.fullmatch(r"職員\d{0,2}", m) and m not in NOT_NAMES]
         return t, unknown
 
+    def suggest(self, unknown: str) -> list[str]:
+        """名簿にない名前に近い名簿の名前（手元だけで出す。AI には送らない。13章）。
+        同じ字数で、同じ位置の字が（2字なら1字、3字以上なら字数−1）合う名前と呼び方。"""
+        out: list[str] = []
+        for s in self.staff:
+            for a in [s.name] + ([s.call] if s.call else []):
+                need = 1 if len(a) <= 2 else len(a) - 1
+                if len(a) == len(unknown) and sum(x == y for x, y in zip(a, unknown)) >= need:
+                    out.append(s.name)
+                    break
+        return out
+
     def unmask(self, obj):
         """返事（JSON の値）の 職員NN・ユニットN を名前に戻す。知らない番号は残す（手元で聞き返す）。"""
         if isinstance(obj, str):

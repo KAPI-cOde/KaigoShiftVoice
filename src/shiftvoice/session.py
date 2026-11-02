@@ -120,8 +120,15 @@ class Session:
         masker = Masker(staff, fac)
         masked, unknown = masker.mask(u["text"])
         if unknown:
+            # 名簿にない名前を含む一言は送らない。近い名前は手元の名簿から出し、作成者が選ぶまで表を動かさない（13章。T2-02）
+            wrong = unknown[0]
+            cands = masker.suggest(wrong)
+            cands = cands if len(cands) == 1 else []   # 1人に絞れる時だけ候補にする（森田→石田・岡田 のような当て推量を出さない）
             self.store.update_pending(self.year, self.month, u["id"], status="ask_name", unknown=unknown)
-            return Reply("ask", u["id"], f"名簿にない名前です（{'・'.join(unknown)}）。名簿から選んでください")
+            msg = (f"{wrong}さんは名簿にいません。{'・'.join(c + 'さん' for c in cands)}ですか" if cands else
+                   f"{wrong}さんは名簿にいません。名簿から選んでください")
+            return Reply("ask", u["id"], msg, extra={"ask_name": {"wrong": wrong, "candidates": cands,
+                                                                  "roster": [x.name for x in staff]}})
         try:
             items = masker.unmask(self.reader.read(masked))
             if self.builder and any(it.get("type") == "custom" for it in items):
@@ -137,14 +144,39 @@ class Session:
         u = {**u, "items": items}
         return self._propose(u)
 
+    def choose_name(self, uid: str, wrong: str, right: str) -> Reply:
+        """名前の聞き返しで名簿から選んだ。文の名前を置き換えてから読む（選ぶ前は何も送っていない）。"""
+        u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
+        if u is None or u.get("status") != "ask_name":
+            return Reply("error", uid, "名前を選ぶ発言が見つかりません")
+        if right not in {s.name for s in self.store.staff()} or wrong not in u["text"]:
+            return Reply("error", uid, "名簿の名前から選んでください")
+        text = u["text"].replace(wrong, right)
+        self.store.update_pending(self.year, self.month, uid, text=text, heard=u["text"], status="new",
+                                  unknown=None)
+        return self._read({**u, "text": text})
+
+    def _leave_caps(self) -> dict[str, int]:
+        """人ごとの有給の上限（職員と対象月を持つ回数の決まり。13章）。"""
+        fac = self.store.facility()
+        lv = next(st.symbol for st in fac.shift_types if st.kind == "leave")
+        caps: dict[str, int] = {}
+        for r in self.store.ledger().rules_at(between=self._span()).values():
+            if (r.kind == "count" and r.params.get("shifts") == [lv] and "max" in r.params
+                    and r.who and len(r.who) == 1 and r.flex == "operational"):
+                caps[r.who[0]] = r.params["max"]
+        return caps
+
     def _propose(self, u: dict) -> Reply:
         fac, staff = self.store.facility(), self.store.staff()
         m = self.store.month(self.year, self.month)
         try:
-            p = to_proposal(u["items"], u["text"], fac, staff, m)
+            p = to_proposal(u["items"], u["text"], fac, staff, m, leave_caps=self._leave_caps())
         except Clarify as e:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], str(e))
+        if p.kind == "cancel":
+            return self._cancel(u, p)
         if m.distributed and p.kind == "cells":
             offer = self._standby_offer(u, p, m)
             return offer if offer is not None else self._fix_offer(u, p, m)
@@ -244,6 +276,50 @@ class Session:
         self.store.resolve_pending(self.year, self.month, u["id"])  # 4 未反映の発言
         return Reply("applied", u["id"], p.summary, changes=changes, rule_ids=[r.id for r in added],
                      summary=p.summary, seconds=secs, warning=warning)
+
+    def _cancel(self, u: dict, p: Proposal) -> Reply:
+        """取り消し。前の頼みの指定を外すだけで、表のマスは動かさない（外した日が公休のままでも誤りではない。13章）。
+        当てる先が1つに決まる時だけ当て、無いか複数なら聞き返す。"""
+        import re
+        led = self.store.ledger()
+        m = self.store.month(self.year, self.month)
+        if any(t.get("op_id") == u["id"] for t in led.txs):
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("applied", u["id"], p.summary, summary=p.summary)
+        rules = led.rules_at(between=self._span())
+        drop: dict[str, set[int]] = {}
+        for rq in p.removes:
+            for w in rq["who"]:
+                for d in rq["days"]:
+                    hits = [r for r in rules.values() if r.kind == "cell" and r.who == [w] and r.when
+                            and d in r.when and (rq["shift"] is None or rq["shift"] in
+                                                 r.params.get("in", []) + r.params.get("not_in", []))]
+                    if not hits:
+                        self.store.resolve_pending(self.year, self.month, u["id"])
+                        return Reply("ask", u["id"], f"{w}さんの{d}日の頼みは見つかりませんでした。表もルールも変えていません")
+                    if len(hits) > 1:
+                        self.store.resolve_pending(self.year, self.month, u["id"])
+                        return Reply("ask", u["id"], f"{w}さんの{d}日の頼みが{len(hits)}件あります（"
+                                     + "・".join(h.name for h in hits) + "）。どれを取り消すか言ってください")
+                    drop.setdefault(hits[0].id, set()).add(d)
+        at = self.now().isoformat(timespec="seconds")
+        meta = {"said": u["text"], "who": self.who, "at": at, "kind": "cancel"}
+        for rid, days in drop.items():
+            r = rules[rid]
+            rest = [d for d in r.when if d not in days]
+            if not rest:
+                led.append("remove", rule_id=rid, op_id=u["id"], meta=meta)
+            else:
+                name = re.sub(r"[\d・]+日", "・".join(map(str, rest)) + "日", r.name, count=1)
+                led.append("change", rule_id=rid, rule={"when": rest, "name": name}, op_id=u["id"], meta=meta)
+        self.store.save_ledger(led)                # 1 帳面
+        m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev, "said": u["text"]})
+        m.built_rev = led.rev
+        self.store.save_month(m)                   # 2 月の表（マスは動かさない。戻す時のために履歴だけ）
+        self.store.resolve_pending(self.year, self.month, u["id"])
+        return Reply("applied", u["id"], f"{p.summary}。表のマスはそのままです",
+                     summary=f"{p.summary}。表のマスはそのままです",
+                     rule_ids=list(drop))
 
     def undo(self) -> Reply:
         """［ひとつ戻す］。最後に採用した一言の札を取り消し（帳面に取り消しの1行）、表を直す前に戻す。"""
