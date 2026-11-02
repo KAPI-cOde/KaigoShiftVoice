@@ -79,3 +79,21 @@ def test_nobody_reply_when_called_by_prefix_or_kana(store):
     seq = [{"type": "forbid_sequence", "first": "夜", "next": "早"}]
     p = to_proposal(seq, "小島さんも含めて全員、夜勤の次の日に早番を置かない", fac, store.staff(), m)
     assert p.rules and not p.rules[0]["who"]
+
+
+@pytest.mark.parametrize("text", ["あおき、15と16は休み", "岡田さん、15と16は休み。みんなに伝えておいて", "皆勤の岡田、15と16は休み"])
+def test_nobody_cells_never_go_to_everyone(store, text):
+    """休みのようなマスの頼みは、人が無いまま全員に効かせない（さんの無いかなの名前・「皆」を含む一言。再レビュー2回目 b）。"""
+    from shiftvoice.intake import Clarify, to_proposal
+    with pytest.raises(Clarify):
+        to_proposal([{"type": "day_off", "days": [15, 16]}], text, store.facility(), store.staff(), store.month(2026, 11))
+
+
+@pytest.mark.parametrize("text", ["利用者さんが落ち着かないから、夜勤の次の日に早番は置かないで",
+                                  "みなさん、夜勤の次の日に早番はやめてあげて"])
+def test_everyone_rule_with_san_word_is_not_blocked(store, text):
+    """名簿の人が出ない全員向けのルールは、「利用者さん」「みなさん」があっても聞き返さない（再レビュー2回目 a）。"""
+    from shiftvoice.intake import to_proposal
+    p = to_proposal([{"type": "forbid_sequence", "first": "夜", "next": "早"}], text, store.facility(),
+                    store.staff(), store.month(2026, 11))
+    assert p.rules and not p.rules[0]["who"]

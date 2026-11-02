@@ -127,7 +127,7 @@ class Session:
             self.store.update_pending(self.year, self.month, u["id"], status="ask_name", unknown=unknown)
             if wrong in masker.leftover:   # 呼び方・名前の頭が伏せきれずに残った。名前を選ぶと、その名前に置き換えて読む
                 cands = [masker.leftover[wrong]]
-                msg = f"「{wrong}」は{cands[0]}さんのことですか（まだ何も送っていません）"
+                msg = f"「{wrong}」は{cands[0]}さんのことですか（表もルールも変えていません）"
             else:
                 msg = (f"{wrong}さんは名簿にいません。{'・'.join(c + 'さん' for c in cands)}ですか" if cands else
                        f"{wrong}さんは名簿にいません。名簿から選んでください")

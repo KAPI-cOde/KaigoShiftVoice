@@ -303,13 +303,17 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             sums.append(f"{_who(who)} {fm}月から" + "・".join(facility.shift(s).name for s in add) + "もできる")
     # 一言に名簿の人が出ているのに、返事が人を省いて「全員」に効く形なら、当てずに聞き返す（レビュー b の指摘。
     # 「岡田さん、15と16は休み」が全員の休みになる道を塞ぐ）
-    # 人が出ているかは、伏せる処理と同じ見方（名前・呼び方・名前の頭）で見る。かなで書かれた「おかださん」の
-    # ような名簿の表記に無い呼びかけも、人が出ているとみなす（再レビュー b の指摘）
+    # 人が出ているかは、伏せる処理と同じ見方（名前・呼び方・名前の頭）で見る（再レビュー b の指摘）
     from .names import Masker
-    said = bool(re.search(r"職員\d{2}", Masker(staff, facility).mask(text)[0])
-                or re.search(r"(さん|くん|ちゃん)", text))
-    if said and not re.search(r"全員|みんな|皆", text) and (any(not r.get("who") for r in p.rules if r["kind"] != "layer")
-                 or any(not x.get("who") for x in p.removes)):
+    # 全員向けのルールは「利用者さん」「みなさん」を含むことが多いので、「さん」だけでは人が出たとみなさない
+    # （再レビュー2回目 a の指摘）。マスの頼みは下で、人が無ければいつでも聞き返す
+    said = bool(re.search(r"職員\d{2}", Masker(staff, facility).mask(text)[0]))
+    # マスの頼み（休み・勤務・移動）と取り消しは、人が無いまま全員に効かせない。「全員15日休み」は頼みとして
+    # ありえず、さんの無いかなの名前や「皆」を含む一言でもすり抜けないように（再レビュー2回目 b の指摘）
+    cells_nobody = any(not r.get("who") for r in p.rules if r["kind"] == "cell") or any(
+        not x.get("who") for x in p.removes)
+    rules_nobody = any(not r.get("who") for r in p.rules if r["kind"] not in ("layer", "cell"))
+    if cells_nobody or (said and not re.search(r"全員|みんな|皆", text) and rules_nobody):
         raise Clarify("誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください")
     if kind == "cells":
         p.scope = "once"

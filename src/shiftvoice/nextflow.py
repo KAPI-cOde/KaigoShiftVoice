@@ -84,7 +84,9 @@ class NextFlow:
         masker = Masker(staff, fac)
         masked, unknown = masker.mask(text)
         if unknown:
-            return {"error": f"名前が読み取れません（{'・'.join(unknown)}）。名前に「さん」を付けて言い直してください。ルールは変えていません"}
+            if unknown[0] in masker.leftover:
+                return {"error": f"名前が読み取れません（{unknown[0]}）。{masker.leftover[unknown[0]]}さんのように、名前に「さん」を付けて言い直してください。ルールは変えていません"}
+            return {"error": f"名簿にない名前です（{'・'.join(unknown)}）。ルールは変えていません"}
         try:
             items = masker.unmask(reader.read(masked))
             p = to_proposal(items, text, fac, staff, self.store.month(self.ny, self.nm))
