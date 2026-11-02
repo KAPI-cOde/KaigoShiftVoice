@@ -99,6 +99,19 @@ class Store:
         atomic_write_json(self._pending_path(year, month), items)
         return u
 
+    def update_pending(self, year: int, month: int, uid: str, **fields) -> dict | None:
+        items = self.pending(year, month)
+        hit = None
+        for u in items:
+            if u["id"] == uid:
+                u.update(fields)
+                hit = u
+        atomic_write_json(self._pending_path(year, month), items)
+        return hit
+
+    def save_staff(self, staff: list[Staff]) -> None:
+        atomic_write_json(self.root / "staff.json", [s.to_dict() for s in staff])
+
     def resolve_pending(self, year: int, month: int, uid: str) -> None:
         items = [u for u in self.pending(year, month) if u["id"] != uid]
         atomic_write_json(self._pending_path(year, month), items)

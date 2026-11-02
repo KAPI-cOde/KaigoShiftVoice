@@ -1,0 +1,19 @@
+{
+ "職員07さん、15と16は法事で休み": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員07\", \"days\": [15, 16], \"reason\": \"法事\"}]}",
+ "職員06さん、21日は外の研修": "{\"items\": [{\"type\": \"set_cell\", \"staff\": \"職員06\", \"days\": [21], \"shift\": \"研\", \"strength\": \"fixed\", \"reason\": \"外の研修\"}]}",
+ "職員03さんの研修、13日に変わった": "{\"items\": [{\"type\": \"move\", \"staff\": \"職員03\", \"shift\": \"研\", \"from_day\": 12, \"to_day\": 13, \"reason\": null}]}",
+ "遅番の次の日に早番はきついから、やめてあげて": "{\"items\": [{\"type\": \"forbid_sequence\", \"staff\": null, \"first\": \"遅\", \"next\": \"早\", \"strength\": \"negotiable\", \"reason\": \"間が短くきつい\"}]}",
+ "職員09さん、早番が多すぎる。月5回くらいまで": "{\"items\": [{\"type\": \"count_limit\", \"staff\": [\"職員09\"], \"shift\": \"早\", \"min\": null, \"max\": 5, \"until_day\": null, \"strength\": \"operational\", \"reason\": \"早番が多すぎる\"}]}",
+ "職員15さん、23日の祝日は日勤だと助かるって": "{\"items\": [{\"type\": \"set_cell\", \"staff\": \"職員15\", \"days\": [23], \"shift\": \"日\", \"strength\": \"wish\", \"reason\": null}]}",
+ "職員11さん、29日に試験だから、それまで夜勤3回まで": "{\"items\": [{\"type\": \"count_limit\", \"staff\": [\"職員11\"], \"shift\": \"夜\", \"min\": null, \"max\": 3, \"until_day\": 29, \"strength\": \"operational\", \"reason\": \"29日に試験\"}]}",
+ "職員14さん、12月から夜勤もできるって": "{\"items\": [{\"type\": \"staff_info\", \"staff\": \"職員14\", \"from_month\": 12, \"can_add\": [\"夜\"], \"can_remove\": []}]}",
+ "職員10さん、14日、あ、違う、18日は休みで": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員10\", \"days\": [18], \"reason\": null}]}",
+ "職員12さん、毎月、夜勤は2回まで": "{\"items\": [{\"type\": \"count_limit\", \"staff\": [\"職員12\"], \"shift\": \"夜\", \"min\": null, \"max\": 2, \"until_day\": null, \"strength\": \"operational\", \"reason\": null}]}",
+ "職員02さん、木曜は早番にしないで。毎月": "{\"items\": [{\"type\": \"weekday_pref\", \"staff\": \"職員02\", \"weekdays\": [\"thu\"], \"shift\": \"早\", \"avoid\": true, \"reason\": null}]}",
+ "職員13さん、20日は遅番で": "{\"items\": [{\"type\": \"set_cell\", \"staff\": \"職員13\", \"days\": [20], \"shift\": \"遅\", \"strength\": \"wish\", \"reason\": null}]}",
+ "職員05さん、今月は夜勤0で": "{\"items\": [{\"type\": \"count_limit\", \"staff\": [\"職員05\"], \"shift\": \"夜\", \"min\": null, \"max\": 0, \"until_day\": null, \"strength\": \"operational\", \"reason\": null}]}",
+ "職員08さん、19日は夜勤じゃなくして": "{\"items\": [{\"type\": \"avoid_cell\", \"staff\": \"職員08\", \"days\": [19], \"shift\": \"夜\", \"reason\": null}]}",
+ "よろしくね": "{\"items\": [{\"type\": \"none\"}]}",
+ "あれをこう、いい感じに": "{\"items\": [{\"type\": \"unclear\", \"question\": \"どの人の、何日の勤務のことですか\"}]}",
+ "職員16さん、連勤は毎月4日まで": "{\"items\": [{\"type\": \"consecutive_limit\", \"staff\": [\"職員16\"], \"max\": 4, \"reason\": null}]}"
+}

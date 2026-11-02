@@ -67,6 +67,23 @@ class Staff:
     call: str | None = None  # 呼び方
     changes: list[dict] = field(default_factory=list)  # 月から効く職員情報の変更（例 12月から夜勤可）
 
+    def to_dict(self) -> dict:
+        d = {"name": self.name, "unit": self.unit, "can": self.can}
+        if self.call:
+            d["call"] = self.call
+        if self.changes:
+            d["changes"] = self.changes
+        return d
+
+    def can_on(self, ym: str) -> list[str]:
+        """その月（YYYY-MM）に入れる勤務。月から効く職員情報の変更を当てる。"""
+        can = list(self.can)
+        for c in sorted(self.changes, key=lambda c: c["from"]):
+            if c["from"] <= ym:
+                can += [x for x in c.get("can_add", []) if x not in can]
+                can = [x for x in can if x not in c.get("can_remove", [])]
+        return can
+
     @classmethod
     def from_dict(cls, d: dict) -> "Staff":
         return cls(name=d["name"], unit=d["unit"], can=list(d["can"]),
@@ -116,6 +133,7 @@ class Month:
     table: dict[str, list[str]] | None = None  # 名前 → 1日からの記号
     layers: dict[str, Any] = field(default_factory=dict)  # 勤務とは別の層（待機など）。名前 → {定義, 割り当て}
     rev: int | None = None            # 確定した時の帳面の rev
+    built_rev: int | None = None      # 表を作った・直した時の帳面の rev（保存の途中で止まった時の立て直しに使う）
 
     @property
     def days(self) -> int:
@@ -130,13 +148,14 @@ class Month:
     def to_dict(self) -> dict:
         return {"year": self.year, "month": self.month, "holidays": self.holidays,
                 "prev_tail": self.prev_tail, "table": self.table, "layers": self.layers,
-                "rev": self.rev}
+                "rev": self.rev, "built_rev": self.built_rev}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Month":
         return cls(year=d["year"], month=d["month"], holidays=list(d.get("holidays", [])),
                    prev_tail={k: list(v) for k, v in d.get("prev_tail", {}).items()},
-                   table=d.get("table"), layers=d.get("layers", {}), rev=d.get("rev"))
+                   table=d.get("table"), layers=d.get("layers", {}), rev=d.get("rev"),
+                   built_rev=d.get("built_rev"))
 
 
 @dataclass
