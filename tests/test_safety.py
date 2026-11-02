@@ -112,9 +112,9 @@ def test_person_rule_by_kana_or_kaikin_never_goes_to_everyone(store, text, item)
 
 
 @pytest.mark.parametrize("text", ["看護さんが少ない日だから、夜勤の次の日に早番は置かないで",
-                                  "休みをたくさん取れるように、夜勤の次の日に早番は置かないで"])
+                                  "職員さんの負担が大きいから、夜勤の次の日に早番は置かないで"])
 def test_everyone_rule_with_job_word_is_not_blocked(store, text):
-    """「看護さん」「たくさん」のような名前でない語を含む全員向けのルールは止めない（周8 再レビュー a・b）。"""
+    """「看護さん」「職員さん」のような名前でない語を含む全員向けのルールは止めない（周8 再レビュー a・b）。"""
     from shiftvoice.intake import to_proposal
     p = to_proposal([{"type": "forbid_sequence", "first": "夜", "next": "早"}], text, store.facility(),
                     store.staff(), store.month(2026, 11))
@@ -127,3 +127,12 @@ def test_nobody_clarify_tells_how_to_say_everyone(store):
     with pytest.raises(Clarify, match="全員"):
         to_proposal([{"type": "count_limit", "shift": "夜", "max": 4}], "おかださん、夜勤は月4回まで",
                     store.facility(), store.staff(), store.month(2026, 11))
+
+
+@pytest.mark.parametrize("text", ["たくくん、夜勤は月4回まで", "おかだリーダーさん、連勤は4日まで"])
+def test_nickname_or_title_rule_never_goes_to_everyone(store, text):
+    """名簿に無い呼び名（たくくん）や、かなの名前に役職を付けた呼び方は、返事が人を省いても全員にしない（周10 再レビュー b）。"""
+    from shiftvoice.intake import Clarify, to_proposal
+    item = {"type": "count_limit", "shift": "夜", "max": 4} if "夜勤" in text else {"type": "consecutive_limit", "max": 4}
+    with pytest.raises(Clarify):
+        to_proposal([item], text, store.facility(), store.staff(), store.month(2026, 11))
