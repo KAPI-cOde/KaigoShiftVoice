@@ -137,7 +137,8 @@ def fix_absence(facility: Facility, staff: list[Staff], rules: list[Rule], month
 
     返す {"status": ok/already_off/no_duty/cannot, "table", "changes", "duty", "rest": {名前: (前, 後)}, "support"}
     """
-    if table[requester][day - 1] == "公":
+    off = {st.symbol for st in facility.shift_types if st.kind in ("rest", "leave")}   # 公休・有給はもう休み
+    if table[requester][day - 1] in off:
         return {"status": "already_off", "message": ALREADY_OFF}
     duty = [n for n in duty if n != requester]
     if not duty:
