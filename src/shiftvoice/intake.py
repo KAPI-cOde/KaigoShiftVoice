@@ -299,6 +299,12 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 p.staff_changes.append({"staff": n, "from": f"{year:04d}-{fm:02d}", "can_add": add,
                                         "can_remove": rem, "said": text})
             sums.append(f"{_who(who)} {fm}月から" + "・".join(facility.shift(s).name for s in add) + "もできる")
+    # 一言に名簿の人が出ているのに、返事が人を省いて「全員」に効く形なら、当てずに聞き返す（レビュー b の指摘。
+    # 「岡田さん、15と16は休み」が全員の休みになる道を塞ぐ）
+    said = {s.name for s in staff if s.name in text or (s.call and s.call in text)}
+    if said and (any(not r.get("who") for r in p.rules if r["kind"] != "layer")
+                 or any(not x.get("who") for x in p.removes)):
+        raise Clarify("誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください")
     if kind == "cells":
         p.scope = "once"
     elif kind == "cancel":

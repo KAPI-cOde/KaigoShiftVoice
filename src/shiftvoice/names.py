@@ -53,8 +53,12 @@ class Masker:
     def mask(self, text: str) -> tuple[str, list[str]]:
         """送る文と、名簿にない名前の一覧を返す。"""
         t = text
+        # 区切りには、数字と勤務の記号（夜勤・早番などの頭の字）も入れる。読点の落ちた「はな15日休み」
+        # 「岡田夜勤なし」の呼び方・頭を伏せ漏らさないため（レビュー c の指摘）
+        syms = "".join(re.escape(x) for x in self.facility.symbols if len(x) == 1)
+        boundary = BOUNDARY[:-1] + f"|[0-9０-９一二三四五六七八九十{syms}])"
         for alias, name, need_boundary in self._aliases():
-            pat = re.escape(alias) + (BOUNDARY if need_boundary else "")
+            pat = re.escape(alias) + (boundary if need_boundary else "")
             t = re.sub(pat, self.to_code[name], t)
         for u, code in self.unit_code.items():
             t = re.sub(re.escape(u) + r"(?=ユニット|フロア|[、。,.\s　のはがにでもとへやを]|$)", code, t)

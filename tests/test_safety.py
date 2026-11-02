@@ -21,10 +21,13 @@ def _bad(code):
         "day": [{"type": "day_off", "staff": code, "days": [40]}],
         "shift": [{"type": "set_cell", "staff": code, "days": [15], "shift": "X"}],
         "count": [{"type": "count_limit", "staff": code, "shift": "夜", "max": -1}],
+        # 人を省いた返事。そのままだと「全員 15・16日 休み」になる（レビュー b の指摘）
+        "nobody": [{"type": "day_off", "days": [15, 16]}],
+        "nobody_count": [{"type": "count_limit", "staff": [], "shift": "夜", "max": 0}],
     }
 
 
-@pytest.mark.parametrize("what", ["type", "person", "day", "shift", "count"])
+@pytest.mark.parametrize("what", ["type", "person", "day", "shift", "count", "nobody", "nobody_count"])
 def test_bad_reply_changes_nothing(sess, what):
     masked, _ = Masker(sess.store.staff(), sess.store.facility()).mask(TEXT)
     code = masked[:4]
@@ -32,5 +35,18 @@ def test_bad_reply_changes_nothing(sess, what):
     sess.reader = RecordedReader({masked: json.dumps({"items": _bad(code)[what]}, ensure_ascii=False)})
     b = snap(sess)
     r = sess.say(TEXT)
-    assert r.kind in ("ask", "error"), r
+    # 型が知らない物なら読み取りの失敗、それ以外はアプリの確かめで聞き返す（録った返事が無くて落ちたのではない）
+    assert r.kind == ("error" if what == "type" else "ask"), r
+    assert "録った返事" not in r.message
     unchanged(b, snap(sess))
+
+
+def test_mask_call_and_prefix_before_digits_and_shifts(store):
+    """呼び方や名前の頭のすぐ後ろに数字や勤務が続いても伏せる（読点の落ちた声の一言。レビュー c の指摘）。
+    ひだまりの名簿は2字で呼び方が無いので、呼び方と3字以上の名前の職員を作り話で足して試す。"""
+    from shiftvoice.model import Staff
+    staff = store.staff() + [Staff(name="遠藤ゆう", unit=store.facility().units[0], can=["日"], call="ゆうちゃ")]
+    m = Masker(staff, store.facility())
+    for text in ("遠藤15日休み", "遠藤夜勤なし", "ゆうちゃ20日休み", "ゆうちゃ早番で", "遠藤、二十日休み"):
+        masked, _ = m.mask(text)
+        assert "遠藤" not in masked and "ゆうちゃ" not in masked, (text, masked)
