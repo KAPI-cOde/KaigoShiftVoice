@@ -31,13 +31,13 @@ SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係で�
 返事は JSON だけ。形は {"items": [ ... ]}。一言に頼みが2つあれば2件にします。
 
 型と項目
-- day_off 休みの希望。staff, days(日の数の並び), reason
+- day_off 休みの希望。staff, days(日の数の並び), strength(「必ず」なら fixed、「できれば」なら negotiable、ほかは wish), reason。強さの違う日は別の件にする
 - set_cell その日をその勤務に。staff, days, shift, strength, reason
 - avoid_cell その日はその勤務にしない。staff, days, shift, reason
 - move 前に決まったマスを別の日へ移す。staff, shift, from_day, to_day, reason
 - forbid_sequence 並びの禁止（AのつぎのひにB）。staff(並び。全員なら null), first, next(記号。Bが2つ以上なら並び), strength, reason
 - count_limit 月の回数。staff(並び。全員なら null), shift, min, max(言っていなければ null), until_day(「〇日まで」なら日、なければ null), strength, reason
-- weekday_pref 曜日の頼み。staff, weekdays(mon〜sun), shift, avoid(避けるなら true), reason
+- weekday_pref 曜日の頼み。staff, weekdays(mon〜sun), shift, avoid(避けるなら true), until_month(「12月いっぱい」なら 12。なければ null), reason
 - consecutive_limit 続けて働く日数の上限。staff, max, reason
 - staff_info 職員の情報の変更（できる勤務など）。staff, from_month, can_add(記号の並び), can_remove
 - leave_count 有給の日数の頼み（日付は任せる）。staff, count(日数。言っていなければ null), reason
@@ -47,7 +47,7 @@ SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係で�
 
 strength は fixed(「絶対」「動かせない」と言った時と研修など外の予定) / operational(施設の運用の事情。試験まで・人手など) / wish(本人の希望) / negotiable(配慮の言い方。「きつい」「〜してあげて」)
 reason は言葉にある理由を短く。なければ null。言い直し（「14日、あ、違う、15日」）は後の方だけ。
-言っていない変更は足さない。「くらい」でも数はそのまま。
+言っていない変更は足さない（「あとはできるだけ今のまま」は件にしない）。「くらい」でも数はそのまま。
 
 例
 一言「職員03さん、8日は通院で休み」

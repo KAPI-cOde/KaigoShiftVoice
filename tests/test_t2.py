@@ -263,3 +263,31 @@ def test_t2_20_zero_this_month_only(sess):
     a = snap(sess)
     assert a["table"]["小島"].count("夜") == 0
     common(b, a)
+
+
+def test_t2_05_weekday_until_december(sess):
+    """12月いっぱいの曜日の頼み。11月の木曜の早番が全部なくなり、12月の写しには残り、1月には残らない。"""
+    b = snap(sess)
+    r = sess.say("石田さん、木曜は子どもの送りがあるから、12月いっぱい早番にしないでほしいって")
+    assert r.kind == "applied", r
+    a = snap(sess)
+    assert [a["table"]["石田"][d - 1] for d in (5, 12, 19, 26)].count("早") == 0
+    led = sess.store.ledger()
+    rid = r.rule_ids[0]
+    assert rid in led.rules_at(between=("2026-12-01", "2026-12-31"))
+    assert rid not in led.rules_at(between=("2027-01-01", "2027-01-31"))
+    assert led.rules_at()[rid].name.endswith("（12月まで）")
+    common(b, a)
+
+
+def test_t2_09_must_and_maybe_in_one(sess):
+    """「必ず」と「できれば」が1文に。15日は外せない、16日はできれば。言っていない決まりは足さない。"""
+    b = snap(sess)
+    r = sess.say("岡田さん、15日は必ず休み、16日もできれば休み、あとはできるだけ今のまま")
+    assert r.kind == "applied", r
+    rules = sess.store.ledger().rules_at()
+    new = [rules[i] for i in r.rule_ids]
+    assert sorted((x.when[0], x.flex) for x in new) == [(15, "fixed"), (16, "negotiable")]
+    a = snap(sess)
+    assert a["table"]["岡田"][14] == "公"
+    common(b, a)

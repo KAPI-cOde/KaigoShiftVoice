@@ -117,8 +117,10 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         elif t == "day_off":
             who = _names(it.get("staff"), names)
             ds = _days(it.get("days"), month)
-            p.rules.append({"name": f"{_who(who)} {'・'.join(map(str, ds))}日 休み", "kind": "cell",
-                            "flex": "wish", "params": {"in": ["公"]}, "who": who, "when": ds})
+            fl = {"fixed": "fixed", "negotiable": "negotiable"}.get(it.get("strength"), "wish")
+            p.rules.append({"name": f"{_who(who)} {'・'.join(map(str, ds))}日 休み"
+                                    + {"fixed": "（必ず）", "negotiable": "（できれば）"}.get(fl, ""),
+                            "kind": "cell", "flex": fl, "params": {"in": ["公"]}, "who": who, "when": ds})
         elif t in ("set_cell", "avoid_cell"):
             who = _names(it.get("staff"), names)
             ds = _days(it.get("days"), month)
@@ -185,7 +187,13 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 raise Clarify("曜日が読めませんでした。何曜日か教えてください")
             avoid = it.get("avoid", True) is not False
             jp = "".join("月火水木金土日"[WEEKDAYS.index(w)] for w in wds)
-            p.rules.append({"name": f"{_who(who)} {jp}曜は{facility.shift(sym).name}{'に入れない' if avoid else 'にする'}",
+            um = _num(it.get("until_month"))
+            if um and 1 <= um <= 12:   # 「12月いっぱい」。その月の末日まで（翌月の写しに残り、その次の月には残らない）
+                import calendar
+                uy = month.year + (1 if um < month.month else 0)
+                p.until = f"{uy:04d}-{um:02d}-{calendar.monthrange(uy, um)[1]:02d}"
+            upto = f"（{um}月まで）" if um and 1 <= um <= 12 else ""
+            p.rules.append({"name": f"{_who(who)} {jp}曜は{facility.shift(sym).name}{'に入れない' if avoid else 'にする'}{upto}",
                             "kind": "weekday", "flex": "wish",
                             "params": {"weekdays": wds, ("not_in" if avoid else "in"): [sym]},
                             "who": who, "when": None})
