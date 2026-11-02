@@ -88,6 +88,7 @@
   .rv-card .ext { margin-top: 12px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
   .rv-card .ext input { font: inherit; border: 1px solid #000; border-radius: 3px; padding: 5px 8px; }
   .rv-card .ext input.chtext { flex: 1; min-width: 0; }
+  .hint { margin-top: 8px; font-size: 12px; color: #444; line-height: 1.6; }
   .btns select { font: inherit; font-size: 13px; border: 1px solid #000; border-radius: 3px; padding: 6px 8px; background: #fff; }
   .rv-card .ext button.on { background: #000; color: #fff; }
   .rv-err { color: #c0392b; font-size: 13px; min-height: 18px; }
@@ -114,7 +115,7 @@
 </style>
 </head>
 <body>
-<div id="keybar">Claude の鍵が入っていないので、一言の読み取りは動きません（README の手順）</div>
+<div id="keybar">Claude の鍵が入っていないので、一言の読み取りは動きません。ターミナルで止めて（Ctrl+C）もう一度起動すると、鍵を聞きます</div>
 <div id="topbar"><span id="distwrap"></span><button type="button" id="to12">12月へ</button></div>
 <main id="v11">
   <section class="left">
@@ -128,6 +129,7 @@
       <button type="button" id="talk" style="display:none">話す</button>
       <button type="button" id="undo" disabled>ひとつ戻す</button>
     </form>
+    <div class="hint" id="hint">例「岡田さん、15と16は法事で休み」「遅番の次の日に早番はきついから、やめてあげて」。Claude へ送るのは、名前を番号に伏せた一言だけです。直した後も［ひとつ戻す］で戻せます。</div>
   </section>
   <section class="right">
     <h2>ルール</h2>
@@ -452,6 +454,7 @@ function renderKey() {
 }
 
 function renderAll() {
+  document.getElementById("hint").style.display = saidList.length ? "none" : "block";  // 初めの一言までだけ出す
   renderKey();
   renderDist();
   renderTable();

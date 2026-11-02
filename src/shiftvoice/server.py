@@ -173,12 +173,27 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
     return H
 
 
-def serve(session: Session, *, port: int = 8765, has_key: bool = False, voice=None) -> None:
+def serve(session: Session, *, port: int = 8765, has_key: bool = False, voice=None,
+          open_browser: bool = False) -> None:
     session.open()
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(session, threading.Lock(), has_key, voice))
+    handler = make_handler(session, threading.Lock(), has_key, voice)
+    httpd = None
+    for p in range(port, port + 10):   # 使われていたら次の番号へ（別のアプリと重なっても止まらない）
+        try:
+            httpd = ThreadingHTTPServer(("127.0.0.1", p), handler)
+            port = p
+            break
+        except OSError:
+            continue
+    if httpd is None:
+        raise SystemExit(f"{port}〜{port + 9} 番がすべて使われています。--port で別の番号を指定してください")
     from .nextflow import NextFlow
     httpd.flow = lambda: NextFlow(session.store, session.year, session.month)
-    print(f"開きました http://127.0.0.1:{port}/ （止める時は Ctrl+C）")
+    url = f"http://127.0.0.1:{port}/"
+    print(f"開きました {url} （止める時は Ctrl+C）", flush=True)
+    if open_browser:
+        import webbrowser
+        threading.Timer(0.5, webbrowser.open, args=(url,)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

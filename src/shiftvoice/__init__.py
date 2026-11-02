@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import functools
+import builtins
+
+print = functools.partial(builtins.print, flush=True)  # 案内はすぐ出す（溜め込まない）
 from pathlib import Path
 
 
@@ -13,6 +17,7 @@ def main() -> None:
     d.add_argument("--data", default="data/runtime/hidamari", help="動かす用の置き場（初めはリポジトリのデータを写す）")
     d.add_argument("--reset", action="store_true", help="置き場を初めの状態に戻す")
     d.add_argument("--voice", action="store_true", help="声の入口を使う（uv run --extra voice。初回は約2.4GB を取得）")
+    d.add_argument("--no-open", action="store_true", help="ブラウザを自動で開かない")
     st = sub.add_parser("state", help="撮り直し用に、動かす用の置き場を名前を付けて保存する・戻す（サーバーを止めてから）")
     st.add_argument("action", choices=["save", "load", "list"])
     st.add_argument("name", nargs="?", help="例 start（11月1日の操作の前）・end（11月末）")
@@ -22,6 +27,8 @@ def main() -> None:
         return _state(args)
     if args.cmd == "demo":
         from .server import demo_session, serve
+        _ask_key()
+        _backup(Path(args.data))
         session, has_key = demo_session(Path(args.data), reset=args.reset)
         if not has_key:
             print("ANTHROPIC_API_KEY がありません。表は見られますが、一言の読み取りは動きません（README の鍵の入れ方）")
@@ -34,7 +41,7 @@ def main() -> None:
             print("声のモデルを読み込んでいます（10秒ほど）")
             voice = v.Voice([s.name for s in session.store.staff()])
         print("はじめて開く時は、11月の表を作るのに20秒ほどかかります")
-        serve(session, port=args.port, has_key=has_key, voice=voice)
+        serve(session, port=args.port, has_key=has_key, voice=voice, open_browser=not args.no_open)
 
 
 def _state(args) -> None:
@@ -62,3 +69,42 @@ def _state(args) -> None:
     tmp.rename(dst)
     shutil.rmtree(old, ignore_errors=True)
     print(("保存しました " if args.action == "save" else "戻しました ") + args.name)
+
+
+def _ask_key() -> None:
+    """鍵が無く、手元のターミナルから起動した時だけ聞く。入力は画面に出さず、このフォルダの .env（本人だけ読める）に書く。"""
+    import getpass
+    import os
+    import sys
+    from .server import load_dotenv
+    env = Path.cwd() / ".env"
+    load_dotenv(env)
+    if os.environ.get("ANTHROPIC_API_KEY") or not sys.stdin.isatty():
+        return
+    print("一言の読み取りに、あなたの Claude の API の鍵を使います（Enter だけなら、表を見るだけで始めます）")
+    try:
+        k = getpass.getpass("ANTHROPIC_API_KEY（入力は表示されません）: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not k:
+        return
+    os.environ["ANTHROPIC_API_KEY"] = k
+    ans = input("次からも使えるよう、このフォルダの .env に保存しますか（Git には入りません）[Y/n] ").strip().lower()
+    if ans in ("", "y", "yes", "はい"):
+        fd = os.open(env, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
+            f.write(f"ANTHROPIC_API_KEY={k}\n")
+        print("保存しました（.env）")
+
+
+def _backup(data: Path, keep: int = 5) -> None:
+    """起動するたびに、動かす用の置き場の控えを取る（新しい5つを残す）。戻す時は state load と同じ形で写す。"""
+    import datetime as dt
+    import shutil
+    if not data.exists():
+        return
+    base = data.parent / "backups"
+    base.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(data, base / dt.datetime.now().strftime("%Y%m%d-%H%M%S"), dirs_exist_ok=True)
+    for old in sorted(base.iterdir())[:-keep]:
+        shutil.rmtree(old, ignore_errors=True)
