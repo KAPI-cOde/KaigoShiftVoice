@@ -56,12 +56,20 @@ def _state(args) -> None:
         return
     if not args.name or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", args.name):
         raise SystemExit("名前は英数字で付けてください（例 start・end）")
+    lock = data / ".open.lock"
+    if args.action == "load" and lock.exists():
+        import os
+        try:
+            os.kill(int(lock.read_text(encoding="utf-8").split("\n", 1)[0]), 0)
+            raise SystemExit("サーバーが開いています。止めて（Ctrl+C）から戻してください")
+        except (ValueError, ProcessLookupError):
+            pass
     src, dst = (data, base / args.name) if args.action == "save" else (base / args.name, data)
     if not src.exists():
         raise SystemExit(f"{src} がありません")
     tmp = dst.with_name(dst.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
-    shutil.copytree(src, tmp)
+    shutil.copytree(src, tmp, ignore=shutil.ignore_patterns(".open.lock"))
     old = dst.with_name(dst.name + ".old")
     shutil.rmtree(old, ignore_errors=True)
     if dst.exists():
@@ -105,6 +113,7 @@ def _backup(data: Path, keep: int = 5) -> None:
         return
     base = data.parent / "backups"
     base.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(data, base / dt.datetime.now().strftime("%Y%m%d-%H%M%S"), dirs_exist_ok=True)
+    shutil.copytree(data, base / dt.datetime.now().strftime("%Y%m%d-%H%M%S"), dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns(".open.lock"))
     for old in sorted(base.iterdir())[:-keep]:
         shutil.rmtree(old, ignore_errors=True)

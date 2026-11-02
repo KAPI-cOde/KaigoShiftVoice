@@ -189,9 +189,13 @@ def serve(session: Session, *, port: int = 8765, has_key: bool = False, voice=No
             continue
     if httpd is None:
         raise SystemExit(f"{port}〜{port + 9} 番がすべて使われています。--port で別の番号を指定してください")
+    url = f"http://127.0.0.1:{port}/"
+    lock = _take_lock(session.store.root, url)
+    if lock is None:
+        httpd.server_close()
+        return
     from .nextflow import NextFlow
     httpd.flow = lambda: NextFlow(session.store, session.year, session.month)
-    url = f"http://127.0.0.1:{port}/"
     print(f"開きました {url} （止める時は Ctrl+C）", flush=True)
     if open_browser:
         import webbrowser
@@ -202,6 +206,28 @@ def serve(session: Session, *, port: int = 8765, has_key: bool = False, voice=No
         pass
     finally:
         httpd.server_close()
+        lock.unlink(missing_ok=True)
+
+
+def _take_lock(root: Path, url: str) -> Path | None:
+    """同じ置き場を2つのサーバーで開かない（後から保存した方が前の書き込みを消すため）。
+    すでに開いていれば、その URL を出して None を返す。前のサーバーが落ちて印だけ残った時は引き継ぐ。"""
+    lock = Path(root) / ".open.lock"
+    if lock.exists():
+        try:
+            pid, old_url = lock.read_text(encoding="utf-8").split("\n", 1)
+            alive = True
+            try:
+                os.kill(int(pid), 0)
+            except PermissionError:
+                pass          # ほかの利用者の動いているプロセス
+            if alive:
+                print(f"この置き場はもう開いています。{old_url.strip()} を開いてください", flush=True)
+                return None
+        except (ValueError, ProcessLookupError):
+            pass
+    lock.write_text(f"{os.getpid()}\n{url}", encoding="utf-8")
+    return lock
 
 
 def demo_session(data_dir: Path, *, reset: bool = False, reader=None, builder=None) -> tuple[Session, bool]:
