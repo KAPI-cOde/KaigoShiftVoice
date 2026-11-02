@@ -160,6 +160,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     r = Reply("ask", None, "表を配った後の扱いにしました")
                 elif self.path == "/api/undo":
                     r = session.undo()
+                elif self.path == "/api/wider":
+                    r = session.wider(data.get("uid", ""))
                 elif self.path == "/api/choose_name":
                     r = session.choose_name(data.get("uid", ""), data.get("wrong", ""), data.get("right", ""))
                 elif self.path == "/api/retry":

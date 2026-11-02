@@ -371,19 +371,27 @@ class Session:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], r["message"])
         if r["status"] != "ok":
-            self.store.update_pending(self.year, self.month, u["id"], status="wider")
-            return Reply("ask", u["id"], ASK_WIDER)
+            self.store.update_pending(self.year, self.month, u["id"], status="wider",
+                                      absence={"requester": name, "day": day, "layer": layer["def"]["id"],
+                                               "tried": list(duty)})
+            return Reply("ask", u["id"], ASK_WIDER, extra={"wider": True})
+        return self._make_offer(u, m, name, day, r, layer["def"]["id"])
+
+    def _make_offer(self, u: dict, m, name: str, day: int, r: dict, layer_id: str, wider: bool = False) -> Reply:
+        """頼む人が決まった案（待機の人、または案Eで広げた休みの人）。［了承をもらって直す］まで表は変えない。"""
         helper = r["duty"]
         offer = {"requester": name, "day": day, "duty": helper, "table": r["table"], "changes": r["changes"],
                  "rest": r["rest"], "rest_adjust": r["rest_adjust"], "support": r["support"],
-                 "layer": layer["def"]["id"], "base_rev": self.store.ledger().rev, "base_table": json.dumps(m.table),
+                 "layer": layer_id, "wider": wider, "base_rev": self.store.ledger().rev,
+                 "base_table": json.dumps(m.table),
                  "rules": [{"name": f"{name}さん {day}日 休み", "kind": "cell", "flex": "wish",
                             "params": {"in": ["公"]}, "who": [name], "when": [day]}], "scope": "once"}
         self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
         n = self._accepted(helper)
         rb, ra = r["rest"][helper]
+        who = f"待機ではない、その日休みの{helper}さん" if wider else f"その日の待機の{helper}さん"
         return Reply(
-                     "standby_offer", u["id"], f"その日の待機の{helper}さんに頼む案です（{len(r['changes'])}マス）",
+                     "standby_offer", u["id"], f"{who}に頼む案です（{len(r['changes'])}マス）",
                      changes=r["changes"], seconds=r["seconds"],
                      summary=f"公休　{name}さん {r['rest'][name][0]}日 → {r['rest'][name][1]}日　"
                              f"{helper}さん {rb}日 → {ra}日",
@@ -473,8 +481,31 @@ class Session:
         u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
         if u is None or u.get("status") != "offer":
             return Reply("error", uid, "断られた案が見つかりません")
-        self.store.update_pending(self.year, self.month, uid, status="wider")
-        return Reply("ask", uid, ASK_WIDER)
+        o = u["offer"]
+        a = u.get("absence") or {"requester": o["requester"], "day": o["day"], "layer": o["layer"], "tried": []}
+        a = {**a, "tried": a["tried"] + [o["duty"]]}
+        self.store.update_pending(self.year, self.month, uid, status="wider", absence=a, offer=None)
+        return Reply("ask", uid, ASK_WIDER, extra={"wider": True})
+
+    def wider(self, uid: str) -> Reply:
+        """［ほかの人に頼む案を見る］（案E。D4）。その日に休みの人へ、今月の引き受けが少ない順に1人ずつ頼む案を出す。
+        動かすのは頼んだ人とその1人だけ。了承をもらって直せば、その人の引き受けとして記録する。"""
+        u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
+        if u is None or u.get("status") != "wider" or not u.get("absence"):
+            return Reply("error", uid, "広げる頼みが見つかりません")
+        a = u["absence"]
+        m = self.store.month(self.year, self.month)
+        fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
+        rules = month_rules(self.store, self.year, self.month, with_premise=False)
+        skip = set(a["tried"]) | {a["requester"]}
+        cands = sorted((s.name for s in staff if s.name not in skip and m.table[s.name][a["day"] - 1] == "公"),
+                       key=lambda n: (self._accepted(n), n))
+        for c in cands:
+            r = fix_absence(fac, staff, rules, m, m.table, a["requester"], a["day"], [c])
+            if r["status"] == "ok":
+                return self._make_offer(u, m, a["requester"], a["day"], r, a["layer"], wider=True)
+        self.store.resolve_pending(self.year, self.month, uid)
+        return Reply("ask", uid, "その日に休みの人に頼んでも、埋められませんでした。表は変えていません")
 
     def cancel(self, uid: str) -> Reply:
         """［やめる］。頼みを取り下げる（表も記録も変えない）。"""

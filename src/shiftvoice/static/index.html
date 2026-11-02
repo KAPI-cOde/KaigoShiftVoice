@@ -387,6 +387,18 @@ function renderReply(r) {
     box.appendChild(rb);
     return;
   }
+  if (r.extra && r.extra.wider) {  // 案E。待機の人だけでは埋められない時に、その旨を言ってから広げる
+    box.appendChild(el("div", "q", r.message || ""));
+    var wb = el("div", "btns");
+    [["ほかの人に頼む案を見る", "wider", "primary"], ["やめる", "cancel", ""]].forEach(function (p) {
+      var b = el("button", p[2], p[0]);
+      b.type = "button";
+      b.addEventListener("click", function () { sendOffer(p[1], r.uid); });
+      wb.appendChild(b);
+    });
+    box.appendChild(wb);
+    return;
+  }
   if (r.extra && r.extra.ask_name) {  // 名簿にない名前。選ぶまで何も送らず、表も動かさない
     var an = r.extra.ask_name;
     box.appendChild(el("div", "q", r.message || ""));

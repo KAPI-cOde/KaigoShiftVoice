@@ -158,7 +158,10 @@ def fix_absence(facility: Facility, staff: list[Staff], rules: list[Rule], month
                     fixed[(s.name, dd)] = table[s.name][dd - 1]
         off = Rule(id="t-absence", ver=1, name=f"{requester}さん {day}日 休み", kind="cell", flex="fixed",
                    params={"in": ["公"]}, who=[requester], when=[day], scope="once")
-        rs = rules + carry_rules(facility, table, rules) + [off]  # 表にある研修・有給は残す
+        # 頼まれた人は、その日に休む人と同じ勤務に入る（別の日に入ってその日が足りないままの案を出さない）
+        fill = Rule(id="t-fill", ver=1, name=f"{helper}さん {day}日 穴埋め", kind="cell", flex="fixed",
+                    params={"in": [table[requester][day - 1]]}, who=[helper], when=[day], scope="once")
+        rs = rules + carry_rules(facility, table, rules) + [off, fill]  # 表にある研修・有給は残す
         r = solve_month(facility, staff, rs, trial, hint=table, fixed_cells=fixed, max_dtime=2.0)
         if r.status != "ok":
             continue

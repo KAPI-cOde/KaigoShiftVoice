@@ -1,4 +1,5 @@
 """2幕の通し。待機当番を言葉で足す（D1）→ 配る → 休みの電話で待機の人だけ（D3）→ 了承で記録（D5）・断られた（D8）。"""
+import copy
 import json
 
 import pytest
@@ -148,3 +149,40 @@ def test_astra3_crash_before_record_recovers(act2, monkeypatch):
     assert [a.staff for a in s2.store.acceptances() if a.op_id == r.uid] == ["小島"]
     assert s2.store.month(2026, 11).table["小島"][0] == "日"
     assert s2.store.pending(2026, 11) == []
+
+
+def test_d4_wider_after_refused(act2):
+    """D4 案E。待機の人に断られたら「ほかの人に頼む案も見ますか」→ その日に休みの人へ1人ずつ。
+    動くのは頼んだ人と頼まれた人だけで、了承をもらって直すとその人の引き受けとして記録する。"""
+    s = act2
+    s.say(STANDBY)
+    s.distribute()
+    t0 = copy.deepcopy(s.store.month(2026, 11).table)
+    r = s.say(CALL)
+    x = s.refuse(r.uid)
+    assert x.extra.get("wider") and x.message == ASK_WIDER
+    o = s.wider(r.uid)
+    assert o.kind == "standby_offer", o
+    helper = o.extra["duty"]
+    assert helper not in ("小島", "青木") and t0[helper][0] == "公"
+    assert o.message.startswith(f"待機ではない、その日休みの{helper}さんに頼む案です")
+    a = s.accept(r.uid)
+    assert a.kind == "applied"
+    t1 = s.store.month(2026, 11).table
+    assert {n for n in t0 if t0[n] != t1[n]} <= {"青木", helper}
+    assert t1["青木"][0] == "公" and t1[helper][0] != "公"
+    assert [x.staff for x in s.store.acceptances() if x.date == "2026-11-01"] == [helper]
+    # 断った小島さんの記録は増えない
+    assert not any(x.staff == "小島" and x.date == "2026-11-01" for x in s.store.acceptances())
+
+
+def test_d4_wider_refused_again_tries_next(act2):
+    s = act2
+    s.say(STANDBY)
+    s.distribute()
+    r = s.say(CALL)
+    s.refuse(r.uid)
+    first = s.wider(r.uid).extra["duty"]
+    s.refuse(r.uid)
+    second = s.wider(r.uid)
+    assert second.kind == "standby_offer" and second.extra["duty"] not in (first, "小島")
