@@ -88,6 +88,8 @@
   .rv-card .ext { margin-top: 12px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
   .rv-card .ext input { font: inherit; border: 1px solid #000; border-radius: 3px; padding: 5px 8px; }
   .rv-card .ext input.chtext { flex: 1; min-width: 0; }
+  .legend { margin-top: 6px; font-size: 11px; color: #444; }
+  .q2 { font-size: 12px; color: #444; margin-top: 4px; }
   .hint { margin-top: 8px; font-size: 12px; color: #444; line-height: 1.6; }
   .btns select { font: inherit; font-size: 13px; border: 1px solid #000; border-radius: 3px; padding: 6px 8px; background: #fff; }
   .rv-card .ext button.on { background: #000; color: #fff; }
@@ -121,6 +123,7 @@
   <section class="left">
     <h2 id="tabletitle">表</h2>
     <div id="tablewrap"></div>
+    <div class="legend">早＝早番　日＝日勤　遅＝遅番　夜＝夜勤　明＝夜勤明け　公＝公休　研＝研修　有＝有給　／　東・西はユニット　／　黄色＝いま直ったマス</div>
     <div class="said" id="said"></div>
     <div class="reply" id="reply"></div>
     <form id="form" autocomplete="off">
@@ -336,6 +339,12 @@ function renderReply(r) {
   if (!r) return;
   if (r.kind === "standby_offer") {
     box.appendChild(el("div", "offer", r.message || ""));
+    // 動くマスを日本語の1行で（例「青木さん 1日 日勤→公休、小島さん 1日 公休→日勤」）
+    var nm = {}; (S && S.shift_names || []).forEach(function (x) { nm[x[0]] = x[1]; });
+    var mv = (r.changes || []).map(function (c) {
+      return c.staff + "さん " + c.day + "日 " + (nm[c.before] || c.before) + "→" + (nm[c.after] || c.after);
+    }).join("、");
+    if (mv) box.appendChild(el("div", "offer2", mv));
     box.appendChild(el("div", "offer2", r.summary || ""));
     var ob = el("div", "btns");
     [["了承をもらって直す", "accept", "primary"], ["断られた", "refuse", ""], ["やめる", "cancel", ""]].forEach(function (p) {
@@ -378,6 +387,7 @@ function renderReply(r) {
       bs.appendChild(b);
     });
     box.appendChild(bs);
+    box.appendChild(el("div", "q2", "毎月＝来月からもずっと続くルール。今月だけ＝この月の表にだけ効き、来月には引き継ぎません"));
     return;
   }
   if (r.kind === "error") {
@@ -437,6 +447,7 @@ function renderDist() {
   if (!S) return;
   if (S.distributed) { w.textContent = "配った後"; return; }
   var b = el("button", "", "配った");
+  b.title = "表を職員に配った後は、休みの電話の直しを、待機の人の了承や［これで直す］で確かめてから表に入れます";
   b.type = "button";
   b.addEventListener("click", function () {
     if (busy) return;

@@ -60,7 +60,7 @@
 
 ## 動かし方
 
-いるものは [uv](https://docs.astral.sh/uv/) と、自分の Claude の API の鍵です。
+いるものは [uv](https://docs.astral.sh/uv/) と、自分の Claude の API の鍵です。鍵が無くても表とルールは見られますが、一言で直すには鍵が要ります（起動した時にターミナルで聞きます）。
 
 ```
 uv run shiftvoice demo

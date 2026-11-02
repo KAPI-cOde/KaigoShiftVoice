@@ -535,6 +535,7 @@ class Session:
             "year": self.year, "month": self.month, "days": m.days, "holidays": m.holidays,
             "weekdays": [m.weekday(d) for d in range(1, m.days + 1)],
             "staff": [{"name": s.name, "unit": s.unit, "changes": s.changes} for s in staff],
+            "shift_names": [[st.symbol, st.name] for st in fac.shift_types],
             "table": m.table,
             "cards": [{"id": r.id, "name": r.name, "flex": r.flex, "scope": r.scope, "who": r.who,
                        "when": r.when, "kind": r.kind, "params": r.params, "meta": r.meta}
