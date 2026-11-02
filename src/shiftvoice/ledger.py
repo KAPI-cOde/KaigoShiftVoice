@@ -73,8 +73,10 @@ class Ledger:
                 cancelled[t["target_rev"]] = not cancelled.get(t["target_rev"], False)
         return [t for t in txs if t["op"] != "undo" and not cancelled.get(t["rev"], False)]
 
-    def rules_at(self, at_rev: int | None = None, on: str | None = None) -> dict[str, Rule]:
-        """rev の時点の札の一覧。on（YYYY-MM-DD）を渡すと、その日に効いている物だけ。"""
+    def rules_at(self, at_rev: int | None = None, on: str | None = None,
+                 between: tuple[str, str] | None = None) -> dict[str, Rule]:
+        """rev の時点の札の一覧。on（YYYY-MM-DD）を渡すと、その日に効いている物だけ。
+        between（始めの日, 終わりの日）を渡すと、その間に1日でも効く物だけ（月の表を作る時）。"""
         at_rev = self.rev if at_rev is None else at_rev
         rules: dict[str, dict] = {}
         spans: dict[str, tuple[str | None, str | None]] = {}
@@ -97,6 +99,8 @@ class Ledger:
         for rid, r in rules.items():
             frm, until = spans.get(rid, (None, None))
             if on is not None and ((frm and on < frm) or (until and on > until)):
+                continue
+            if between is not None and ((frm and between[1] < frm) or (until and between[0] > until)):
                 continue
             rr = Rule.from_dict(r)
             rr.meta = {**rr.meta, "from": frm, "until": until}
