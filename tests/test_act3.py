@@ -93,3 +93,36 @@ def test_m8_change_by_saying(act2):
     fl.undo(seq["rule_id"])
     dec = s.store.ledger().rules_at(between=("2026-12-01", "2026-12-31"))
     assert dec[seq["rule_id"]].params["next_not_in"] == ["早"] and new[0].id not in dec
+
+
+def test_hard_rules_zero_nov_dec(act2):
+    """完了条件3。台本の流れの後の11月の表と、12月の返さない案・返す案を、ソルバーとは別の点検
+    （rules.check_table）で数え、動かせない決まりの外れが0件。"""
+    from shiftvoice.build import month_rules
+    from shiftvoice.rules import check_table
+    s = act2
+    s.say(STANDBY)
+    s.distribute()
+    s.accept(s.say(CALL).uid)
+    kojima_rest(s)
+    st = s.store
+    fl = NextFlow(st, 2026, 11)
+    v = fl.review()
+    for c in v["cards"]:
+        fl.answer(c["rule_id"], "archive" if c["reason"] == "expired" else "keep")
+    b = fl.build()
+    assert b["status"] == "ok", b
+    fac = st.facility()
+    nov = st.month(2026, 11)
+    dec = st.month(2026, 12)
+    tables = {"11月": (month_rules(st, 2026, 11, with_premise=False), st.staff_on(2026, 11), nov, nov.table),
+              "12月 返さない案": (month_rules(st, 2026, 12, with_premise=False), st.staff_on(2026, 12), dec,
+                             b["tables"]["base"]),
+              "12月 返す案": (month_rules(st, 2026, 12, with_premise=False), st.staff_on(2026, 12), dec,
+                           b["tables"]["give"])}
+    for label, (rules, staff, m, t) in tables.items():
+        br = check_table(rules, fac, staff, m, t)
+        by = {f: sum(1 for x in br if x["flex"] == f) for f in ("fixed", "wish", "operational", "negotiable")}
+        print(f"{label}　ルール{len(rules)}件　外れ 動かせない{by['fixed']}・本人の希望{by['wish']}・"
+              f"運用の都合{by['operational']}・相談できる{by['negotiable']}")
+        assert by["fixed"] == 0, (label, [x for x in br if x["flex"] == "fixed"])
