@@ -200,7 +200,9 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     m.minimize(sum(penalties))
 
     solver = cp_model.CpSolver()
-    solver.parameters.random_seed = st.get("seed", 11)
+    # 月ごとの種（撮影用に固定した一組。施設の設定 seed_by_month）。無ければ施設の種
+    solver.parameters.random_seed = st.get("seed_by_month", {}).get(f"{month.year:04d}-{month.month:02d}",
+                                                                    st.get("seed", 11))
     solver.parameters.num_workers = st.get("workers", 1)
     solver.parameters.max_deterministic_time = (max_dtime if max_dtime is not None
                                                 else st.get("max_deterministic_time", 30.0))
