@@ -40,7 +40,7 @@ def main() -> None:
                 v.download()
             print("声のモデルを読み込んでいます（10秒ほど）")
             voice = v.Voice([s.name for s in session.store.staff()])
-        print("はじめて開く時は、11月の表を作るのに20秒ほどかかります")
+        print("はじめて開く時は、11月の表を作るのに10秒ほどかかります")
         serve(session, port=args.port, has_key=has_key, voice=voice, open_browser=not args.no_open)
 
 
