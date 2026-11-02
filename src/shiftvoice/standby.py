@@ -14,7 +14,7 @@ import copy
 from ortools.sat.python import cp_model
 
 from .model import WEEKDAYS, Facility, Month, Rule, Staff
-from .resolve import changed_cells
+from .resolve import carry_rules, changed_cells
 from .rules import check_table
 from .solver import solve_month
 
@@ -158,7 +158,7 @@ def fix_absence(facility: Facility, staff: list[Staff], rules: list[Rule], month
                     fixed[(s.name, dd)] = table[s.name][dd - 1]
         off = Rule(id="t-absence", ver=1, name=f"{requester}さん {day}日 休み", kind="cell", flex="fixed",
                    params={"in": ["公"]}, who=[requester], when=[day], scope="once")
-        rs = rules + [off]
+        rs = rules + carry_rules(facility, table, rules) + [off]  # 表にある研修・有給は残す
         r = solve_month(facility, staff, rs, trial, hint=table, fixed_cells=fixed, max_dtime=2.0)
         if r.status != "ok":
             continue

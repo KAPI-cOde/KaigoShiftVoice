@@ -52,11 +52,26 @@
   .card .detail { margin-top: 6px; padding-top: 6px; border-top: 1px solid #ddd; font-size: 12px; }
   .card .detail div { margin-bottom: 2px; }
   .empty { font-size: 12px; }
+  #topbar { max-width: 1440px; margin: 0 auto; padding: 6px 20px 0; display: flex; justify-content: flex-end; font-size: 12px; }
+  #topbar button { font-size: 12px; padding: 2px 10px; }
+  .grid tr.standby td { height: 22px; font-size: 9px; border-top: 2px solid #000; background: #fafafa; }
+  .grid tr.standby td.name { font-size: 12px; background: #fafafa; }
+  .grid tr.standby td.name small { font-size: 10px; margin-left: 4px; }
+  .grid tr.standby td.cell { overflow: hidden; white-space: nowrap; }
+  .grid .acc { font-size: 10px; margin-left: 4px; font-weight: 700; }
+  .card .explain { border: 0; }
+  .card .explain div.box { border: 1px solid #000; border-radius: 3px; padding: 1px 6px; margin: 2px 0; display: inline-block; }
+  .reply .offer { font-weight: 700; margin-bottom: 2px; }
+  .reply .offer2 { margin-bottom: 6px; }
+  .reply .note { font-size: 11px; margin-left: 10px; font-weight: 400; }
+  button.primary { background: #000; color: #fff; }
+  button.primary:hover { background: #222; }
   footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
 </style>
 </head>
 <body>
 <div id="keybar">Claude の鍵が入っていないので、一言の読み取りは動きません（README の手順）</div>
+<div id="topbar"><span id="distwrap"></span></div>
 <main>
   <section class="left">
     <h2 id="tabletitle">表</h2>
@@ -86,6 +101,7 @@ var shown = {};            // 変更アニメーション中に見せる記号 "
 var ask = null;            // {uid, message, kind}
 var saidList = [];
 var busy = false;
+var offerR = null;         // 出ている頼む案 {uid, ...}
 var glowTimer = null;
 var WD = { sun: "日", mon: "月", tue: "火", wed: "水", thu: "木", fri: "金", sat: "土" };
 
@@ -112,6 +128,7 @@ function symName(sym) {
 // ルールで光らせるマス
 function ruleCells(card) {
   var out = {};
+  if (card.kind === "layer") return out;
   var names = card.who && card.who.length ? card.who : S.staff.map(function (s) { return s.name; });
   var days = card.when && card.when.length ? card.when : null;
   var shifts = null;
@@ -167,6 +184,8 @@ function renderTable() {
       var what = (ch.can_add || []).map(function (s) { return symName(s).replace("番", "番").replace("夜勤", "夜勤"); }).join("・");
       nm.appendChild(el("span", "mark", mm + "月から" + what + "も"));
     });
+    var accN = (S.accepted || {})[st.name];
+    if (accN && Object.keys(S.layers || {}).length) nm.appendChild(el("span", "acc", S.month + "月の引き受け " + accN + "回"));
     tr.appendChild(nm);
     var row = S.table[st.name] || [];
     for (var d2 = 1; d2 <= S.days; d2++) {
@@ -179,6 +198,21 @@ function renderTable() {
       tr.appendChild(td);
     }
     tb.appendChild(tr);
+  });
+  Object.keys(S.layers || {}).forEach(function (lid) {
+    var L = S.layers[lid];
+    var sr = el("tr", "standby");
+    var snm = el("td", "name");
+    snm.appendChild(document.createTextNode(L.name || "待機"));
+    sr.appendChild(snm);
+    for (var d3 = 1; d3 <= S.days; d3++) {
+      var who = (L.assign || {})[String(d3)] || [];
+      var td3 = el("td", "cell", who.map(function (n) { return n.replace(/さん$/, ""); }).join("・"));
+      var wd3 = S.weekdays[d3 - 1];
+      if (wd3 === "sat" || wd3 === "sun" || S.holidays.indexOf(d3) >= 0) td3.className += " off";
+      sr.appendChild(td3);
+    }
+    tb.appendChild(sr);
   });
   t.appendChild(tb);
   wrap.appendChild(t);
@@ -220,6 +254,14 @@ function renderCards() {
       if (m.who) dt.appendChild(el("div", "", "誰が " + m.who));
       if (m.at) dt.appendChild(el("div", "", "いつ " + fmtAt(m.at)));
       b.appendChild(dt);
+      if (c.kind === "layer" && m.explain) {
+        var ex = el("div", "detail explain");
+        m.explain.forEach(function (line) {
+          var hot = line.indexOf("引き受けた回数を翌月へ") >= 0;
+          ex.appendChild(el("div", hot ? "box" : "", line));
+        });
+        b.appendChild(ex);
+      }
     }
     b.addEventListener("click", function () {
       selected = selected === c.id ? null : c.id;
@@ -240,8 +282,25 @@ function renderReply(r) {
   var box = document.getElementById("reply");
   box.textContent = "";
   if (!r) return;
+  if (r.kind === "standby_offer") {
+    box.appendChild(el("div", "offer", r.message || ""));
+    box.appendChild(el("div", "offer2", r.summary || ""));
+    var ob = el("div", "btns");
+    [["了承をもらって直す", "accept", "primary"], ["断られた", "refuse", ""], ["やめる", "cancel", ""]].forEach(function (p) {
+      var b = el("button", p[2], p[0]);
+      b.type = "button";
+      b.addEventListener("click", function () { sendOffer(p[1], r.uid); });
+      ob.appendChild(b);
+    });
+    box.appendChild(ob);
+    return;
+  }
   if (r.kind === "applied") {
-    if (r.summary) box.appendChild(el("div", "summary", r.summary));
+    if (r.summary) {
+      var sm = el("div", "summary", r.summary);
+      if (r.extra && r.extra.note) sm.appendChild(el("span", "note", r.extra.note));
+      box.appendChild(sm);
+    }
     if (r.warning) box.appendChild(el("div", "warning", r.warning));
     return;
   }
@@ -268,6 +327,36 @@ function renderReply(r) {
   box.appendChild(el("div", "", r.message || ""));
 }
 
+function renderDist() {
+  var w = document.getElementById("distwrap");
+  w.textContent = "";
+  if (!S) return;
+  if (S.distributed) { w.textContent = "配った後"; return; }
+  var b = el("button", "", "配った");
+  b.type = "button";
+  b.addEventListener("click", function () {
+    if (busy) return;
+    setBusy(true);
+    post("distribute", {}).then(function (res) {
+      setBusy(false);
+      S = res.state;
+      renderAll();
+    }).catch(fail);
+  });
+  w.appendChild(b);
+}
+
+function sendOffer(path, uid) {
+  if (busy) return;
+  setBusy(true);
+  post(path, { uid: uid }).then(function (res) {
+    setBusy(false);
+    if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
+    offerR = null;
+    handle(res);
+  }).catch(fail);
+}
+
 function renderKey() {
   document.getElementById("undo").disabled = !(S && S.can_undo);
   document.getElementById("keybar").style.display = S && S.has_key === false ? "block" : "none";
@@ -275,6 +364,7 @@ function renderKey() {
 
 function renderAll() {
   renderKey();
+  renderDist();
   renderTable();
   renderCards();
   renderSaid();
@@ -293,6 +383,8 @@ function handle(res, isUndo) {
     shown[k] = c.before;
   });
   S = res.state;
+  offerR = r && r.kind === "standby_offer" ? r : null;
+  if (offerR) (r.changes || []).forEach(function (c) { glowCells[c.staff + "|" + c.day] = true; });
   ask = r && r.kind === "ask_period" ? r : null;
   if (r && r.kind === "applied") {
     (r.rule_ids || []).forEach(function (id) { newIds[id] = true; });
@@ -370,7 +462,19 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
   var pend = st.pending || [];
   var a = pend.filter(function (p) { return p.status === "ask_period"; })[0];
   var f = pend.filter(function (p) { return p.status === "failed"; })[0];
-  if (a) {
+  var of = pend.filter(function (p) { return p.status === "offer"; })[0];
+  if (of && of.offer) {
+    var o = of.offer, rest = o.rest || {};
+    var pr = function (n) { return rest[n] ? n + "さん " + rest[n][0] + "日 → " + rest[n][1] + "日" : ""; };
+    saidList.push(of.text);
+    renderSaid();
+    offerR = { kind: "standby_offer", uid: of.id, changes: o.changes || [],
+               message: "その日の待機の" + o.duty + "さんに頼む案です（" + (o.changes || []).length + "マス）",
+               summary: "公休　" + pr(o.requester) + "　" + pr(o.duty) };
+    (offerR.changes).forEach(function (c) { glowCells[c.staff + "|" + c.day] = true; });
+    renderTable();
+    renderReply(offerR);
+  } else if (a) {
     saidList.push(a.text);
     renderSaid();
     ask = { uid: a.id, kind: "ask_period", message: "毎月ですか、今月だけですか" };

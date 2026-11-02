@@ -66,3 +66,18 @@ def test_d7_already_off(act1_store):
     rules = month_rules(st, 2026, 11, with_premise=False)
     r = fix_absence(st.facility(), st.staff_on(2026, 11), rules, m, m.table, "小島", 1, ["青木"])
     assert r["status"] == "already_off" and r["message"] == ALREADY_OFF
+
+
+def test_d3_keeps_training_in_table(built_dir, tmp_path):
+    """1幕の一言を入れていない元の表でも、上野さん12日の研修は休みの電話の直しで動かない。"""
+    import shutil
+    from shiftvoice.store import Store
+    d = tmp_path / "h"
+    shutil.copytree(built_dir, d)
+    st = Store(d)
+    m = st.month(2026, 11)
+    rules = month_rules(st, 2026, 11, with_premise=False)
+    r = fix_absence(st.facility(), st.staff_on(2026, 11), rules, m, m.table, "青木", 1, ["小島"])
+    assert r["status"] == "ok", r
+    assert r["table"]["上野"][11] == "研"
+    assert {c["staff"] for c in r["changes"]} <= {"青木", "小島"}
