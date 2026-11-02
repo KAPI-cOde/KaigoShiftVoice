@@ -1,4 +1,4 @@
-"""shift-voice。話した言葉で直していく介護の勤務表（作り話の施設ひだまりの郷）。"""
+"""KaigoShiftVoice。話した言葉で直していく介護の勤務表（作り話の施設ひだまりの郷）。"""
 from __future__ import annotations
 
 import argparse

@@ -1,4 +1,4 @@
-# shift-voice-2026
+# KaigoShiftVoice
 
 介護の勤務表を、話した言葉で直していくアプリです（Built with Claude: Japan 2026 の作品。作成中）。
 
@@ -88,7 +88,7 @@ uv run shiftvoice demo
 uv run --extra voice shiftvoice demo --voice
 ```
 
-画面の［話す］を押して一言話し、もう一度押すと文字になり、文字で入れた時と同じように表が直ります。モデルの置き場は `~/Library/Caches/shift-voice/models/` で、環境変数 `SHIFTVOICE_MODELS` で変えられます。
+画面の［話す］を押して一言話し、もう一度押すと文字になり、文字で入れた時と同じように表が直ります。モデルの置き場は `~/Library/Caches/KaigoShiftVoice/models/` で、環境変数 `SHIFTVOICE_MODELS` で変えられます。
 
 ### 鍵の入れ方
 

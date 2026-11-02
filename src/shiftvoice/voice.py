@@ -1,6 +1,6 @@
 """声の入口（15章）。手元の Haas-ja-v1.0（ONNX 版）を sherpa-onnx で動かす。声は外へ送らない。
 
-- モデルはリポジトリの外（既定 ~/Library/Caches/shift-voice/models/haas-ja-v1.0-onnx。環境変数 SHIFTVOICE_MODELS で変えられる）
+- モデルはリポジトリの外（既定 ~/Library/Caches/KaigoShiftVoice/models/haas-ja-v1.0-onnx。環境変数 SHIFTVOICE_MODELS で変えられる）
 - 職員の名前と勤務の言葉を手がかり（hotwords、強さ1.5）として渡す。渡さないと 小島→尾島 などが出る
 - 音声は16kHz・モノラルの float の並び。ブラウザで16kHz に直してから送る（ffmpeg を使わない）
 - 長い発言は25秒ずつに切る。最初の読み込み（約11秒）は起動時に済ませる
@@ -23,7 +23,7 @@ SHIFT_WORDS = ("早番", "日勤", "遅番", "夜勤", "明け", "公休", "有�
 
 
 def model_dir() -> Path:
-    base = os.environ.get("SHIFTVOICE_MODELS") or str(Path.home() / "Library" / "Caches" / "shift-voice" / "models")
+    base = os.environ.get("SHIFTVOICE_MODELS") or str(Path.home() / "Library" / "Caches" / "KaigoShiftVoice" / "models")
     return Path(base) / "haas-ja-v1.0-onnx"
 
 
