@@ -33,13 +33,15 @@ def _months_back(ym: str, n: int) -> list[str]:
     return out
 
 
-def accepted_counts(items: list[Acceptance], ym: str, base_date: str, window: int = 1) -> dict[str, int]:
+def accepted_counts(items: list[Acceptance], ym: str, base_date: str, window: int = 1,
+                    include_returned: bool = False) -> dict[str, int]:
     """返していない引き受けの回数。ym（YYYY-MM）から window か月さかのぼる。基準日より後の発生日は数えない。
-    返した記録（returned_in がある物）は数えない（返しきれなかった分は次の月へ持ち越す）。"""
+    返した記録（returned_in がある物）は数えない（返しきれなかった分は次の月へ持ち越す）。
+    画面の「〇月の引き受け」は返した物も数える（include_returned）。"""
     months = set(_months_back(ym, window))
     out: dict[str, int] = {}
     for a in items:
-        if a.date[:7] in months and a.date <= base_date and not a.returned_in:
+        if a.date[:7] in months and a.date <= base_date and (include_returned or not a.returned_in):
             out[a.staff] = out.get(a.staff, 0) + 1
     return out
 
@@ -152,7 +154,7 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
         }
         if all(gb.checks.values()):
             gb.status, gb.message = "ok", ""
-        return gb
+            return gb
     return gb
 
 

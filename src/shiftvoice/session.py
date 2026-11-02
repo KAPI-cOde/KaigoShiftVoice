@@ -356,7 +356,7 @@ class Session:
 
     def _accepted(self, name: str) -> int:
         base = self.base_date or self.now().date().isoformat()
-        return accepted_counts(self.store.acceptances(), self.ym, base).get(name, 0)
+        return accepted_counts(self.store.acceptances(), self.ym, base, include_returned=True).get(name, 0)
 
     def _standby_offer(self, u: dict, p, m) -> Reply | None:
         offs = [r for r in p.rules if r["kind"] == "cell" and r["params"] == {"in": ["公"]}]
@@ -568,7 +568,7 @@ class Session:
             "layers": {k: {"name": v["def"]["name"], "assign": v["assign"], "rule_id": v["rule_id"]}
                        for k, v in m.layers.items()},
             "accepted": accepted_counts(self.store.acceptances(), self.ym,
-                                        self.base_date or self.now().date().isoformat()),
+                                        self.base_date or self.now().date().isoformat(), include_returned=True),
             "last_said": m.history[-1]["said"] if m.history else None,
             "symbols": [{"symbol": st.symbol, "name": st.name} for st in fac.shift_types],
             "absence_sim": self.store.absence_sim(self.year, self.month),

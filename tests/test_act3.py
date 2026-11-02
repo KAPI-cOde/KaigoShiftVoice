@@ -34,6 +34,7 @@ def test_act3_flow(act2):
     assert fl.adopt("give")["ok"]
     assert st.month(2026, 12).table == b["tables"]["give"]
     assert all(a.returned_in == "2026-12" for a in st.acceptances() if a.staff in b["counts"])  # 返した印
+    assert s.state()["accepted"]["小島"] == 3     # 返した後も、11月の画面の引き受けの回数は消えない
 
 
 def test_astra7_stale_plan_rejected(act2):
