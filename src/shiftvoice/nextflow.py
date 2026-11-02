@@ -121,7 +121,7 @@ class NextFlow:
         up, down = gb.increased, gb.decreased
         moved = sum(a - b for b, a in up.values())
         out.update({
-            "main": (f"{self.month}月に{counts[who]}回引き受け → {self.nm}月の土日祝の夜勤 "
+            "main": (f"{who}さん　{self.month}月に{counts[who]}回引き受け → {self.nm}月の土日祝の夜勤 "
                      f"{gb.before[who]}→{gb.after[who]}回") if who else "",
             "who": who,
             "sub": "夜勤の総数は同じ。土日祝の分をほかの人と配分し直す",
