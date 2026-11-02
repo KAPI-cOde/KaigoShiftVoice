@@ -67,11 +67,13 @@ def main():
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--build-runs", type=int, default=1, help="組み立て（待機の定義）を何回呼ぶか。D1e は10回で8回以上")
     ap.add_argument("--only", default=None, help="この文字を含む一言だけ")
+    ap.add_argument("--fixtures", default=str(ROOT / "tests" / "fixtures" / "replies.json"),
+                    help="比べる一言と用意の返事。tools/heldout.json は指示文の例に使っていない別の言い方")
     a = ap.parse_args()
     load_dotenv(ROOT / ".env")
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    fixtures = json.loads((ROOT / "tests" / "fixtures" / "replies.json").read_text(encoding="utf-8"))
+    fixtures = json.loads(Path(a.fixtures).read_text(encoding="utf-8"))
     if a.only:
         fixtures = {k: v for k, v in fixtures.items() if a.only in k}
     tmp = Path(tempfile.mkdtemp())
