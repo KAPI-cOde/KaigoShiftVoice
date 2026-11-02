@@ -66,6 +66,8 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
                 out.append(Instance(rule, f"{gname}/{d}", terms, lo, hi))
     elif k == "count":
         syms = _syms(p["shifts"], facility)
+        if p.get("capable_only"):  # その勤務に入れる人だけ（例 夜勤の回数は夜勤に入れる人だけ）
+            people = [s for s in people if any(x in s.can for x in syms)]
         for s in people:
             terms = [Term(s.name, d, syms) for d in _days(rule, month)]
             out.append(Instance(rule, s.name, terms, p.get("min"), p.get("max")))

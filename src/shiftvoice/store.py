@@ -65,6 +65,14 @@ class Store:
     def staff(self) -> list[Staff]:
         return [Staff.from_dict(s) for s in read_json(self.root / "staff.json")]
 
+    def staff_on(self, year: int, month: int) -> list[Staff]:
+        """その月の職員（月から効く職員情報の変更を当てた、入れる勤務）。表を作る・直す時はこちら。"""
+        out = []
+        for s in self.staff():
+            s.can = s.can_on(f"{year:04d}-{month:02d}")
+            out.append(s)
+        return out
+
     # 帳面
     def ledger(self) -> Ledger:
         return Ledger.from_list(read_json(self.root / "ledger.json", []))

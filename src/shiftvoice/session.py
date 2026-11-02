@@ -81,7 +81,7 @@ class Session:
         return self.state()
 
     def _resolve(self, m, new_rules):
-        fac, staff = self.store.facility(), self.store.staff()
+        fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
         rules = month_rules(self.store, self.year, self.month, with_premise=False)
         ids = {r.id for r in new_rules}
         new = [r for r in rules if r.id in ids]
@@ -170,7 +170,7 @@ class Session:
         if added:
             tmp = Ledger.from_list(led.to_list())
             rules = list(tmp.rules_at(between=self._span()).values())
-            fac, staff = self.store.facility(), self.store.staff()
+            fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
             ids = {r.id for r in added}
             rr = resolve(fac, staff, rules, m, m.table, [r for r in rules if r.id in ids])
             secs = rr.seconds

@@ -96,7 +96,7 @@ def month_rules(store: Store, year: int, month: int, *, with_premise: bool = Tru
 
 
 def build_original(store: Store, year: int, month: int, *, with_premise: bool = True) -> StagedResult:
-    fac, staff = store.facility(), store.staff()
+    fac, staff = store.facility(), store.staff_on(year, month)
     m = store.month(year, month)
     rules = month_rules(store, year, month, with_premise=with_premise)
     return solve_staged(fac, staff, rules, m)

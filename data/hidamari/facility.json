@@ -83,6 +83,13 @@
   "keep_weight": 500,
   "resolve_quality": {
    "weekend_off_spread": 300
+  },
+  "holidays": {
+   "2026-11": [
+    3,
+    23
+   ],
+   "2026-12": []
   }
  }
 }
