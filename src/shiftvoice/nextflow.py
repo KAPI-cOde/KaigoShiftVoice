@@ -7,7 +7,8 @@ from __future__ import annotations
 import calendar
 
 from .build import month_rules
-from .giveback import accepted_counts, build_pair, pattern_counts
+from .giveback import _months_back, accepted_counts, build_pair
+from .giveback import settings as gb_settings
 from .intake import Clarify, to_proposal
 from .ledger import LedgerError
 from .names import Masker
@@ -105,50 +106,52 @@ class NextFlow:
         return self.review()
 
     def build(self, base_date: str | None = None) -> dict:
-        """返さない案と返す案を同じ条件で作る。数えるのは今の月の引き受け（基準日は月末）。"""
+        """返さない案と返す案を同じ条件で作る。数えるのは返していない引き受け（さかのぼるのは施設の設定の
+        window_months か月。基準日は今の月の末）。"""
         self._ensure()
         last = calendar.monthrange(self.year, self.month)[1]
         base_date = base_date or f"{self.year:04d}-{self.month:02d}-{last:02d}"
         ym = f"{self.year:04d}-{self.month:02d}"
-        counts = accepted_counts(self.store.acceptances(), ym, base_date)
-        dec = self.store.month(self.ny, self.nm)
         fac, staff = self.store.facility(), self.store.staff_on(self.ny, self.nm)
+        window = gb_settings(fac)["window_months"]
+        items = self.store.acceptances()
+        counts = accepted_counts(items, ym, base_date, window)
+        dec = self.store.month(self.ny, self.nm)
         gb = build_pair(fac, staff, month_rules(self.store, self.ny, self.nm, with_premise=False), dec, counts)
         out = {"status": gb.status, "message": gb.message, "counts": counts, "checks": gb.checks}
         if gb.status != "ok":
             return out
-        who = max(counts, key=lambda n: (counts[n], n == "小島")) if counts else None
-        up, down = gb.increased, gb.decreased
-        moved = sum(a - b for b, a in up.values())
+        who = max(gb.people, key=lambda p: (p["accepted"], p["name"] == "小島"))
+        parts = []
+        if who["leave_after"] > who["leave_before"]:
+            parts.append(f"有給 {who['leave_before']}→{who['leave_after']}日")
+        if who["run_after"] < who["run_before"]:
+            parts.append(f"いちばん長い連勤 {who['run_before']}→{who['run_after']}日")
+        o = gb.others
         out.update({
-            "main": (f"{who}さん　{self.month}月に{counts[who]}回引き受け → {self.nm}月の土日祝の夜勤 "
-                     f"{gb.before[who]}→{gb.after[who]}回") if who else "",
-            "who": who,
-            "sub": "夜勤の総数は同じ。土日祝の分をほかの人と配分し直す",
-            "line2": f"減る{len(down)}人・増える{len(up)}人（1人2回まで）、増減は同じ{moved}回",
-            "people": [{"name": n, "before": gb.before[n], "after": gb.after[n], "accepted": counts.get(n, 0)}
-                       for n in gb.after],
+            "main": f"{who['name']}さん　{self.month}月に{who['accepted']}回引き受け → {self.nm}月は" + "・".join(parts),
+            "who": who["name"],
+            "sub": f"引き受けた{len(gb.people)}人に、" + {("leave", "run"): "有給を1日と、短い連勤", ("leave",): "有給を1日",
+                                                        ("run",): "短い連勤"}[tuple(gb.stage)] + "。人数とルールはそのまま",
+            "line2": f"ほかの人の5日続く勤務 {o['run5_before']}→{o['run5_after']}・飛び石 {o['tobi_before']}→{o['tobi_after']}（増やさない）",
+            "people": gb.people,
+            "others": o,
+            "leave_avg": round(gb.leave_avg, 1),
+            "stage": list(gb.stage),
             "seconds": round(gb.give.seconds + gb.base.seconds, 2),
-            "patterns": self._patterns(gb, fac),
             "tables": {"base": gb.base.table, "give": gb.give.table},
             "days": dec.days, "weekdays": [dec.weekday(d) for d in range(1, dec.days + 1)],
             "holidays": dec.holidays,
         })
         self._pair = gb
         m = self.store.month(self.ny, self.nm)
+        months = set(_months_back(ym, window))
         m.layers["_plans"] = {"base": gb.base.table, "give": gb.give.table, "rev": self.store.ledger().rev,
-                              "tail": m.prev_tail}
+                              "tail": m.prev_tail,
+                              "acc_ids": [x.id for x in items if x.date[:7] in months and x.date <= base_date
+                                          and not x.returned_in and x.staff in counts]}
         self.store.save_month(m)
         return out
-
-    @staticmethod
-    def _patterns(gb, fac) -> dict:
-        """採用の前に見せる、並びの負担の前後の1行（合格基準にはしない。悪くなっていれば赤。B5）。"""
-        b, a = pattern_counts(gb.base.table, fac), pattern_counts(gb.give.table, fac)
-        worse = a["tobi"] > b["tobi"] or a["long_runs"] > b["long_runs"]
-        return {"before": b, "after": a, "worse": worse,
-                "line": f"飛び石（休み・勤務・休み）{b['tobi']}→{a['tobi']}回、5日以上の連勤 "
-                        f"{b['long_runs']}→{a['long_runs']}回（返す条件には入れていません）"}
 
     def adopt(self, plan: str) -> dict:
         """［12月はこれで作る］。選んだ案を12月の表にする（施設が決める）。"""
@@ -163,5 +166,12 @@ class NextFlow:
         m.table = plans[plan]
         m.built_rev = self.store.ledger().rev
         m.layers["_adopted"] = plan
+        if plan == "give":  # 返した引き受けに印を付ける（返さない案を採ったら、次の月へ持ち越す）
+            ids = set(plans.get("acc_ids") or [])
+            items = self.store.acceptances()
+            for x in items:
+                if x.id in ids:
+                    x.returned_in = f"{self.ny:04d}-{self.nm:02d}"
+            self.store.save_acceptances(items)
         self.store.save_month(m)
         return {"ok": True, "plan": plan}

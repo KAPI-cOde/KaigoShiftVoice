@@ -169,7 +169,8 @@ class Month:
 class Acceptance:
     """引き受けの記録。変更の帳面とは別の記録で、元の操作の ID（op_id）で tx とつなぐ。
 
-    数えるのは「了承をもらって表を直した回数」だけ。発生日を持つ。
+    数えるのは、了承をもらって表を直した回数（layer は当番の ID）と、配った後の直しで休みから勤務に
+    変わった回数（layer は "fix"）。発生日を持つ。次の月に返したら returned_in にその月（YYYY-MM）を書く。
     """
     id: str
     staff: str
@@ -178,6 +179,7 @@ class Acceptance:
     op_id: str           # 表を直した操作の ID
     tx_rev: int | None = None
     note: str = ""
+    returned_in: str | None = None
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)

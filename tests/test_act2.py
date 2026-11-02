@@ -128,6 +128,12 @@ def test_astra2_multi_day_after_distribution_needs_ok(act2):
     assert json.dumps(act2.store.month(2026, 11).table) == t0     # ［これで直す］の前は変えない
     assert act2.accept(r.uid).kind == "applied"
     assert act2.store.month(2026, 11).table["篠原"][19] == "遅"
+    # 配った後の直しで休みから勤務に変わった人は、引き受けの記録に残る（言われた本人は数えない。2026-11-03）
+    before, after = json.loads(t0), act2.store.month(2026, 11).table
+    came = sorted((n, d + 1) for n in after for d in range(30)
+                  if n != "篠原" and before[n][d] in ("公", "有") and after[n][d] not in ("公", "有"))
+    fix = sorted((a.staff, int(a.date[-2:])) for a in act2.store.acceptances() if a.layer == "fix")
+    print("記録", fix); assert fix == came
 
 
 def test_astra3_crash_before_record_recovers(act2, monkeypatch):

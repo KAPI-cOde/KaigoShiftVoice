@@ -1,11 +1,13 @@
-"""引き受けを次の月に返す（12章。試験 B1〜B4・B7）。
+"""引き受けた人に、次の月を少し楽にする（12章。2026-11-03 に作者が返し方を変えた）。
 
-- 入力は前の月の引き受けの記録（了承をもらって表を直した回数。発生日が基準日まで）
-- 何を重い当番として返すかは施設の設定 settings.giveback（ひだまりは土日祝の夜勤）
-- 返さない案と返す案は、同じ決まり・同じ種・同じ計算の量で作る（A21）。返す案だけに
-  「引き受けた人が重い当番に入る1回ごとに weight×引き受けた回数」を目的に足し、合格基準を制約として入れる（制約版）
-  ① 重い当番の合計は同じ ② 動かせない決まりの違反0 ③ 人の間の差は返さない案から slack 回まで
-  ④ ほかの人の増分は1人 max_increase 回まで ⑤ 本人の希望の外れを増やさない
+土日祝の夜勤のような、人によって好みの分かれる勤務を減らすのはやめた。誰にとってもほぼ助かる物を少しだけ返す。
+- 有給をその月の平均＋1日（平均は返さない案の全員の有給の日数。小数は切り捨て）。もともとそれ以上なら変えない
+- いちばん長い連勤を1日短く（4日以上ある時だけ）
+- 締め切りの前なので表は一から作り直す。ただし引き受けていない人について、5日続く勤務と飛び石（休み・勤務・休み）を
+  返さない案より増やさない。引き受けていない人の有給は頼まれた分のまま
+- 作れない時は段を下げる。有給と連勤 → 有給だけ → 連勤だけ → この条件では返せません
+- 入力は引き受けの記録（了承をもらって表を直した回数と、配った後の直しで勤務が入った回数）
+返さない案と返す案は、同じ決まり・同じ種・同じ計算の量で作る（A21）。
 """
 from __future__ import annotations
 
@@ -14,28 +16,40 @@ from dataclasses import dataclass, field
 from .model import Acceptance, Facility, Month, Rule, Staff
 from .solver import SolveResult, solve_month
 
-DEFAULT = {"shift": "夜", "days": "weekend_or_holiday", "weight": 150, "max_increase": 2, "spread_slack": 1}
+DEFAULT = {"leave": "有", "extra_leave": 1, "shorten_run": 1, "min_run_to_shorten": 4, "window_months": 3}
+STAGES = (("leave", "run"), ("leave",), ("run",))
 
 
 def settings(facility: Facility) -> dict:
     return {**DEFAULT, **facility.settings.get("giveback", {})}
 
 
-def heavy_days(month: Month, gs: dict) -> list[int]:
-    return [d for d in range(1, month.days + 1) if month.is_weekend_or_holiday(d)]
+def _months_back(ym: str, n: int) -> list[str]:
+    y, m = int(ym[:4]), int(ym[5:7])
+    out = []
+    for _ in range(n):
+        out.append(f"{y:04d}-{m:02d}")
+        y, m = (y - 1, 12) if m == 1 else (y, m - 1)
+    return out
 
 
-def accepted_counts(items: list[Acceptance], ym: str, base_date: str) -> dict[str, int]:
-    """その月（YYYY-MM）の引き受けの回数。基準日より後の発生日の記録は数えない（デモ設定）。"""
+def accepted_counts(items: list[Acceptance], ym: str, base_date: str, window: int = 1) -> dict[str, int]:
+    """返していない引き受けの回数。ym（YYYY-MM）から window か月さかのぼる。基準日より後の発生日は数えない。
+    返した記録（returned_in がある物）は数えない（返しきれなかった分は次の月へ持ち越す）。"""
+    months = set(_months_back(ym, window))
     out: dict[str, int] = {}
     for a in items:
-        if a.date.startswith(ym) and a.date <= base_date:
+        if a.date[:7] in months and a.date <= base_date and not a.returned_in:
             out[a.staff] = out.get(a.staff, 0) + 1
     return out
 
 
-def heavy_counts(table: dict[str, list[str]], days: list[int], shift: str) -> dict[str, int]:
-    return {n: sum(row[d - 1] == shift for d in days) for n, row in table.items()}
+def longest_run(row: list[str], work: set[str]) -> int:
+    best = n = 0
+    for c in row:
+        n = n + 1 if c in work else 0
+        best = max(best, n)
+    return best
 
 
 @dataclass
@@ -43,19 +57,13 @@ class GiveBack:
     status: str                        # ok / cannot（この条件では返せません）/ base_failed
     base: SolveResult
     give: SolveResult | None
-    before: dict[str, int] = field(default_factory=dict)   # 返さない案の重い当番の回数
-    after: dict[str, int] = field(default_factory=dict)    # 返す案
     counts: dict[str, int] = field(default_factory=dict)   # 引き受けた回数
+    people: list[dict] = field(default_factory=list)       # 引き受けた人ごとの前後
+    others: dict = field(default_factory=dict)             # 引き受けていない人の並びの前後
+    stage: tuple = ()
+    leave_avg: float = 0.0
     checks: dict[str, bool] = field(default_factory=dict)
     message: str = ""
-
-    @property
-    def increased(self) -> dict[str, tuple[int, int]]:
-        return {n: (self.before[n], self.after[n]) for n in self.after if self.after[n] > self.before[n]}
-
-    @property
-    def decreased(self) -> dict[str, tuple[int, int]]:
-        return {n: (self.before[n], self.after[n]) for n in self.after if self.after[n] < self.before[n]}
 
 
 def _hard_broken(r: SolveResult) -> int:
@@ -69,54 +77,89 @@ def _wish_broken(r: SolveResult) -> int:
 def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month,
                counts: dict[str, int]) -> GiveBack:
     gs = settings(facility)
-    days = heavy_days(month, gs)
-    sym = gs["shift"]
+    work = set(facility.workday_symbols())
+    yu = gs["leave"]
     base = solve_month(facility, staff, rules, month)
     if base.status != "ok" or _hard_broken(base):
         return GiveBack("base_failed", base, None, message="返さない案が作れませんでした")
-    before = heavy_counts(base.table, days, sym)
-    capable = [s.name for s in staff if sym in s.can]
-    spread0 = max(before[n] for n in capable) - min(before[n] for n in capable)
+    names = [s.name for s in staff]
+    takers = [n for n in names if counts.get(n, 0) > 0]
+    others = [n for n in names if n not in takers]
+    leave0 = {n: base.table[n].count(yu) for n in names}
+    avg = sum(leave0.values()) / len(names)
+    target = {n: max(int(avg) + gs["extra_leave"], leave0[n]) for n in takers}
+    run0 = {n: longest_run(base.table[n], work) for n in takers}
+    pat0 = pattern_counts({n: base.table[n] for n in others}, facility)
+
+    def stage_rules(stage):
+        out = []
+        for n in takers:
+            if "leave" in stage and target[n] > leave0[n]:
+                out.append(Rule(id=f"g-leave-{n}", ver=1, name=f"{n}さん 有給を{target[n]}日", kind="count",
+                                flex="fixed", params={"shifts": [yu], "min": target[n], "max": target[n]},
+                                who=[n], when=None, scope="once"))
+            if "run" in stage and run0[n] >= gs["min_run_to_shorten"]:
+                out.append(Rule(id=f"g-run-{n}", ver=1, name=f"{n}さん 連勤を{run0[n] - gs['shorten_run']}日まで",
+                                kind="max_run", flex="fixed",
+                                params={"shifts": "work", "max": run0[n] - gs["shorten_run"]},
+                                who=[n], when=None, scope="once"))
+        return out
 
     def extra(m, x, penalties):
-        def heavy(name):
-            return sum(x[(name, d, sym)] for d in days if (name, d, sym) in x)
-        for name, c in counts.items():
-            if c > 0:
-                penalties.append(gs["weight"] * c * heavy(name))
-        for name in capable:  # ④ 引き受けた人どうしで移す時も、増える人は1人 max_increase 回まで（Astra の指摘6）
-            m.add(heavy(name) <= before[name] + gs["max_increase"])
-        hi = m.new_int_var(0, len(days), "giveback_hi")
-        lo = m.new_int_var(0, len(days), "giveback_lo")
-        hs = []
-        for name in capable:
-            v = m.new_int_var(0, len(days), "")
-            m.add(v == heavy(name))
-            hs.append(v)
-        m.add_max_equality(hi, hs)
-        m.add_min_equality(lo, hs)
-        m.add(hi - lo <= spread0 + gs["spread_slack"])                    # ③
-        m.add(sum(heavy(n) for n in capable) == sum(before[n] for n in capable))  # ①
+        # 引き受けていない人の5日続く勤務（5日の窓の数）と飛び石を、返さない案より増やさない
+        def w(name, d):
+            return sum(x[(name, d, y)] for y in work if (name, d, y) in x)
+        runs, tobi = [], []
+        for n in others:
+            for i in range(1, month.days - 3):
+                b = m.new_bool_var("")
+                m.add(sum(w(n, d) for d in range(i, i + 5)) - 4 <= b)
+                runs.append(b)
+            for d in range(2, month.days):
+                t = m.new_bool_var("")
+                m.add((1 - w(n, d - 1)) + w(n, d) + (1 - w(n, d + 1)) - 2 <= t)
+                tobi.append(t)
+        m.add(sum(runs) <= _run_windows({n: base.table[n] for n in others}, work))
+        m.add(sum(tobi) <= pat0["tobi"])
 
-    give = solve_month(facility, staff, rules, month, extra=extra)
-    gb = GiveBack("ok", base, give, before=before, counts=dict(counts))
-    if give.status != "ok":
-        gb.status, gb.message = "cannot", "この条件では返せません"
+    gb = GiveBack("cannot", base, None, counts=dict(counts), leave_avg=avg, message="この条件では返せません")
+    if not takers:
+        gb.message = "引き受けた人がいません"
         return gb
-    after = heavy_counts(give.table, days, sym)
-    gb.after = after
-    receivers = [n for n in capable if counts.get(n, 0) == 0]
-    gb.checks = {
-        "1_total_same": sum(after.values()) == sum(before.values()),
-        "2_no_hard_broken": _hard_broken(give) == 0,
-        "3_spread": (max(after[n] for n in capable) - min(after[n] for n in capable)) <= spread0 + gs["spread_slack"],
-        "4_increase": all(after[n] - before[n] <= gs["max_increase"] for n in capable),
-        "5_wish_not_more": _wish_broken(give) <= _wish_broken(base),
-        "returned": sum(after.get(n, 0) for n in counts) < sum(before.get(n, 0) for n in counts),
-    }
-    if not all(gb.checks[k] for k in gb.checks if k[0].isdigit()):
-        gb.status, gb.message = "cannot", "この条件では返せません"
+    for stage in STAGES:
+        add = stage_rules(stage)
+        if not add:
+            continue
+        give = solve_month(facility, staff, rules + add, month, hint=base.table, extra=extra)
+        if give.status != "ok":
+            continue
+        pat1 = pattern_counts({n: give.table[n] for n in others}, facility)
+        gb.give, gb.stage = give, stage
+        gb.people = [{"name": n, "accepted": counts[n],
+                      "leave_before": leave0[n], "leave_after": give.table[n].count(yu),
+                      "run_before": run0[n], "run_after": longest_run(give.table[n], work)} for n in takers]
+        gb.others = {"run5_before": _run_windows({n: base.table[n] for n in others}, work),
+                     "run5_after": _run_windows({n: give.table[n] for n in others}, work),
+                     "tobi_before": pat0["tobi"], "tobi_after": pat1["tobi"]}
+        gb.checks = {
+            "1_no_hard_broken": _hard_broken(give) == 0,
+            "2_wish_not_more": _wish_broken(give) <= _wish_broken(base),
+            "3_others_leave_same": all(give.table[n].count(yu) == leave0[n] for n in others),
+            "4_others_runs_not_more": gb.others["run5_after"] <= gb.others["run5_before"],
+            "5_others_tobi_not_more": gb.others["tobi_after"] <= gb.others["tobi_before"],
+            "returned": any(p["leave_after"] > p["leave_before"] or p["run_after"] < p["run_before"]
+                            for p in gb.people),
+        }
+        if all(gb.checks.values()):
+            gb.status, gb.message = "ok", ""
+        return gb
     return gb
+
+
+def _run_windows(table: dict[str, list[str]], work: set[str], n: int = 5) -> int:
+    """n 日続けて勤務の窓の数（6連勤なら2つ）。"""
+    return sum(1 for row in table.values() for i in range(len(row) - n + 1)
+               if all(c in work for c in row[i:i + n]))
 
 
 def pattern_counts(table: dict[str, list[str]], facility: Facility, run_len: int = 5) -> dict[str, int]:

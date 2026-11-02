@@ -887,16 +887,15 @@ function renderResult() {
       var sym = (give[n] || [])[d2 - 1] || "";
       var cls = "cell";
       if (offDay(d2)) cls += " hol";
-      if (offDay(d2) && sym === night) cls += " nightoff";
-      // 光らせるのは土日祝の夜勤が入れ替わったマスだけ（ほかのマスは解き直しで広く変わるので光らせない）
+      // 光らせるのは返さない案から変わったマスだけ（引き受けた人の有給と、それに合わせて動いたマス）
       var bsym = base[n] ? (base[n][d2 - 1] || "") : sym;
-      if (offDay(d2) && (bsym === night) !== (sym === night)) cls += " diff";
+      if (bsym !== sym) cls += " diff";
       tr.appendChild(el("td", cls, sym));
     }
     tb.appendChild(tr);
   });
   t.appendChild(tb);
-  var tt = el("div", "small", (R ? R.month : 12) + "月の表（返す案）。土日祝の夜勤は太字、返さない案から土日祝の夜勤が入れ替わったマスは黄色");
+  var tt = el("div", "small", (R ? R.month : 12) + "月の表（返す案）。返さない案から変わったマスは黄色");
   tt.style.marginBottom = "4px";
   left.appendChild(tt); left.appendChild(t);
   grid.appendChild(left);
@@ -904,33 +903,21 @@ function renderResult() {
   var side = el("div", ""); side.id = "res-side";
   var mb = el("button", "", "詳しく見る"); mb.type = "button";
   var dt = el("div", "detail"); dt.style.display = "none";
-  var inc = b.people.filter(function (p) { return p.after > p.before; });
-  var dec = b.people.filter(function (p) { return p.after < p.before; });
-  function ppl(title, arr, warn) {
-    dt.appendChild(el("div", "small", title));
-    var pl = el("div", "ppl");
-    if (!arr.length) pl.appendChild(el("div", "", "いません"));
-    arr.forEach(function (p) {
-      pl.appendChild(el("div", warn ? "warn" : "", p.name + " " + p.before + "→" + p.after + "回"));
-    });
-    dt.appendChild(pl);
-  }
-  if (b.patterns) {  // 並びの負担の前後（B5。合格基準ではない。悪くなっていれば赤）
-    dt.appendChild(el("div", "small", "並びの負担"));
-    dt.appendChild(el("div", b.patterns.worse ? "warn" : "", b.patterns.line));
-    var gp = el("div", ""); gp.style.height = "8px"; dt.appendChild(gp);
-  }
-  ppl("増える人", inc, true);
-  var gap = el("div", ""); gap.style.height = "8px"; dt.appendChild(gap);
-  ppl("減る人", dec, false);
-  var acc = b.people.filter(function (p) { return p.accepted; });
-  if (acc.length) {
-    var gap2 = el("div", ""); gap2.style.height = "8px"; dt.appendChild(gap2);
-    dt.appendChild(el("div", "small", "引き受けた回数"));
-    var al = el("div", "ppl");
-    acc.forEach(function (p) { al.appendChild(el("div", "", p.name + " " + p.accepted + "回")); });
-    dt.appendChild(al);
-  }
+  dt.appendChild(el("div", "small", "引き受けた人（返していない引き受けの回数）"));
+  var al = el("div", "ppl");
+  b.people.forEach(function (p) {
+    var t2 = p.name + " " + p.accepted + "回　有給 " + p.leave_before + "→" + p.leave_after + "日";
+    if (p.run_after < p.run_before) t2 += "・いちばん長い連勤 " + p.run_before + "→" + p.run_after + "日";
+    al.appendChild(el("div", "", t2));
+  });
+  dt.appendChild(al);
+  var gp = el("div", ""); gp.style.height = "8px"; dt.appendChild(gp);
+  dt.appendChild(el("div", "small", "ほかの人"));
+  var o = b.others || {};
+  var worse = o.run5_after > o.run5_before || o.tobi_after > o.tobi_before;
+  dt.appendChild(el("div", worse ? "warn" : "", "有給は頼まれた分のまま。5日続く勤務 " + o.run5_before + "→" + o.run5_after +
+                    "・飛び石（休み・勤務・休み） " + o.tobi_before + "→" + o.tobi_after));
+  dt.appendChild(el("div", "small", "有給の目安は、みんなの平均 " + b.leave_avg + "日＋1日"));
   mb.addEventListener("click", function () {
     var on = dt.style.display === "none";
     dt.style.display = on ? "block" : "none";

@@ -27,15 +27,13 @@ def test_act3_flow(act2):
     b = fl.build()
     assert b["status"] == "ok", b
     print(b["main"], "／", b["line2"], f"{b['seconds']}秒")
-    assert b["main"].startswith("小島さん　11月に3回引き受け → 12月の土日祝の夜勤")
-    assert b["sub"] == "夜勤の総数は同じ。土日祝の分をほかの人と配分し直す"
-    pt = b["patterns"]                     # B5 飛び石と長い連勤の前後の1行（合格基準ではない）
-    print(pt["line"], "赤" if pt["worse"] else "")
-    assert pt["line"].startswith("飛び石（休み・勤務・休み）") and isinstance(pt["worse"], bool)
+    assert b["main"].startswith("小島さん　11月に3回引き受け → 12月は有給 0→1日")
+    assert all(b["checks"].values())
     k = next(p for p in b["people"] if p["name"] == "小島")
-    assert k["before"] >= 1 and k["after"] < k["before"]   # 台本の山場（返すと小島さんの土日祝の夜勤が減る）
+    assert k["leave_after"] > k["leave_before"] and k["run_after"] < k["run_before"]   # 台本の山場
     assert fl.adopt("give")["ok"]
     assert st.month(2026, 12).table == b["tables"]["give"]
+    assert all(a.returned_in == "2026-12" for a in st.acceptances() if a.staff in b["counts"])  # 返した印
 
 
 def test_astra7_stale_plan_rejected(act2):

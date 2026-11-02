@@ -455,6 +455,24 @@ class Session:
             items = self.store.acceptances()
             if not any(a.id == acc.id for a in items):
                 self.store.save_acceptances(items + [acc])               # 2 引き受けの記録
+        elif m.distributed and o.get("base_table"):
+            # 配った後の直しで、休みから勤務に変わった人も記録する（締め切りの後の負担は次の月へ持ち越す。2026-11-03）
+            fac = self.store.facility()
+            rest = {st.symbol for st in fac.shift_types if st.kind in ("rest", "leave")}
+            before = json.loads(o["base_table"])
+            said_who = {w for rd in o["rules"] for w in (rd.get("who") or [])}
+            items = self.store.acceptances()
+            new = []
+            for c in o["changes"]:
+                n, d = c["staff"], c["day"]
+                if n in said_who or before[n][d - 1] not in rest or o["table"][n][d - 1] in rest:
+                    continue
+                aid = f"a-{uid}-{n}-{d}"
+                if not any(a.id == aid for a in items):
+                    new.append(Acceptance(id=aid, staff=n, date=f"{self.ym}-{d:02d}", layer="fix", op_id=uid,
+                                          tx_rev=led.rev, note="配った後の直しで勤務が入った"))
+            if new:
+                self.store.save_acceptances(items + new)                 # 2 引き受けの記録
         if not any(h.get("op_id") == uid for h in m.history):
             m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": u["text"],
                               "rest_adjust": m.rest_adjust, "support": m.support, "acceptance_id": acc_id})

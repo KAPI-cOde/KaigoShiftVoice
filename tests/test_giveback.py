@@ -31,17 +31,24 @@ def pair(built_dir, tmp_path_factory):
 
 
 def test_b1_both_plans_same_conditions(pair):
+    """返す案は、引き受けた人に有給（平均＋1日）と短い連勤。ほかの人の有給・5日続く勤務・飛び石は増えない。"""
     st, dec, gb = pair
-    assert gb.base.status == "ok" and gb.give is not None
-    print("返さない", {n: gb.before[n] for n in ("小島", "田村", "菊池")},
-          "返す", {n: gb.after.get(n) for n in ("小島", "田村", "菊池")},
-          "増", gb.increased, "減", gb.decreased, f"{gb.give.seconds:.1f}秒")
     assert gb.status == "ok", (gb.message, gb.checks)
-    assert all(gb.checks.values()), gb.checks   # B2 違反0・合格基準①〜④、B7 本人の希望の外れが増えない（⑤）
-    three = ("小島", "田村", "菊池")
-    assert sum(gb.after[n] for n in three) < sum(gb.before[n] for n in three)
-    # 増えた回数と減った回数が合う（B3）
-    up = sum(a - b for b, a in gb.increased.values())
-    down = sum(b - a for b, a in gb.decreased.values())
-    assert up == down
-    assert all(a - b <= 2 for b, a in gb.increased.values())  # B4
+    assert all(gb.checks.values()), gb.checks
+    for p in gb.people:
+        print(p)
+        assert p["leave_after"] == max(int(gb.leave_avg) + 1, p["leave_before"])
+        if p["run_before"] >= 4:
+            assert p["run_after"] <= p["run_before"] - 1
+    o = gb.others
+    assert o["run5_after"] <= o["run5_before"] and o["tobi_after"] <= o["tobi_before"]
+
+
+def test_b0_carry_over():
+    """返した引き受けは数えない。返していない物は window か月さかのぼって数える（持ち越し）。"""
+    items = [Acceptance(id="a", staff="小島", date="2026-10-04", layer="standby", op_id="o1"),
+             Acceptance(id="b", staff="小島", date="2026-11-01", layer="standby", op_id="o2", returned_in="2026-12"),
+             Acceptance(id="c", staff="田村", date="2026-09-12", layer="fix", op_id="o3")]
+    assert accepted_counts(items, "2026-11", "2026-11-30", 3) == {"小島": 1, "田村": 1}
+    assert accepted_counts(items, "2026-11", "2026-11-30", 2) == {"小島": 1}
+    assert accepted_counts(items, "2026-11", "2026-11-30") == {}
