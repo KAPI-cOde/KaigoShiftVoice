@@ -23,6 +23,16 @@ uv run shiftvoice demo
 
 最初の状態に戻す時は `uv run shiftvoice demo --reset` です。
 
+### 声で試す（任意）
+
+声は、このパソコンの中だけで文字にします（外へは送りません）。はじめての時は音声認識のモデル（約2.4GB）を取り込みます。
+
+```
+uv run --extra voice shiftvoice demo --voice
+```
+
+画面の［話す］を押して一言話し、もう一度押すと文字になり、文字で入れた時と同じように表が直ります。モデルの置き場は `~/Library/Caches/shift-voice/models/` で、環境変数 `SHIFTVOICE_MODELS` で変えられます。
+
 ### 鍵の入れ方
 
 一言の読み取りに Claude（Haiku 5.5）を使います。鍵は、このフォルダの `.env` に入れます（`.env` は Git に入りません）。鍵が画面や記録に出ないよう、次のように入力を求める形で書いてください。
@@ -52,7 +62,13 @@ uv run pytest -q
 | 部品 | 使い道 | ライセンス |
 |---|---|---|
 | OR-Tools（CP-SAT） | 勤務表を作る計算 | Apache-2.0 |
-| Anthropic Python SDK | 一言の読み取り（Claude Haiku 5.5）を呼ぶ | MIT |
+| Anthropic Python SDK | 一言の読み取り（Claude Haiku 5.5）と当番の組み立て（Claude Sonnet 5.5）を呼ぶ | MIT |
+| Haas-ja-v1.0（Third Intelligence） | 日本語の音声認識の元のモデル（声で試す時だけ） | Apache-2.0 |
+| oboroge0/Haas-ja-v1.0-onnx | 上のモデルを sherpa-onnx で動かす変換版（版 2c2133a を固定） | Apache-2.0（配布の記載） |
+| sherpa-onnx・sherpa-onnx-core | 音声認識を動かす | Apache-2.0 |
+| ONNX Runtime | モデルの推論（sherpa-onnx-core に同梱） | MIT |
+| huggingface_hub | モデルの取り込み | Apache-2.0 |
+| NumPy | 音声の配列 | BSD-3-Clause |
 
 ## ライセンス
 

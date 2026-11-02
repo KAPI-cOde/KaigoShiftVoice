@@ -65,6 +65,7 @@
   .reply .offer2 { margin-bottom: 6px; }
   .reply .note { font-size: 11px; margin-left: 10px; font-weight: 400; }
   button.primary { background: #000; color: #fff; }
+  #talk.on { background: #000; color: #fff; }
   button.primary:hover { background: #222; }
   footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
 </style>
@@ -81,6 +82,7 @@
     <form id="form" autocomplete="off">
       <input type="text" id="input" placeholder="気づいたことを一言で入れてください">
       <button type="submit" id="send">伝える</button>
+      <button type="button" id="talk" style="display:none">話す</button>
       <button type="button" id="undo" disabled>ひとつ戻す</button>
     </form>
   </section>
@@ -439,6 +441,60 @@ document.getElementById("undo").addEventListener("click", function () {
   }).catch(fail);
 });
 
+// 声の入口。マイクの音を16kHz・モノラルに直してこのパソコンのサーバーへ送る（外へは送らない）
+var rec = null;
+function startTalk() {
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+    var ctx = new (window.AudioContext || window.webkitAudioContext)();
+    var src = ctx.createMediaStreamSource(stream);
+    var proc = ctx.createScriptProcessor(4096, 1, 1);
+    var chunks = [];
+    proc.onaudioprocess = function (e) { chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+    src.connect(proc); proc.connect(ctx.destination);
+    rec = { ctx: ctx, stream: stream, proc: proc, src: src, chunks: chunks };
+    var b = document.getElementById("talk");
+    b.textContent = "話し終えた"; b.classList.add("on");
+  }).catch(function () {
+    renderReply({ kind: "failed_solve", message: "マイクが使えません。文字で入れてください" });
+  });
+}
+function to16k(chunks, rate) {
+  var n = chunks.reduce(function (a, c) { return a + c.length; }, 0);
+  var all = new Float32Array(n), o = 0;
+  chunks.forEach(function (c) { all.set(c, o); o += c.length; });
+  var ratio = rate / 16000, m = Math.floor(n / ratio), out = new Float32Array(m);
+  for (var i = 0; i < m; i++) {
+    var a = Math.floor(i * ratio), z = Math.min(n, Math.floor((i + 1) * ratio)), sum = 0;
+    for (var j = a; j < z; j++) sum += all[j];
+    out[i] = z > a ? sum / (z - a) : 0;
+  }
+  return out;
+}
+function stopTalk() {
+  var r = rec; rec = null;
+  var b = document.getElementById("talk");
+  b.textContent = "話す"; b.classList.remove("on");
+  r.proc.disconnect(); r.src.disconnect();
+  r.stream.getTracks().forEach(function (t) { t.stop(); });
+  var pcm = to16k(r.chunks, r.ctx.sampleRate);
+  r.ctx.close();
+  setBusy(true);
+  var headers = { "Content-Type": "application/octet-stream" };
+  if (ask) headers["X-Answer-Uid"] = ask.uid;
+  fetch("/api/voice", { method: "POST", headers: headers, body: pcm.buffer })
+    .then(function (x) { return x.json(); }).then(function (res) {
+      setBusy(false);
+      if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
+      saidList.push(res.text);
+      renderSaid();
+      handle(res);
+    }).catch(fail);
+}
+document.getElementById("talk").addEventListener("click", function () {
+  if (busy) return;
+  if (rec) stopTalk(); else startTalk();
+});
+
 document.getElementById("form").addEventListener("submit", function (ev) {
   ev.preventDefault();
   var inp = document.getElementById("input");
@@ -458,6 +514,7 @@ document.getElementById("form").addEventListener("submit", function (ev) {
 
 fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
   S = st;
+  if (st.has_voice) document.getElementById("talk").style.display = "";
   renderAll();
   var pend = st.pending || [];
   var a = pend.filter(function (p) { return p.status === "ask_period"; })[0];

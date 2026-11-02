@@ -12,6 +12,14 @@ dependencies = [
     "ortools==9.15.6755",
 ]
 
+[project.optional-dependencies]
+voice = [
+    "sherpa-onnx==1.13.6",
+    "sherpa-onnx-core==1.13.6",
+    "numpy",
+    "huggingface_hub",
+]
+
 [project.scripts]
 shiftvoice = "shiftvoice:main"
 

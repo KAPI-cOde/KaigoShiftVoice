@@ -5,6 +5,7 @@ API（すべて JSON）
 - POST /api/say     {"text"}          一言
 - POST /api/answer  {"uid", "text"}   「毎月ですか、今月だけですか」への返事（"rule"/"once" か話し言葉）
 - POST /api/retry   {"uid"}           送り直す
+- POST /api/voice   16kHz float32     声を文字にして一言と同じ流れへ（X-Answer-Uid があれば聞き返しへの返事）
 - POST /api/undo    {}                ひとつ戻す
 - POST /api/distribute {}             表を配った（ここから休みの電話は待機の人に頼む直し）
 - POST /api/accept|refuse|cancel {"uid"}  ［了承をもらって直す］［断られた］［やめる］
@@ -44,7 +45,7 @@ def load_dotenv(path: Path) -> None:
         os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
-def make_handler(session: Session, lock: threading.Lock, has_key: bool):
+def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=None):
     class H(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):  # 発言や鍵を端末に流さない
             pass
@@ -66,6 +67,26 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool):
             origin = self.headers.get("Origin")
             return origin is None or origin in {f"http://{h}" for h in ok}
 
+        def _voice(self, ctype: str):
+            """声（16kHz・モノラルの float32 の並び）を文字にして、文字の一言と同じ流れに入れる。声は外へ送らない。"""
+            if not self._local() or not ctype.startswith("application/octet-stream"):
+                return self._json(403, {"error": "手元の画面からだけ送れます"})
+            if voice is None:
+                return self._json(200, {"error": "声の入口が使えません。文字で入れてください"})
+            import numpy as np
+            n = int(self.headers.get("Content-Length") or 0)
+            samples = np.frombuffer(self.rfile.read(n), dtype="<f4")
+            text, secs = voice.transcribe(samples)
+            if not text:
+                return self._json(200, {"error": "聞き取れませんでした。もう一度話すか、文字で入れてください",
+                                        "voice_seconds": secs})
+            with lock:
+                uid = self.headers.get("X-Answer-Uid")
+                r = session.answer(uid, text) if uid else session.say(text)
+                st = session.state()
+            st["has_key"] = has_key
+            self._json(200, {"text": text, "voice_seconds": round(secs, 3), "reply": r.to_dict(), "state": st})
+
         def do_GET(self):
             if not self._local():
                 return self._json(403, {"error": "手元からだけ開けます"})
@@ -80,12 +101,16 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool):
                 with lock:
                     st = session.state()
                 st["has_key"] = has_key
+                st["has_voice"] = voice is not None
                 self._json(200, st)
             else:
                 self._json(404, {"error": "not found"})
 
         def do_POST(self):
-            if not self._local() or not (self.headers.get("Content-Type") or "").startswith("application/json"):
+            ctype = self.headers.get("Content-Type") or ""
+            if self.path == "/api/voice":
+                return self._voice(ctype)
+            if not self._local() or not ctype.startswith("application/json"):
                 return self._json(403, {"error": "手元の画面からだけ送れます"})
             n = int(self.headers.get("Content-Length") or 0)
             try:
@@ -120,9 +145,9 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool):
     return H
 
 
-def serve(session: Session, *, port: int = 8765, has_key: bool = False) -> None:
+def serve(session: Session, *, port: int = 8765, has_key: bool = False, voice=None) -> None:
     session.open()
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(session, threading.Lock(), has_key))
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(session, threading.Lock(), has_key, voice))
     print(f"開きました http://127.0.0.1:{port}/ （止める時は Ctrl+C）")
     try:
         httpd.serve_forever()
