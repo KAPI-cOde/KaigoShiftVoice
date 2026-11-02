@@ -1,0 +1,24 @@
+[project]
+name = "shiftvoice"
+version = "0.1.0"
+description = "話して直せる介護の勤務表（Built with Claude: Japan 2026）"
+authors = [
+    { name = "KAPI-cODe" }
+]
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = [
+    "ortools==9.15.6755",
+]
+
+[project.scripts]
+shiftvoice = "shiftvoice:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
