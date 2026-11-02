@@ -120,6 +120,15 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
                     continue  # 前の月だけの窓は数えない
                 terms = [Term(s.name, d, syms) for d in days]
                 out.append(Instance(rule, f"{s.name}/{days[0]}-{days[-1]}", terms, None, m))
+        # 月末の夜勤は翌月1日の明けまで続く。月末の m 日がすべて勤務で末日が夜勤だと、翌月1日で上限を超える
+        # （月の中だけを見て作ると、翌月の表が作れなくなる。2026-11-02 に12月で起きた）
+        ake = [st.symbol for st in facility.shift_types if st.kind == "ake"]
+        night = [st.symbol for st in facility.shift_types if st.next_is_ake]
+        if ake and night and ake[0] in syms and month.days >= m:
+            last = list(range(month.days - m + 1, month.days + 1))
+            for s in people:
+                terms = [Term(s.name, d, syms) for d in last] + [Term(s.name, month.days, night)]
+                out.append(Instance(rule, f"{s.name}/{last[0]}-翌月1", terms, None, m))
     elif k == "weekday":
         wd = set(p["weekdays"])
         for s in people:

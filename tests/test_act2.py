@@ -12,6 +12,19 @@ from test_t1_act1 import ACT1
 BUILDS = REPLIES.parent / "builds.json"
 STANDBY = "毎月、土日は休みの人から待機1人。急な休みの電話はその人にだけ。引き受けた回数は、翌月も覚えておいて"
 CALL = "青木さんから電話で、11月1日の日曜、お休みしたいって"
+# 小島さんの残り2回の穴埋め（2幕を撮った後に、2幕と同じ［了承をもらって直す］で作る。12章のデモ設定）
+LATER_CALLS = ["久保さんから電話で、11月14日の土曜、お休みしたいって",
+               "篠原さんから電話で、11月22日の日曜、お休みしたいって"]
+
+
+def kojima_rest(s):
+    """2幕の後、小島さんの残り2回を実際の操作で作る（記録を足して代えない）。"""
+    out = []
+    for text in LATER_CALLS:
+        r = s.say(text)
+        assert r.kind == "standby_offer" and r.extra.get("duty", "小島") == "小島", r
+        out.append(s.accept(r.uid))
+    return out
 
 
 @pytest.fixture

@@ -1,8 +1,7 @@
 """3幕の通し（画面なし）。12月のルールの見直し → 返さない案と返す案 → 採る。B8 の文。"""
-from shiftvoice.model import Acceptance
 from shiftvoice.nextflow import NextFlow
 
-from test_act2 import CALL, STANDBY, act2  # noqa: F401（act2 は試験の下ごしらえ）
+from test_act2 import CALL, STANDBY, act2, kojima_rest  # noqa: F401（act2 は試験の下ごしらえ）
 
 
 def test_act3_flow(act2):
@@ -10,11 +9,10 @@ def test_act3_flow(act2):
     s.say(STANDBY)
     s.distribute()
     s.accept(s.say(CALL).uid)
-    # 小島さんの残り2回（撮影では2幕の後にアプリで操作する。ここでは記録を足して代える）
+    # 小島さんの残り2回（2幕の後に、2幕と同じ［了承をもらって直す］で作る）
+    kojima_rest(s)
     st = s.store
-    st.save_acceptances(st.acceptances() + [
-        Acceptance(id="k2", staff="小島", date="2026-11-14", layer="standby", op_id="op-k2"),
-        Acceptance(id="k3", staff="小島", date="2026-11-21", layer="standby", op_id="op-k3")])
+    assert sorted(a.date for a in st.acceptances() if a.staff == "小島") == ["2026-11-01", "2026-11-14", "2026-11-22"]
     fl = NextFlow(st, 2026, 11)
     v = fl.review()
     assert v["total"] == 3 and v["head"].startswith("12月の表を作る前に　見直すルール 3件中1件目（残り2件）")

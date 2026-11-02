@@ -25,5 +25,7 @@
  "職員12さん、有給とりたいって言ってたよ。いつとは聞いてないけど": "{\"items\": [{\"type\": \"leave_count\", \"staff\": \"職員12\", \"count\": null, \"reason\": null}]}",
  "職員15さん、23日の祝日は絶対日勤にして。これは外せないって": "{\"items\": [{\"type\": \"set_cell\", \"staff\": \"職員15\", \"days\": [23], \"shift\": \"日\", \"strength\": \"fixed\", \"reason\": null}]}",
  "職員07さん、法事で14日、あ、違う、15日休み": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員07\", \"days\": [15], \"reason\": \"法事\"}]}",
- "職員09さんの早番を4回までにして、毎月ね": "{\"items\": [{\"type\": \"count_limit\", \"staff\": [\"職員09\"], \"shift\": \"早\", \"min\": null, \"max\": 4, \"until_day\": null, \"strength\": \"operational\", \"reason\": null}]}"
+ "職員09さんの早番を4回までにして、毎月ね": "{\"items\": [{\"type\": \"count_limit\", \"staff\": [\"職員09\"], \"shift\": \"早\", \"min\": null, \"max\": 4, \"until_day\": null, \"strength\": \"operational\", \"reason\": null}]}",
+ "職員10さんから電話で、11月14日の土曜、お休みしたいって": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員10\", \"days\": [14], \"reason\": null}]}",
+ "職員13さんから電話で、11月22日の日曜、お休みしたいって": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員13\", \"days\": [22], \"reason\": null}]}"
 }
