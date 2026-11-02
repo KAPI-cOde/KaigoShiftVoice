@@ -135,6 +135,9 @@ class Month:
     rev: int | None = None            # 確定した時の帳面の rev
     built_rev: int | None = None      # 表を作った・直した時の帳面の rev（保存の途中で止まった時の立て直しに使う）
     history: list[dict] = field(default_factory=list)  # 戻す履歴 [{op_id, table, built_rev}]（直す前の表）
+    distributed: bool = False         # 配った後か（配った後の一言は少ないマスで直す）
+    rest_adjust: dict[str, int] = field(default_factory=dict)  # 公休の足し引き（頼んだ人 +1・呼ばれた待機の人 −1）
+    support: dict[str, str] = field(default_factory=dict)      # 応援 "名前/日" → その日だけ入るユニット
 
     @property
     def days(self) -> int:
@@ -149,14 +152,17 @@ class Month:
     def to_dict(self) -> dict:
         return {"year": self.year, "month": self.month, "holidays": self.holidays,
                 "prev_tail": self.prev_tail, "table": self.table, "layers": self.layers,
-                "rev": self.rev, "built_rev": self.built_rev, "history": self.history}
+                "rev": self.rev, "built_rev": self.built_rev, "history": self.history,
+                "distributed": self.distributed, "rest_adjust": self.rest_adjust, "support": self.support}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Month":
         return cls(year=d["year"], month=d["month"], holidays=list(d.get("holidays", [])),
                    prev_tail={k: list(v) for k, v in d.get("prev_tail", {}).items()},
                    table=d.get("table"), layers=d.get("layers", {}), rev=d.get("rev"),
-                   built_rev=d.get("built_rev"), history=list(d.get("history", [])))
+                   built_rev=d.get("built_rev"), history=list(d.get("history", [])),
+                   distributed=d.get("distributed", False), rest_adjust=dict(d.get("rest_adjust", {})),
+                   support=dict(d.get("support", {})))
 
 
 @dataclass

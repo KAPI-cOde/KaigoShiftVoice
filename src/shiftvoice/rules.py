@@ -56,9 +56,12 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
     people = _who(rule, staff)
     if k == "coverage":
         syms = _syms(p["shifts"], facility)
-        groups = ([(u, [s for s in people if s.unit == u]) for u in facility.units]
-                  if p.get("scope") == "each_unit" else [("全体", people)])
+        def unit_on(s, d):  # 応援の日は、その日だけ入るユニットで数える
+            return month.support.get(f"{s.name}/{d}", s.unit)
+
         for d in _days(rule, month):
+            groups = ([(u, [s for s in people if unit_on(s, d) == u]) for u in facility.units]
+                      if p.get("scope") == "each_unit" else [("全体", people)])
             for gname, members in groups:
                 terms = [Term(s.name, d, syms) for s in members]
                 n = p["n"]
@@ -68,9 +71,14 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
         syms = _syms(p["shifts"], facility)
         if p.get("capable_only"):  # その勤務に入れる人だけ（例 夜勤の回数は夜勤に入れる人だけ）
             people = [s for s in people if any(x in s.can for x in syms)]
+        rest = {st.symbol for st in facility.shift_types if st.kind == "rest"}
+        adjust = month.rest_adjust if set(syms) <= rest else {}
         for s in people:
             terms = [Term(s.name, d, syms) for d in _days(rule, month)]
-            out.append(Instance(rule, s.name, terms, p.get("min"), p.get("max")))
+            delta = adjust.get(s.name, 0)  # 公休の足し引き（配った後の直しの例外。12章）
+            lo = p.get("min") + delta if p.get("min") is not None else None
+            hi = p.get("max") + delta if p.get("max") is not None else None
+            out.append(Instance(rule, s.name, terms, lo, hi))
     elif k == "sequence":
         # if の記号の翌日（または前日）の中身
         a = _syms(p["if"], facility)
@@ -129,6 +137,8 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
                     out.append(Instance(rule, f"{s.name}/{d}", [Term(s.name, d, _syms(p["in"], facility))], 1, None))
                 if "not_in" in p:
                     out.append(Instance(rule, f"{s.name}/{d}", [Term(s.name, d, _syms(p["not_in"], facility))], None, 0))
+    elif k == "layer":
+        pass  # 待機などの層。表のマスには式をかけない（割り当ては standby.assign）
     else:
         raise ValueError(f"まだ扱わない種類 {k}")
     return out
