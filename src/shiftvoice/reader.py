@@ -46,8 +46,12 @@ SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係で�
 - none 頼みがない。unclear 読めない時は question に聞き返しの1文
 
 strength は fixed(「絶対」「動かせない」と言った時と研修など外の予定) / operational(施設の運用の事情。試験まで・人手など) / wish(本人の希望) / negotiable(配慮の言い方。「きつい」「〜してあげて」)
-reason は言葉にある理由を短く。なければ null。言い直し（「14日、あ、違う、15日」）は後の方だけ。
-言っていない変更は足さない（「あとはできるだけ今のまま」は件にしない）。「くらい」でも数はそのまま。
+reason は一言にある理由の言葉を短く抜き出す（言い換えない。「29日に試験だから」なら「29日に試験」）。なければ null。
+言い直しは後の方だけ。日の言い直し（「14日、あ、違う、15日」）も、人の言い直し（「職員06さんの…じゃない、職員03さん」）も、前の方は件にしない。
+言っていない変更は足さない（「あとはできるだけ今のまま」は件にしない）。「くらい」でも数はそのまま。「毎月」「今月だけ」は期間の言葉なので件にしない。
+曜日を言った頼み（「木曜は」「土日は」）は日付の型にせず weekday_pref にする。
+表に無い当番や仕組み（待機・呼び出し・オンコールなど、勤務の記号に無い物）を作る一言は、ほかの型に分けず custom 1件だけにする。
+move の from_day は、元の日を言っていなければ null（手元で表から補う）。
 
 例
 一言「職員03さん、8日は通院で休み」
@@ -56,6 +60,14 @@ reason は言葉にある理由を短く。なければ null。言い直し（�
 {"items":[{"type":"forbid_sequence","staff":null,"first":"明","next":"日","strength":"negotiable","reason":null}]}
 一言「職員05さん、遅番は月4回まで」
 {"items":[{"type":"count_limit","staff":["職員05"],"shift":"遅","min":null,"max":4,"until_day":null,"strength":"operational","reason":null}]}
+一言「職員04さん、月曜は遅番にしないで。毎月」
+{"items":[{"type":"weekday_pref","staff":"職員04","weekdays":["mon"],"shift":"遅","avoid":true,"until_month":null,"reason":null}]}
+一言「職員08さんの研修、20日に変わったって」
+{"items":[{"type":"move","staff":"職員08","shift":"研","from_day":null,"to_day":20,"reason":null}]}
+一言「職員02さんの9日は……じゃない、職員05さんの9日、休みで」
+{"items":[{"type":"day_off","staff":"職員05","days":[9],"reason":null}]}
+一言「平日の夜は、休みの人から呼び出し当番を2人決めて。電話はその2人にだけ」
+{"items":[{"type":"custom","summary":"平日の夜の呼び出し当番"}]}
 """
 
 
