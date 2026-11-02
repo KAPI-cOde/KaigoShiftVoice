@@ -81,4 +81,22 @@ class Voice:
             st.accept_waveform(SAMPLE_RATE, samples[i:i + step])
             self.rec.decode_stream(st)
             texts.append(st.result.text.strip())
-        return "".join(texts), time.perf_counter() - t0
+        return kanji_digits("".join(texts)), time.perf_counter() - t0
+
+
+_KD = {"〇": 0, "零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _kanji_num(k: str) -> int:
+    if "十" not in k:
+        return int("".join(str(_KD[c]) for c in k))
+    a, _, b = k.partition("十")
+    return (_KD[a] if a else 1) * 10 + (_KD[b] if b else 0)
+
+
+def kanji_digits(text: str) -> str:
+    """声の文字の漢数字を算用数字に直す（「二十九日」→「29日」「三回」→「3回」）。日・回・月・人・時など数の後だけ直す。
+    「一言」「一人ずつ」のような言い回しを壊さないよう、後ろに数える言葉が付く物だけ。"""
+    import re
+    return re.sub(r"([〇零一二三四五六七八九十]{1,3})(?=日|回|月|人|時|週|件|連勤|日間|か月|ヶ月)",
+                  lambda m: str(_kanji_num(m.group(1))), text)
