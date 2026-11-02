@@ -80,34 +80,47 @@ def _leave_sym(facility: Facility) -> str:
     return next(st.symbol for st in facility.shift_types if st.kind == "leave")
 
 
-FIXED_WORDS = ("必ず", "絶対", "外せない", "動かせない")
-MAYBE_WORDS = ("できれば", "なるべく", "可能なら", "できたら")
+FIXED_WORDS = ("必ず", "かならず", "絶対", "ぜったい", "どうしても", "外せない", "動かせない")
+MAYBE_WORDS = ("できれば", "出来れば", "できるだけ", "出来るだけ", "なるべく", "可能なら", "できたら", "出来たら")
+CARE_WORDS = ("きつい", "あげて")      # 配慮の言い方（指示文の negotiable の決め）
+OWN_WORDS = ("希望", "本人")
 
 
-def _cell_strength(v, text: str) -> str:
-    """休み・勤務の指定の強さは一言の言葉で決める（読み取りのぶれを手元で吸収する。「法事で休み」を必ずにしない）。"""
-    if any(w in text for w in FIXED_WORDS):
-        return "fixed" if v in (None, "fixed") or not any(w in text for w in MAYBE_WORDS) else v
-    if any(w in text for w in MAYBE_WORDS):
-        return "negotiable"
-    return "wish"
+def _cell_strength(v, text: str, t: str) -> str:
+    """休み・勤務の指定の強さ。読み取りの値を基本にし、ぶれやすい向きだけ一言の言葉で直す。
+    - 休みの fixed は、一言に必ず系の言葉がある時だけ（「法事で休み」を動かせない扱いにしない）
+    - negotiable は、できれば系か配慮の言葉がある時だけ（「日勤だと助かる」を T2-08 の流れに入れない）"""
+    v = _flex(v, "wish")
+    if v == "fixed" and t == "day_off" and not any(w in text for w in FIXED_WORDS):
+        return "wish"
+    if v == "negotiable" and not any(w in text for w in MAYBE_WORDS + CARE_WORDS):
+        return "wish"
+    return v
 
 
-def _count_strength(v, text: str) -> str:
-    """回数の強さ。言葉に「必ず・絶対」があれば fixed、ほかは施設の運用（operational）にそろえる。"""
-    return "fixed" if any(w in text for w in FIXED_WORDS) else "operational"
+def _count_strength(v, text: str, single: bool) -> str:
+    """回数の強さ。必ず系の言葉があれば fixed（件が1つの時だけ）。本人の希望・できればと言った時は読み取りの値を残す。
+    ほかは施設の運用（operational）にそろえる（「今月は夜勤0で」が wish だと全員向けの下限に負ける）。"""
+    if single and any(w in text for w in FIXED_WORDS):
+        return "fixed"
+    if v in ("wish", "negotiable") and any(w in text for w in OWN_WORDS + MAYBE_WORDS):
+        return v
+    return "operational"
 
 
 def _tidy(items: list[dict], month: Month) -> list[dict]:
     """読み取りのぶれを手元で直す。
     - 曜日の頼みと一緒に出た、日付の無い日付の型は落とす（「木曜は早番にしないで」が avoid_cell と weekday_pref の2件になる）
     - move の元の日が無ければ、表でその人のその勤務が1日だけの時に補う（「研修、13日に変わった」）"""
-    has_wd = any(it.get("type") == "weekday_pref" for it in items)
+    def key(v):
+        return tuple(v) if isinstance(v, list) else (v,)
+    wd = {(key(it.get("staff")), it.get("shift")) for it in items if it.get("type") == "weekday_pref"}
     out = []
     for it in items:
         t = it.get("type")
-        if has_wd and t in ("set_cell", "avoid_cell", "day_off") and not it.get("days"):
-            continue
+        if t in ("set_cell", "avoid_cell", "day_off") and not it.get("days") and \
+                (key(it.get("staff")), it.get("shift")) in wd:
+            continue   # 同じ人・同じ勤務の曜日の頼みの写し
         if t == "move" and it.get("from_day") is None and month.table:
             st = it.get("staff")
             st = st[0] if isinstance(st, list) and len(st) == 1 else st
@@ -157,8 +170,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         elif t == "day_off":
             who = _names(it.get("staff"), names)
             ds = _days(it.get("days"), month)
-            fl = _cell_strength(it.get("strength"), text) if len(real) == 1 else \
-                {"fixed": "fixed", "negotiable": "negotiable"}.get(it.get("strength"), "wish")
+            fl = _cell_strength(it.get("strength"), text, t) if len(real) == 1 else _flex(it.get("strength"), "wish")
             p.rules.append({"name": f"{_who(who)} {'・'.join(map(str, ds))}日 休み"
                                     + {"fixed": "（必ず）", "negotiable": "（できれば）"}.get(fl, ""),
                             "kind": "cell", "flex": fl, "params": {"in": ["公"]}, "who": who, "when": ds})
@@ -170,7 +182,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             on_req = facility.shift(sym).on_request_only
             if t == "set_cell":
                 p.rules.append({"name": f"{_who(who)} {'・'.join(map(str, ds))}日 {sname}", "kind": "cell",
-                                "flex": "fixed" if on_req else _cell_strength(it.get("strength"), text)
+                                "flex": "fixed" if on_req else _cell_strength(it.get("strength"), text, t)
                                 if len(real) == 1 else _flex(it.get("strength"), "wish"),
                                 "params": {"in": [sym]}, "who": who, "when": ds})
             else:
@@ -219,7 +231,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             if hi is not None:
                 params["max"] = hi
             p.rules.append({"name": f"{_who(who)} {facility.shift(sym).name}は{label}{rng}", "kind": "count",
-                            "flex": _count_strength(it.get("strength"), text), "params": params,
+                            "flex": _count_strength(it.get("strength"), text, len(real) == 1), "params": params,
                             "who": who, "when": when})
         elif t == "weekday_pref":
             who = _names(it.get("staff"), names)

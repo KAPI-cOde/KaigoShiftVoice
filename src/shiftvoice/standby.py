@@ -39,8 +39,8 @@ def validate_def(d: dict, facility: Facility) -> dict:
     if not isinstance(d, dict):
         raise DefError("当番の定義が読めませんでした")
     out = copy.deepcopy(DEFAULT_DEF)
-    name = str(d.get("name") or out["name"])[:20]
-    out["name"] = name if name.endswith("当番") else name + "当番"   # 「待機」→「待機当番」（画面と台本の名前にそろえる）
+    name = str(d.get("name") or out["name"])
+    out["name"] = (name if name.endswith(("当番", "係")) else name + "当番")[:20]   # 「待機」→「待機当番」（画面と台本の名前にそろえる）
     days = d.get("days") or {}
     wds = days.get("weekdays")
     if not isinstance(wds, list) or not wds or any(w not in WEEKDAYS for w in wds):
