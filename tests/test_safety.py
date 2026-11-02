@@ -97,3 +97,15 @@ def test_everyone_rule_with_san_word_is_not_blocked(store, text):
     p = to_proposal([{"type": "forbid_sequence", "first": "夜", "next": "早"}], text, store.facility(),
                     store.staff(), store.month(2026, 11))
     assert p.rules and not p.rules[0]["who"]
+
+
+@pytest.mark.parametrize("text,item", [
+    ("おかださん、夜勤は月4回まで", {"type": "count_limit", "shift": "夜", "max": 4}),
+    ("おかださん、連勤は4日まで", {"type": "consecutive_limit", "max": 4}),
+    ("皆勤の岡田さん、夜勤は月4回まで", {"type": "count_limit", "shift": "夜", "max": 4}),
+])
+def test_person_rule_by_kana_or_kaikin_never_goes_to_everyone(store, text, item):
+    """かなの名前にさんを付けた人ごとのルールや「皆勤」を含む一言は、返事が人を省いても全員のルールにしない（周8 レビュー b）。"""
+    from shiftvoice.intake import Clarify, to_proposal
+    with pytest.raises(Clarify):
+        to_proposal([item], text, store.facility(), store.staff(), store.month(2026, 11))

@@ -307,13 +307,19 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     from .names import Masker
     # 全員向けのルールは「利用者さん」「みなさん」を含むことが多いので、「さん」だけでは人が出たとみなさない
     # （再レビュー2回目 a の指摘）。マスの頼みは下で、人が無ければいつでも聞き返す
-    said = bool(re.search(r"職員\d{2}", Masker(staff, facility).mask(text)[0]))
+    # ただし「おかださん」のように名簿の表記に無いかなの呼びかけは伏せられないので、「さん」などの前の語が
+    # 名前でない語（利用者・みな など）でなければ、人が出たとみなす（周8 レビュー b の指摘）
+    from .names import NOT_NAMES
+    not_name = NOT_NAMES | {"みな", "みんな", "お客", "医者", "先生"}
+    said = bool(re.search(r"職員\d{2}", Masker(staff, facility).mask(text)[0])) or any(
+        not any(w.endswith(n) for n in not_name)
+        for w in re.findall(r"([ぁ-ゖァ-ヺー一-龥々]{1,6}?)(?:さん|くん|ちゃん)", text))
     # マスの頼み（休み・勤務・移動）と取り消しは、人が無いまま全員に効かせない。「全員15日休み」は頼みとして
     # ありえず、さんの無いかなの名前や「皆」を含む一言でもすり抜けないように（再レビュー2回目 b の指摘）
     cells_nobody = any(not r.get("who") for r in p.rules if r["kind"] == "cell") or any(
         not x.get("who") for x in p.removes)
     rules_nobody = any(not r.get("who") for r in p.rules if r["kind"] not in ("layer", "cell"))
-    if cells_nobody or (said and not re.search(r"全員|みんな|皆", text) and rules_nobody):
+    if cells_nobody or (said and not re.search(r"全員|みんな|皆(?!勤)", text) and rules_nobody):
         raise Clarify("誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください")
     if kind == "cells":
         p.scope = "once"
