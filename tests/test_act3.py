@@ -71,8 +71,14 @@ def test_m8_change_by_saying(act2):
     v = fl.change(seq["rule_id"], said, s.reader)
     assert "error" not in v, v
     assert v["done"] and any(t.endswith("→ 変えた（遅番の次の日に早番・日勤を置かない）") for t in v["summary"])
-    r = s.store.ledger().rules_at()[seq["rule_id"]]
-    assert r.params["next_not_in"] == ["早", "日"] and r.meta["said"] == said
+    led = s.store.ledger()
+    dec = led.rules_at(between=("2026-12-01", "2026-12-31"))
+    nov = led.rules_at(between=("2026-11-01", "2026-11-30"))
+    new = [r for r in dec.values() if r.meta.get("changed_from") == seq["rule_id"]]
+    assert len(new) == 1 and new[0].params["next_not_in"] == ["早", "日"] and new[0].meta["said"] == said
+    assert seq["rule_id"] not in dec                                  # 元の札は12月には効かない
+    assert nov[seq["rule_id"]].params["next_not_in"] == ["早"]        # 11月の札は変わらない（指摘A）
+    assert new[0].id not in nov
     b = fl.build()
     assert b["status"] == "ok", b
     # 変える前の12月（今月も使う）は 遅番→日勤 が28件（2026-11-02 に測った）。変えると12月の表から消える
@@ -82,4 +88,5 @@ def test_m8_change_by_saying(act2):
     assert _pairs(b["tables"]["give"], "遅", "早") == 0
     # 戻すと元の中身に戻る
     fl.undo(seq["rule_id"])
-    assert s.store.ledger().rules_at()[seq["rule_id"]].params["next_not_in"] == ["早"]
+    dec = s.store.ledger().rules_at(between=("2026-12-01", "2026-12-31"))
+    assert dec[seq["rule_id"]].params["next_not_in"] == ["早"] and new[0].id not in dec

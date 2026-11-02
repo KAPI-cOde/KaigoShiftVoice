@@ -87,7 +87,9 @@ class Voice:
 _KD = {"〇": 0, "零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 
 
-def _kanji_num(k: str) -> int:
+def _kanji_num(k: str) -> int | None:
+    if k.count("十") > 1 or k.endswith("十十"):
+        return None
     if "十" not in k:
         return int("".join(str(_KD[c]) for c in k))
     a, _, b = k.partition("十")
@@ -98,5 +100,13 @@ def kanji_digits(text: str) -> str:
     """声の文字の漢数字を算用数字に直す（「二十九日」→「29日」「三回」→「3回」）。日・回・月・人・時など数の後だけ直す。
     「一言」「一人ずつ」のような言い回しを壊さないよう、後ろに数える言葉が付く物だけ。"""
     import re
-    return re.sub(r"([〇零一二三四五六七八九十]{1,3})(?=日|回|月|人|時|週|件|連勤|日間|か月|ヶ月)",
-                  lambda m: str(_kanji_num(m.group(1))), text)
+    return re.sub(r"([〇零一二三四五六七八九十]{1,3})(?=(?:日間|か月|ヶ月|連勤|日|回|月|人|時|週|件)(?!的|中|ずつ))",
+                  lambda m: str(n) if (n := _safe_num(m.group(1))) is not None else m.group(1), text)
+
+
+def _safe_num(k: str) -> int | None:
+    """読めない並び（二十二十 など）は直さずに元の文字のまま（声の入口を落とさない）。"""
+    try:
+        return _kanji_num(k)
+    except (KeyError, ValueError):
+        return None

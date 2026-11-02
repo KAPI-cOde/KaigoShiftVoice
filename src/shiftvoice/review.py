@@ -103,19 +103,26 @@ def answer(store: Store, year: int, month: int, rule_id: str, what: str, *, new_
     revs = []
     extra = {}
     if what == "change":
-        # 話して直した中身に置き換える（同じ札の版が上がる。対象の月から効く）。種類の違う中身は別の頼みとして言う
+        # 話して直した中身は、対象の月から効く新しい札にする。元の札は前の月の末で閉じる
+        # （元の札を書き換えると、確定済みの前の月の札まで変わる。2026-11-02 のレビューの指摘A）
         cur = led.rules_at()[rule_id]
         if not new_rule or new_rule.get("kind") != cur.kind or cur.kind == "layer":
             raise LedgerError("このルールの変え方として読めませんでした。同じルールの直し方を1つ言ってください")
-        rd = {k: new_rule[k] for k in ("name", "params", "who", "when", "flex") if k in new_rule}
-        rd["meta"] = {**{k: v for k, v in cur.meta.items() if k not in ("from", "until")},
-                      **new_rule.get("meta", {}), "said": said, "at": at, "source": "話した",
-                      "changed_from": cur.name}
         start = _span(year, month)[0]
-        revs.append(led.append("change", rule_id=rule_id, rule=rd, op_id=op_id, frm=cur.meta.get("from") or start,
+        py, pm = _prev(year, month)
+        prev_end = _span(py, pm)[1]
+        revs.append(led.append("change", rule_id=rule_id, rule={"name": cur.name}, op_id=op_id,
+                               frm=cur.meta.get("from"), until=prev_end,
+                               meta={"kind": "change_close", "at": at})["rev"])
+        n = max([int(r[1:]) for r in led.rules_at() if r[1:].isdigit()] + [100]) + 1
+        rd = {k: new_rule[k] for k in ("name", "params", "who", "when", "flex", "kind") if k in new_rule}
+        rd.update({"id": f"r{n}", "scope": cur.scope,
+                   "meta": {**new_rule.get("meta", {}), "said": said, "at": at, "source": "話した",
+                            "changed_from": rule_id, "reason": cur.meta.get("reason")}})
+        revs.append(led.append("add", rule=rd, op_id=op_id, frm=start,
                                until=new_until or cur.meta.get("until"),
                                meta={"kind": "change", "at": at, "said": said})["rev"])
-        extra = {"new_name": rd.get("name"), "said": said}
+        extra = {"new_name": rd.get("name"), "said": said, "new_rule_id": rd["id"]}
     elif what == "archive":
         revs.append(led.append("remove", rule_id=rule_id, op_id=op_id, meta={"kind": "archive", "at": at})["rev"])
     elif what == "extend":
