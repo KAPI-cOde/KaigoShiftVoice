@@ -138,7 +138,7 @@ def test_failed_read_keeps_everything_and_retry(sess):
     good = sess.reader
     sess.reader = RecordedReader({})
     r = sess.say("岡田さん、15と16は法事で休み")
-    assert r.kind == "error" and "送り直す" in r.message
+    assert r.kind == "error" and "変えていません" in r.message
     assert json.dumps(sess.store.month(2026, 11).table) == before
     assert sess.store.pending(2026, 11)[0]["status"] == "failed"
     sess.reader = good

@@ -114,7 +114,7 @@ class Session:
             items = masker.unmask(self.reader.read(masked))
         except ReadError as e:
             self.store.update_pending(self.year, self.month, u["id"], status="failed", error=str(e))
-            return Reply("error", u["id"], "読み取りに失敗しました。表もルールも変えていません。［送り直す］を押してください")
+            return Reply("error", u["id"], "読み取りに失敗しました。表もルールも変えていません")
         # 一度読んだら残し、AI を呼び直さない（3章 drafts）
         self.store.update_pending(self.year, self.month, u["id"], items=items, status="read")
         u = {**u, "items": items}

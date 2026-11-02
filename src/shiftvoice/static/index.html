@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>表とルール</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #fff; color: #000; }
+  body { font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif; font-size: 14px; line-height: 1.5; }
+  h1, h2 { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; font-weight: 700; font-style: normal; margin: 0; }
+  h2 { font-size: 18px; margin-bottom: 8px; }
+  #keybar { display: none; padding: 6px 20px; border-bottom: 1px solid #000; font-size: 13px; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 24px; padding: 14px 20px 0; max-width: 1440px; margin: 0 auto; }
+  .left, .right { min-width: 0; }
+
+  table.grid { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 13px; }
+  .grid th, .grid td { border: 1px solid #ddd; text-align: center; padding: 0; height: 26px; }
+  .grid th.name, .grid td.name { width: 190px; text-align: left; padding: 0 6px; white-space: nowrap; overflow: hidden; border-right: 1px solid #000; }
+  .grid thead th { height: 38px; font-weight: 400; line-height: 1.2; }
+  .grid thead th small { display: block; font-size: 10px; }
+  .grid .off { background: #eee; }
+  .grid tr.firstrow td { border-top: 2px solid #000; }
+  .grid .unit { font-size: 11px; margin-right: 6px; }
+  .grid .mark { font-size: 10px; margin-left: 4px; font-weight: 700; }
+  .grid td.cell { transition: background-color 1.2s ease; }
+  .grid td.glow { background: #fff3a0; font-weight: 700; }
+
+  .said { margin-top: 10px; min-height: 22px; }
+  .said p { margin: 0 0 2px; }
+  .reply { margin-top: 8px; min-height: 22px; }
+  .reply .summary { font-weight: 700; }
+  .reply .q { margin: 4px 0 6px; font-weight: 700; }
+  button { font: inherit; background: #fff; color: #000; border: 1px solid #000; border-radius: 3px; padding: 4px 14px; cursor: pointer; }
+  button:hover { background: #f4f4f4; }
+  #undo { font-size: 12px; padding: 4px 10px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .btns { display: flex; gap: 8px; }
+  form { display: flex; gap: 8px; margin-top: 10px; }
+  input[type=text] { flex: 1; font: inherit; border: 1px solid #000; border-radius: 3px; padding: 6px 8px; background: #fff; color: #000; }
+
+  .cards { display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 150px); overflow-y: auto; padding-right: 2px; }
+  .card { border: 1px solid #bbb; border-radius: 3px; padding: 7px 10px; background: #fff; text-align: left; width: 100%; display: block; }
+  .card:hover { background: #fff; border-color: #000; }
+  .card.open { border-color: #000; }
+  .card .top { display: flex; justify-content: space-between; gap: 8px; }
+  .card .nm { font-weight: 700; }
+  .card .per { white-space: nowrap; font-size: 12px; }
+  .card .why { font-size: 12px; margin-top: 2px; }
+  .card .new { font-size: 11px; border: 1px solid #000; border-radius: 3px; padding: 0 5px; margin-left: 6px; font-weight: 700; }
+  .card .detail { margin-top: 6px; padding-top: 6px; border-top: 1px solid #ddd; font-size: 12px; }
+  .card .detail div { margin-bottom: 2px; }
+  .empty { font-size: 12px; }
+  footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="keybar">Claude の鍵が入っていないので、一言の読み取りは動きません（README の手順）</div>
+<main>
+  <section class="left">
+    <h2 id="tabletitle">表</h2>
+    <div id="tablewrap"></div>
+    <div class="said" id="said"></div>
+    <div class="reply" id="reply"></div>
+    <form id="form" autocomplete="off">
+      <input type="text" id="input" placeholder="気づいたことを一言で入れてください">
+      <button type="submit" id="send">伝える</button>
+      <button type="button" id="undo" disabled>ひとつ戻す</button>
+    </form>
+  </section>
+  <section class="right">
+    <h2>ルール</h2>
+    <div class="cards" id="cards"></div>
+  </section>
+</main>
+<footer>勤務の並びの目安を扱う道具で、医学的な助言はしません。施設と職員はすべて作り話です。</footer>
+
+<script>
+"use strict";
+var S = null;              // 最新の state
+var selected = null;       // 開いているルールの id
+var newIds = {};           // 「新しいルール」の印を付けた id
+var glowCells = {};        // "名前|日" -> true（変更で光るマス）
+var shown = {};            // 変更アニメーション中に見せる記号 "名前|日" -> 記号
+var ask = null;            // {uid, message, kind}
+var saidList = [];
+var busy = false;
+var glowTimer = null;
+var WD = { sun: "日", mon: "月", tue: "火", wed: "水", thu: "木", fri: "金", sat: "土" };
+
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function post(path, body) {
+  return fetch("/api/" + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  }).then(function (r) { return r.json(); });
+}
+
+function symName(sym) {
+  var s = (S.symbols || []).filter(function (x) { return x.symbol === sym; })[0];
+  return s ? s.name : sym;
+}
+
+// ルールで光らせるマス
+function ruleCells(card) {
+  var out = {};
+  var names = card.who && card.who.length ? card.who : S.staff.map(function (s) { return s.name; });
+  var days = card.when && card.when.length ? card.when : null;
+  var shifts = null;
+  var p = card.params || {};
+  if (card.kind === "count" && Array.isArray(p.shifts)) shifts = p.shifts;
+  if (card.kind === "sequence" && Array.isArray(p["if"])) shifts = p["if"];
+  names.forEach(function (n) {
+    var row = S.table[n];
+    if (!row) return;
+    for (var d = 1; d <= S.days; d++) {
+      if (days && days.indexOf(d) < 0) continue;
+      if (shifts && shifts.indexOf(row[d - 1]) < 0) continue;
+      out[n + "|" + d] = true;
+    }
+  });
+  return out;
+}
+
+function renderTable() {
+  var wrap = document.getElementById("tablewrap");
+  wrap.textContent = "";
+  document.getElementById("tabletitle").textContent = S.month + "月の表";
+  var cardGlow = {};
+  if (selected) {
+    var c = S.cards.filter(function (x) { return x.id === selected; })[0];
+    if (c) cardGlow = ruleCells(c);
+  }
+  var t = el("table", "grid");
+  var thead = el("thead");
+  var hr = el("tr");
+  hr.appendChild(el("th", "name", ""));
+  for (var d = 1; d <= S.days; d++) {
+    var th = el("th", "", String(d));
+    var wd = S.weekdays[d - 1];
+    var sm = el("small", "", WD[wd] || "");
+    th.appendChild(sm);
+    if (wd === "sat" || wd === "sun" || S.holidays.indexOf(d) >= 0) th.className = "off";
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  t.appendChild(thead);
+  var tb = el("tbody");
+  var prevUnit = null;
+  S.staff.forEach(function (st) {
+    var tr = el("tr");
+    if (prevUnit !== null && prevUnit !== st.unit) tr.className = "firstrow";
+    prevUnit = st.unit;
+    var nm = el("td", "name");
+    nm.appendChild(el("span", "unit", st.unit));
+    nm.appendChild(document.createTextNode(st.name));
+    (st.changes || []).forEach(function (ch) {
+      var mm = parseInt(String(ch.from).split("-")[1], 10);
+      var what = (ch.can_add || []).map(function (s) { return symName(s).replace("番", "番").replace("夜勤", "夜勤"); }).join("・");
+      nm.appendChild(el("span", "mark", mm + "月から" + what + "も"));
+    });
+    tr.appendChild(nm);
+    var row = S.table[st.name] || [];
+    for (var d2 = 1; d2 <= S.days; d2++) {
+      var key = st.name + "|" + d2;
+      var td = el("td", "cell");
+      var wd2 = S.weekdays[d2 - 1];
+      if (wd2 === "sat" || wd2 === "sun" || S.holidays.indexOf(d2) >= 0) td.className += " off";
+      td.textContent = shown[key] !== undefined ? shown[key] : (row[d2 - 1] || "");
+      if (glowCells[key] || cardGlow[key]) td.className += " glow";
+      tr.appendChild(td);
+    }
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  wrap.appendChild(t);
+}
+
+function fmtAt(at) {
+  var m = /^(\d+)-(\d+)-(\d+)T(\d+):(\d+)/.exec(at || "");
+  if (!m) return at || "";
+  return parseInt(m[2], 10) + "月" + parseInt(m[3], 10) + "日 " + parseInt(m[4], 10) + "時" + m[5] + "分";
+}
+function fmtUntil(u) {
+  var m = /^(\d+)-(\d+)-(\d+)/.exec(u || "");
+  if (!m) return "";
+  return parseInt(m[2], 10) + "月" + parseInt(m[3], 10) + "日まで";
+}
+
+function renderCards() {
+  var box = document.getElementById("cards");
+  box.textContent = "";
+  var rules = S.cards.filter(function (c) { return c.scope === "rule"; });
+  var said = rules.filter(function (c) { return c.meta && c.meta.said; }).reverse();
+  var base = rules.filter(function (c) { return !(c.meta && c.meta.said); });
+  var list = said.concat(base);
+  if (!list.length) box.appendChild(el("div", "empty", "ルールはまだありません"));
+  list.forEach(function (c) {
+    var m = c.meta || {};
+    var b = el("button", "card" + (selected === c.id ? " open" : ""));
+    b.type = "button";
+    var top = el("div", "top");
+    var nm = el("span", "nm", c.name);
+    if (newIds[c.id]) nm.appendChild(el("span", "new", "新しいルール"));
+    top.appendChild(nm);
+    top.appendChild(el("span", "per", m.until ? fmtUntil(m.until) : "毎月"));
+    b.appendChild(top);
+    if (m.reason) b.appendChild(el("div", "why", "理由 " + m.reason));
+    if (selected === c.id) {
+      var dt = el("div", "detail");
+      dt.appendChild(el("div", "", m.said ? "言った言葉 「" + m.said + "」" : "最初から入っているルールです"));
+      if (m.who) dt.appendChild(el("div", "", "誰が " + m.who));
+      if (m.at) dt.appendChild(el("div", "", "いつ " + fmtAt(m.at)));
+      b.appendChild(dt);
+    }
+    b.addEventListener("click", function () {
+      selected = selected === c.id ? null : c.id;
+      renderTable();
+      renderCards();
+    });
+    box.appendChild(b);
+  });
+}
+
+function renderSaid() {
+  var box = document.getElementById("said");
+  box.textContent = "";
+  saidList.slice(-3).forEach(function (s) { box.appendChild(el("p", "", "「" + s + "」")); });
+}
+
+function renderReply(r) {
+  var box = document.getElementById("reply");
+  box.textContent = "";
+  if (!r) return;
+  if (r.kind === "applied") {
+    if (r.summary) box.appendChild(el("div", "summary", r.summary));
+    return;
+  }
+  if (r.kind === "ask_period") {
+    box.appendChild(el("div", "q", "毎月ですか、今月だけですか"));
+    var bs = el("div", "btns");
+    [["毎月", "rule"], ["今月だけ", "once"]].forEach(function (p) {
+      var b = el("button", "", p[0]);
+      b.type = "button";
+      b.addEventListener("click", function () { sendAnswer(p[1]); });
+      bs.appendChild(b);
+    });
+    box.appendChild(bs);
+    return;
+  }
+  if (r.kind === "error") {
+    box.appendChild(el("div", "q", r.message || "読み取れませんでした"));
+    var rb = el("button", "", "送り直す");
+    rb.type = "button";
+    rb.addEventListener("click", function () { doRetry(r.uid); });
+    box.appendChild(rb);
+    return;
+  }
+  box.appendChild(el("div", "", r.message || ""));
+}
+
+function renderKey() {
+  document.getElementById("undo").disabled = !(S && S.can_undo);
+  document.getElementById("keybar").style.display = S && S.has_key === false ? "block" : "none";
+}
+
+function renderAll() {
+  renderKey();
+  renderTable();
+  renderCards();
+  renderSaid();
+}
+
+// 返事を受けて画面へ。反映した時はマスが光ってから変わる
+function handle(res, isUndo) {
+  var r = res.reply;
+  var changes = (r && (r.kind === "applied" || isUndo) && r.changes) || [];
+  if (glowTimer) { clearTimeout(glowTimer); glowTimer = null; }
+  glowCells = {};
+  shown = {};
+  changes.forEach(function (c) {
+    var k = c.staff + "|" + c.day;
+    glowCells[k] = true;
+    shown[k] = c.before;
+  });
+  S = res.state;
+  ask = r && r.kind === "ask_period" ? r : null;
+  if (r && r.kind === "applied") {
+    (r.rule_ids || []).forEach(function (id) { newIds[id] = true; });
+  }
+  renderAll();
+  if (isUndo && r) renderReply({ kind: "failed_solve", message: r.message || "ひとつ戻しました" });
+  else renderReply(r);
+  if (changes.length) {
+    setTimeout(function () { shown = {}; renderTable(); }, 900);
+    glowTimer = setTimeout(function () { glowCells = {}; glowTimer = null; renderTable(); }, 4500);
+  }
+}
+
+function setBusy(v) {
+  busy = v;
+  document.getElementById("send").disabled = v;
+  document.getElementById("undo").disabled = v || !(S && S.can_undo);
+}
+
+function fail(e) {
+  setBusy(false);
+  renderReply({ kind: "failed_solve", message: "うまくつながりませんでした。もう一度試してください" });
+}
+
+function sendAnswer(text) {
+  if (busy || !ask) return;
+  setBusy(true);
+  post("answer", { uid: ask.uid, text: text }).then(function (res) {
+    setBusy(false);
+    if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
+    handle(res);
+  }).catch(fail);
+}
+
+function doRetry(uid) {
+  if (busy) return;
+  setBusy(true);
+  post("retry", { uid: uid }).then(function (res) {
+    setBusy(false);
+    if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
+    handle(res);
+  }).catch(fail);
+}
+
+document.getElementById("undo").addEventListener("click", function () {
+  if (busy || !S || !S.can_undo) return;
+  setBusy(true);
+  post("undo", {}).then(function (res) {
+    setBusy(false);
+    if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
+    handle(res, true);
+  }).catch(fail);
+});
+
+document.getElementById("form").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  var inp = document.getElementById("input");
+  var text = inp.value.trim();
+  if (!text || busy) return;
+  inp.value = "";
+  if (ask) { sendAnswer(text); return; }
+  saidList.push(text);
+  renderSaid();
+  setBusy(true);
+  post("say", { text: text }).then(function (res) {
+    setBusy(false);
+    if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
+    handle(res);
+  }).catch(fail);
+});
+
+fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
+  S = st;
+  renderAll();
+  var pend = st.pending || [];
+  var a = pend.filter(function (p) { return p.status === "ask_period"; })[0];
+  var f = pend.filter(function (p) { return p.status === "failed"; })[0];
+  if (a) {
+    saidList.push(a.text);
+    renderSaid();
+    ask = { uid: a.id, kind: "ask_period", message: "毎月ですか、今月だけですか" };
+    renderReply(ask);
+  } else if (f) {
+    saidList.push(f.text);
+    renderSaid();
+    renderReply({ kind: "error", uid: f.id, message: "読み取れませんでした" });
+  }
+});
+</script>
+</body>
+</html>
