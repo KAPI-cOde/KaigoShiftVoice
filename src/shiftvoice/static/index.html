@@ -87,6 +87,8 @@
   .rv-card .detail { margin-top: 14px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 13px; }
   .rv-card .ext { margin-top: 12px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
   .rv-card .ext input { font: inherit; border: 1px solid #000; border-radius: 3px; padding: 5px 8px; }
+  .rv-card .ext input.chtext { flex: 1; min-width: 0; }
+  .rv-card .ext button.on { background: #000; color: #fff; }
   .rv-err { color: #c0392b; font-size: 13px; min-height: 18px; }
   .sumrows { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; }
   .sumrows button { text-align: left; padding: 10px 14px; font-size: 15px; }
@@ -572,6 +574,9 @@ document.getElementById("form").addEventListener("submit", function (ev) {
 var R = null;            // /api/next/review の返事
 var detailOpen = false;  // 札の［詳しく見る］
 var extOpen = false;     // 期間を延ばす欄
+var chOpen = false;      // 変える（話す）欄
+var chText = "";         // 変える欄の文字（失敗した時に残す）
+var chRec = null;        // 変える欄の録音
 var rvErr = "";
 var BR = null;           // /api/next/build の返事
 var adopted = false;
@@ -587,7 +592,7 @@ function get12() { return fetch("/api/next/review").then(function (r) { return r
 function openReview() {
   show12(true);
   BR = null; adopted = false;
-  get12().then(function (r) { R = r; detailOpen = false; extOpen = false; rvErr = ""; renderReview(); });
+  get12().then(function (r) { R = r; detailOpen = false; extOpen = false; chOpen = false; rvErr = ""; renderReview(); });
 }
 document.getElementById("to12").addEventListener("click", openReview);
 document.getElementById("to11").addEventListener("click", function () {
@@ -634,7 +639,8 @@ function renderReview() {
       var b = el("button", i === 0 ? "primary" : "", bt[1]);
       b.type = "button";
       b.addEventListener("click", function () {
-        if (bt[0] === "extend") { extOpen = !extOpen; renderReview(); return; }
+        if (bt[0] === "extend") { extOpen = !extOpen; chOpen = false; renderReview(); return; }
+        if (bt[0] === "change") { chOpen = !chOpen; extOpen = false; renderReview(); return; }
         answerCard(c, bt[0]);
       });
       bs.appendChild(b);
@@ -653,6 +659,29 @@ function renderReview() {
       ok.addEventListener("click", function () { answerCard(c, "extend", inp.value); });
       ex.appendChild(inp); ex.appendChild(ok);
       card.appendChild(ex);
+    }
+    if (chOpen) {
+      var cx = el("div", "ext");
+      var ci = el("input", "chtext"); ci.type = "text"; ci.value = chText;
+      ci.placeholder = "例　遅番の次の日は、早番も日勤もやめて";
+      ci.addEventListener("input", function () { chText = ci.value; cok.disabled = !ci.value.trim(); });
+      cx.appendChild(ci);
+      if (S && S.has_voice) {
+        var ct = el("button", chRec ? "on" : "", chRec ? "話し終えた" : "話す"); ct.type = "button";
+        ct.addEventListener("click", function () { chRec ? chStop() : chStart(); });
+        cx.appendChild(ct);
+      }
+      var cok = el("button", "primary", "この中身に変える"); cok.type = "button"; cok.disabled = !chText.trim();
+      cok.addEventListener("click", function () {
+        cok.disabled = true;
+        next("change", { rule_id: c.rule_id, text: chText }).then(function (res) {
+          if (!res) return;
+          R = res; chOpen = false; chText = ""; detailOpen = false; rvErr = "";
+          renderReview();
+        });
+      });
+      cx.appendChild(cok);
+      card.appendChild(cx);
     }
     if (detailOpen) {
       var dt = el("div", "detail");
@@ -686,6 +715,34 @@ function renderReview() {
   wrap.appendChild(el("div", "rv-err", rvErr));
   if (R.once) wrap.appendChild(el("div", "small", R.once));
   box.appendChild(wrap);
+}
+
+// ［変える（話す）］の声。文字にするだけで、中身は欄で確かめてから送る
+function chStart() {
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+    var ctx = new (window.AudioContext || window.webkitAudioContext)();
+    var src = ctx.createMediaStreamSource(stream);
+    var proc = ctx.createScriptProcessor(4096, 1, 1);
+    var chunks = [];
+    proc.onaudioprocess = function (e) { chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+    src.connect(proc); proc.connect(ctx.destination);
+    chRec = { ctx: ctx, stream: stream, proc: proc, src: src, chunks: chunks };
+    renderReview();
+  }).catch(function () { rvErr = "マイクが使えません。文字で入れてください"; renderReview(); });
+}
+function chStop() {
+  var r = chRec; chRec = null;
+  r.proc.disconnect(); r.src.disconnect();
+  r.stream.getTracks().forEach(function (t) { t.stop(); });
+  var pcm = to16k(r.chunks, r.ctx.sampleRate);
+  r.ctx.close();
+  renderReview();
+  fetch("/api/voice", { method: "POST", headers: { "Content-Type": "application/octet-stream", "X-Text-Only": "1" },
+                        body: pcm.buffer })
+    .then(function (x) { return x.json(); }).then(function (res) {
+      if (res.error) { rvErr = res.error; } else { chText = res.text; rvErr = ""; }
+      renderReview();
+    }).catch(function () { rvErr = "声を文字にできませんでした。文字で入れてください"; renderReview(); });
 }
 
 function startBuild() {

@@ -8,7 +8,11 @@ import calendar
 
 from .build import month_rules
 from .giveback import accepted_counts, build_pair
+from .intake import Clarify, to_proposal
+from .ledger import LedgerError
+from .names import Masker
 from .nextmonth import copy_next_month, next_ym
+from .reader import ReadError
 from .review import answer, history, review_cards, undo_answer
 from .store import Store
 
@@ -23,8 +27,9 @@ def card_lines(c, month: int, prev: int) -> dict:
                 "lines": [f"{_md(c.until)}で終わりました。{month}月には効きません",
                           f"片付けても、{prev}月の表と引き受けの記録は残ります"],
                 "buttons": [["archive", "履歴へ片付ける（おすすめ）"], ["extend", "期間を延ばす"]]}
-    return {"label": "先月増えた", "title": c.name, "lines": ["今月も使いますか"],
-            "buttons": [["keep", "今月も使う"], ["change", "変える（話す）"]]}
+    # 当番（待機など）の中身を話して直すのは、まだ作っていない。［変える］を出さない
+    buttons = [["keep", "今月も使う"]] + ([] if c.kind == "layer" else [["change", "変える（話す）"]])
+    return {"label": "先月増えた", "title": c.name, "lines": ["今月も使いますか"], "buttons": buttons}
 
 
 ANSWER_WORDS = {"archive": "片付けた", "extend": "延ばした", "keep": "今月も使う", "change": "変えた"}
@@ -50,7 +55,10 @@ class NextFlow:
                       "answer": v["answers"].get(c.rule_id, {}).get("answer")})
             cards.append(d)
         n = len(cards)
-        summary = [f"{c['title']} → {ANSWER_WORDS[c['answer']]}" for c in cards if c["answer"]]
+        def word(c):
+            a = v["answers"][c["rule_id"]]
+            return ANSWER_WORDS[c["answer"]] + (f"（{a['new_name']}）" if a.get("new_name") else "")
+        summary = [f"{c['title']} → {word(c)}" for c in cards if c["answer"]]
         return {"month": self.nm, "cards": cards, "cursor": v["cursor"], "total": n,
                 "head": f"{self.nm}月の表を作る前に　見直すルール {n}件中{min(v['cursor'] + 1, n)}件目"
                         f"（残り{max(n - v['cursor'] - 1, 0)}件）" if v["cursor"] < n else
@@ -62,6 +70,34 @@ class NextFlow:
 
     def answer(self, rule_id: str, what: str, new_until: str | None = None) -> dict:
         answer(self.store, self.ny, self.nm, rule_id, what, new_until=new_until)
+        return self.review()
+
+    def change(self, rule_id: str, text: str, reader) -> dict:
+        """［変える（話す）］。先月増えた札を、話した（書いた）一言の中身に置き換える（M8）。
+        読み取りは1幕の一言と同じ（名前を伏せて送る・型はコードが確かめる）。読めない時は札を変えない。"""
+        self._ensure()
+        text = (text or "").strip()
+        if not text:
+            return {"error": "変え方を話すか、文字で入れてください"}
+        fac, staff = self.store.facility(), self.store.staff()
+        masker = Masker(staff, fac)
+        masked, unknown = masker.mask(text)
+        if unknown:
+            return {"error": f"名簿にない名前です（{'・'.join(unknown)}）。ルールは変えていません"}
+        try:
+            items = masker.unmask(reader.read(masked))
+            p = to_proposal(items, text, fac, staff, self.store.month(self.ny, self.nm))
+        except ReadError:
+            return {"error": "読み取りに失敗しました。ルールは変えていません"}
+        except Clarify as e:
+            return {"error": str(e)}
+        if p.kind != "rule" or len(p.rules) != 1:
+            return {"error": "このルールの変え方を1つだけ言ってください。ルールは変えていません"}
+        try:
+            answer(self.store, self.ny, self.nm, rule_id, "change", new_rule=p.rules[0], said=text,
+                   new_until=p.until)
+        except LedgerError as e:
+            return {"error": str(e)}
         return self.review()
 
     def undo(self, rule_id: str) -> dict:

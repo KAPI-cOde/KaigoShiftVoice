@@ -5,7 +5,7 @@ API（すべて JSON）
 - POST /api/say     {"text"}          一言
 - POST /api/answer  {"uid", "text"}   「毎月ですか、今月だけですか」への返事（"rule"/"once" か話し言葉）
 - POST /api/retry   {"uid"}           送り直す
-- GET  /api/next/review · POST /api/next/answer|undo|build|adopt  翌月へ（ルールの見直し → 返さない案と返す案 → 採る）
+- GET  /api/next/review · POST /api/next/answer|change|undo|build|adopt  翌月へ（ルールの見直し → 返さない案と返す案 → 採る）
 - POST /api/voice   16kHz float32     声を文字にして一言と同じ流れへ（X-Answer-Uid があれば聞き返しへの返事）
 - POST /api/undo    {}                ひとつ戻す
 - POST /api/distribute {}             表を配った（ここから休みの電話は待機の人に頼む直し）
@@ -81,6 +81,9 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
             if not text:
                 return self._json(200, {"error": "聞き取れませんでした。もう一度話すか、文字で入れてください",
                                         "voice_seconds": secs})
+            if self.headers.get("X-Text-Only") == "1":
+                # ［変える（話す）］は文字にするだけ。中身は画面で確かめてから送る
+                return self._json(200, {"text": text, "voice_seconds": round(secs, 3)})
             with lock:
                 uid = self.headers.get("X-Answer-Uid")
                 r = session.answer(uid, text) if uid else session.say(text)
@@ -127,6 +130,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     try:
                         if self.path == "/api/next/answer":
                             out = fl.answer(data.get("rule_id", ""), data.get("answer", ""), data.get("new_until"))
+                        elif self.path == "/api/next/change":
+                            out = fl.change(data.get("rule_id", ""), data.get("text", ""), session.reader)
                         elif self.path == "/api/next/undo":
                             out = fl.undo(data.get("rule_id", ""))
                         elif self.path == "/api/next/build":

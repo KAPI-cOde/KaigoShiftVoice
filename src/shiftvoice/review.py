@@ -7,7 +7,7 @@
 - 変更なし    たたんで数だけ
 - 今月だけの頼み  前の月の今月だけの札。翌月へ引き継がない（帳面の期間で自然に効かない）。数だけ知らせる
 
-操作はすべて変更の帳面の tx（片付ける=remove・戻す=undo・期間を延ばす=change の until・今月も使う=答えだけ）。
+操作はすべて変更の帳面の tx（片付ける=remove・戻す=undo・期間を延ばす=change の until・変える=change の中身・今月も使う=答えだけ）。
 答えは帳面の review の行で、tx と同じ1回の保存に入る。続きの場所は帳面の review の行から決まる（別に持たない）。
 期限が過ぎた札は、答えないままでも・片付けても・戻しても、対象の月の表に効かない（帳面の期間で決まるため）。
 """
@@ -40,6 +40,7 @@ class Card:
     name: str
     until: str | None
     said: str | None
+    kind: str = ""
 
 
 def review_cards(ledger: Ledger, year: int, month: int) -> dict:
@@ -62,9 +63,9 @@ def review_cards(ledger: Ledger, year: int, month: int) -> dict:
             continue
         t = add_tx.get(rid)
         if until and ps <= until < start:
-            cards.append(Card(rid, "expired", r.name, until, r.meta.get("said")))
+            cards.append(Card(rid, "expired", r.name, until, r.meta.get("said"), r.kind))
         elif t and t.get("from") == ps and r.meta.get("said"):
-            cards.append(Card(rid, "added_last_month", r.name, until, r.meta.get("said")))
+            cards.append(Card(rid, "added_last_month", r.name, until, r.meta.get("said"), r.kind))
         else:
             unchanged += 1
     cards.sort(key=lambda c: (c.reason != "expired", c.rule_id))
@@ -85,7 +86,7 @@ def answers_for(ledger: Ledger, year: int, month: int) -> dict[str, dict]:
 
 
 def answer(store: Store, year: int, month: int, rule_id: str, what: str, *, new_until: str | None = None,
-           now: dt.datetime | None = None) -> dict:
+           new_rule: dict | None = None, said: str | None = None, now: dt.datetime | None = None) -> dict:
     """1枚に答える。答えと tx は帳面の1回の保存に入る（途中で止まっても、前か後の完全な状態で開く）。"""
     if what not in ANSWERS:
         raise LedgerError(f"知らない答え {what}")
@@ -100,7 +101,22 @@ def answer(store: Store, year: int, month: int, rule_id: str, what: str, *, new_
     ym = f"{year:04d}-{month:02d}"
     op_id = f"review-{ym}-{rule_id}"
     revs = []
-    if what == "archive":
+    extra = {}
+    if what == "change":
+        # 話して直した中身に置き換える（同じ札の版が上がる。対象の月から効く）。種類の違う中身は別の頼みとして言う
+        cur = led.rules_at()[rule_id]
+        if not new_rule or new_rule.get("kind") != cur.kind or cur.kind == "layer":
+            raise LedgerError("このルールの変え方として読めませんでした。同じルールの直し方を1つ言ってください")
+        rd = {k: new_rule[k] for k in ("name", "params", "who", "when", "flex") if k in new_rule}
+        rd["meta"] = {**{k: v for k, v in cur.meta.items() if k not in ("from", "until")},
+                      **new_rule.get("meta", {}), "said": said, "at": at, "source": "話した",
+                      "changed_from": cur.name}
+        start = _span(year, month)[0]
+        revs.append(led.append("change", rule_id=rule_id, rule=rd, op_id=op_id, frm=cur.meta.get("from") or start,
+                               until=new_until or cur.meta.get("until"),
+                               meta={"kind": "change", "at": at, "said": said})["rev"])
+        extra = {"new_name": rd.get("name"), "said": said}
+    elif what == "archive":
         revs.append(led.append("remove", rule_id=rule_id, op_id=op_id, meta={"kind": "archive", "at": at})["rev"])
     elif what == "extend":
         if not new_until or new_until < _span(year, month)[0]:
@@ -110,7 +126,7 @@ def answer(store: Store, year: int, month: int, rule_id: str, what: str, *, new_
         revs.append(led.append("change", rule_id=rule_id, rule=rd, op_id=op_id,
                                frm=cur.meta.get("from"), until=new_until, meta={"kind": "extend", "at": at})["rev"])
     rv = led.append("review", rule_id=rule_id, rule={"month": ym, "answer": what, "at": at, "tx": revs,
-                                                     "reason": card.reason}, op_id=op_id)
+                                                     "reason": card.reason, **extra}, op_id=op_id)
     store.save_ledger(led)  # 答え・tx・続きの場所（帳面から決まる）を1回で保存
     return {"answer": what, "review_rev": rv["rev"], "tx": revs}
 

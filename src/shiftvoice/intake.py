@@ -137,11 +137,13 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                             "flex": "fixed", "params": {"in": [sym]}, "who": who, "when": [b], "meta": {"moved_from": a}})
         elif t == "forbid_sequence":
             who = _names(it.get("staff"), names)
-            a, b = _sym(it.get("first"), facility), _sym(it.get("next"), facility)
+            a = _sym(it.get("first"), facility)
+            nx = it.get("next")
+            bs = list(dict.fromkeys(_sym(x, facility) for x in (nx if isinstance(nx, list) else [nx])))
             p.rules.append({"name": f"{'' if not who else _who(who) + ' '}{facility.shift(a).name}の次の日に"
-                                    f"{facility.shift(b).name}を置かない",
+                                    f"{'・'.join(facility.shift(b).name for b in bs)}を置かない",
                             "kind": "sequence", "flex": _flex(it.get("strength"), "negotiable"),
-                            "params": {"if": [a], "next_not_in": [b]}, "who": who, "when": None})
+                            "params": {"if": [a], "next_not_in": bs}, "who": who, "when": None})
         elif t == "count_limit":
             who = _names(it.get("staff"), names)
             sym = _sym(it.get("shift"), facility)
