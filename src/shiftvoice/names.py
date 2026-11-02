@@ -15,7 +15,7 @@ from .model import Facility, Staff
 
 # 呼び方の後ろに来てよい区切り
 BOUNDARY = r"(?=さん|くん|ちゃん|[、。,.\s　のはがにもとをへやで]|$)"
-HONORIFIC = r"(?:さん|くん|ちゃん)"
+HONORIFIC = r"(?:さん|くん|ちゃん|様|氏|君|先生)"
 # 「〇〇さん」でも人の名前ではない言葉
 NOT_NAMES = {"皆", "母", "父", "お母", "お父", "家族", "利用者", "看護師", "相談員", "新人", "息子", "娘", "奥"}
 
@@ -57,11 +57,11 @@ class Masker:
             pat = re.escape(alias) + (BOUNDARY if need_boundary else "")
             t = re.sub(pat, self.to_code[name], t)
         for u, code in self.unit_code.items():
-            t = re.sub(re.escape(u) + r"(?=ユニット|フロア|[のはがにでも])", code, t)
+            t = re.sub(re.escape(u) + r"(?=ユニット|フロア|[、。,.\s　のはがにでもとへやを]|$)", code, t)
             t = t.replace(code + "ユニット", code)
         t = t.replace("ゼロ", "0")
-        unknown = [m for m in re.findall(r"([一-龥ァ-ヶ]{1,4})" + HONORIFIC, t)
-                   if not m.startswith("職員") and m not in NOT_NAMES]
+        unknown = [m for m in re.findall(r"([一-龥々ァ-ヶA-Za-z]{1,6})" + HONORIFIC, t)
+                   if not re.fullmatch(r"職員\d{0,2}", m) and m not in NOT_NAMES]
         return t, unknown
 
     def unmask(self, obj):
