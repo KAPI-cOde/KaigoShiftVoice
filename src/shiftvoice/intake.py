@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 
 from .model import WEEKDAYS, Facility, Month, Staff
@@ -301,8 +303,12 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             sums.append(f"{_who(who)} {fm}月から" + "・".join(facility.shift(s).name for s in add) + "もできる")
     # 一言に名簿の人が出ているのに、返事が人を省いて「全員」に効く形なら、当てずに聞き返す（レビュー b の指摘。
     # 「岡田さん、15と16は休み」が全員の休みになる道を塞ぐ）
-    said = {s.name for s in staff if s.name in text or (s.call and s.call in text)}
-    if said and (any(not r.get("who") for r in p.rules if r["kind"] != "layer")
+    # 人が出ているかは、伏せる処理と同じ見方（名前・呼び方・名前の頭）で見る。かなで書かれた「おかださん」の
+    # ような名簿の表記に無い呼びかけも、人が出ているとみなす（再レビュー b の指摘）
+    from .names import Masker
+    said = bool(re.search(r"職員\d{2}", Masker(staff, facility).mask(text)[0])
+                or re.search(r"(さん|くん|ちゃん)", text))
+    if said and not re.search(r"全員|みんな|皆", text) and (any(not r.get("who") for r in p.rules if r["kind"] != "layer")
                  or any(not x.get("who") for x in p.removes)):
         raise Clarify("誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください")
     if kind == "cells":

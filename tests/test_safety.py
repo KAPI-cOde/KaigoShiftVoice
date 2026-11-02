@@ -50,3 +50,32 @@ def test_mask_call_and_prefix_before_digits_and_shifts(store):
     for text in ("遠藤15日休み", "遠藤夜勤なし", "ゆうちゃ20日休み", "ゆうちゃ早番で", "遠藤、二十日休み"):
         masked, _ = m.mask(text)
         assert "遠藤" not in masked and "ゆうちゃ" not in masked, (text, masked)
+
+
+def _endo(store):
+    from shiftvoice.model import Staff
+    return store.staff() + [Staff(name="遠藤ゆう", unit=store.facility().units[0], can=["日"], call="ゆうちゃ")]
+
+
+def test_mask_leftover_is_not_sent(store):
+    """区切りが無くて伏せきれない呼び方・名前の頭は、送る前に聞き返しに回す（再レビュー c の指摘）。"""
+    m = Masker(_endo(store), store.facility())
+    for text, alias in (("ゆうちゃ来週休み", "ゆうちゃ"), ("遠藤午後休み", "遠藤"), ("ゆうちゃから電話", "ゆうちゃ")):
+        masked, unknown = m.mask(text)
+        assert alias in unknown and m.leftover[alias] == "遠藤ゆう", (text, masked, unknown)
+    assert m.mask("遠藤ゆう来週休み")[1] == []          # 名前全体なら区切りなしで伏せる
+    assert m.mask("職員の休み")[1] == []
+    assert " " in m.mask("ゆうちゃ15日休み")[0]          # 番号と日付がつながらない
+
+
+def test_nobody_reply_when_called_by_prefix_or_kana(store):
+    """名前の頭だけ・かなで呼んでも、人を省いた返事は全員に効かせない。「全員」と言った時は通す（再レビュー a・b）。"""
+    from shiftvoice.intake import Clarify, to_proposal
+    fac, m = store.facility(), store.month(2026, 11)
+    off = [{"type": "day_off", "days": [15, 16]}]
+    for text, staff in (("遠藤さん、15と16は休み", _endo(store)), ("おかださん、15と16は休み", store.staff())):
+        with pytest.raises(Clarify):
+            to_proposal(off, text, fac, staff, m)
+    seq = [{"type": "forbid_sequence", "first": "夜", "next": "早"}]
+    p = to_proposal(seq, "小島さんも含めて全員、夜勤の次の日に早番を置かない", fac, store.staff(), m)
+    assert p.rules and not p.rules[0]["who"]

@@ -27,6 +27,7 @@ class Masker:
     to_code: dict[str, str] = field(default_factory=dict)    # 名前 → 職員NN
     to_name: dict[str, str] = field(default_factory=dict)    # 職員NN → 名前
     unit_code: dict[str, str] = field(default_factory=dict)  # 東 → ユニット1
+    leftover: dict[str, str] = field(default_factory=dict)   # 伏せきれなかった呼び方・頭 → 名前（直前の mask の結果）
 
     def __post_init__(self):
         for i, s in enumerate(self.staff, 1):
@@ -63,10 +64,17 @@ class Masker:
         for u, code in self.unit_code.items():
             t = re.sub(re.escape(u) + r"(?=ユニット|フロア|[、。,.\s　のはがにでもとへやを]|$)", code, t)
             t = t.replace(code + "ユニット", code)
+        t = re.sub(r"(職員\d{2})(?=[0-9０-９])", r"\1 ", t)   # 番号と日付がつながらないように（職員17 15日）
+        # 区切りが無くて伏せきれなかった呼び方・名前の頭が残っていたら、送らずに聞き返す（レビュー c の指摘。
+        # 「ゆうちゃ来週休み」「遠藤午後休み」のように、後ろに続く言葉の幅は字を足しても塞ぎきれない）
+        self.leftover = {}
+        for alias, name, need_boundary in self._aliases():
+            if need_boundary and alias in t and alias not in self.leftover:
+                self.leftover[alias] = name
         t = t.replace("ゼロ", "0")
         unknown = [m for m in re.findall(r"([一-龥々ァ-ヶA-Za-z]{1,6})" + HONORIFIC, t)
                    if not re.fullmatch(r"職員\d{0,2}", m) and m not in NOT_NAMES]
-        return t, unknown
+        return t, list(self.leftover) + unknown
 
     def suggest(self, unknown: str) -> list[str]:
         """名簿にない名前に近い名簿の名前（手元だけで出す。AI には送らない。13章）。

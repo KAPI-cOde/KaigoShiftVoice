@@ -125,8 +125,12 @@ class Session:
             cands = masker.suggest(wrong)
             cands = cands if len(cands) == 1 else []   # 1人に絞れる時だけ候補にする（森田→石田・岡田 のような当て推量を出さない）
             self.store.update_pending(self.year, self.month, u["id"], status="ask_name", unknown=unknown)
-            msg = (f"{wrong}さんは名簿にいません。{'・'.join(c + 'さん' for c in cands)}ですか" if cands else
-                   f"{wrong}さんは名簿にいません。名簿から選んでください")
+            if wrong in masker.leftover:   # 呼び方・名前の頭が伏せきれずに残った。名前を選ぶと、その名前に置き換えて読む
+                cands = [masker.leftover[wrong]]
+                msg = f"「{wrong}」は{cands[0]}さんのことですか（まだ何も送っていません）"
+            else:
+                msg = (f"{wrong}さんは名簿にいません。{'・'.join(c + 'さん' for c in cands)}ですか" if cands else
+                       f"{wrong}さんは名簿にいません。名簿から選んでください")
             return Reply("ask", u["id"], msg, extra={"ask_name": {"wrong": wrong, "candidates": cands,
                                                                   "roster": [x.name for x in staff]}})
         try:
