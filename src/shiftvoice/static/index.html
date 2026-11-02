@@ -67,13 +67,53 @@
   button.primary { background: #000; color: #fff; }
   #talk.on { background: #000; color: #fff; }
   button.primary:hover { background: #222; }
+
+  /* 3幕 ルールの見直し・引き受けを返す */
+  #topbar { gap: 10px; align-items: center; }
+  #v12 { display: none; max-width: 1440px; margin: 0 auto; padding: 14px 20px 0; }
+  .navrow { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .navrow button { font-size: 12px; padding: 2px 10px; }
+  #v12 h1 { font-size: 22px; margin: 6px 0 4px; }
+  .small { font-size: 12px; }
+  .rv-wrap { max-width: 760px; margin: 0 auto; padding-top: 14px; }
+  .rv-card { border: 1px solid #000; border-radius: 3px; padding: 22px 26px; margin: 18px 0 14px; }
+  .rv-card .l1 { display: flex; align-items: baseline; gap: 14px; }
+  .rv-card .lbl { font-size: 13px; font-weight: 700; white-space: nowrap; }
+  .rv-card .ttl { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; font-size: 24px; font-weight: 700; }
+  .rv-card .ln { font-size: 15px; margin-top: 8px; }
+  .rv-card .btns { margin-top: 18px; flex-wrap: wrap; align-items: center; }
+  .rv-card button { padding: 8px 18px; font-size: 14px; }
+  .rv-card .more { margin-left: auto; border-color: #bbb; }
+  .rv-card .detail { margin-top: 14px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 13px; }
+  .rv-card .ext { margin-top: 12px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
+  .rv-card .ext input { font: inherit; border: 1px solid #000; border-radius: 3px; padding: 5px 8px; }
+  .rv-err { color: #c0392b; font-size: 13px; min-height: 18px; }
+  .sumrows { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; }
+  .sumrows button { text-align: left; padding: 10px 14px; font-size: 15px; }
+  .big { padding: 10px 26px; font-size: 15px; }
+  .wait { padding: 60px 0; text-align: center; }
+  .wait .t { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; font-size: 20px; font-weight: 700; }
+  .wait .sec { margin-top: 8px; font-size: 14px; }
+  .res-main { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; font-size: 30px; font-weight: 700; margin: 8px 0 2px; }
+  .res-sub { font-size: 13px; }
+  .res-line2 { font-size: 15px; margin: 8px 0 12px; }
+  .grid td.hol { background: #eee; }
+  .grid td.nightoff { font-weight: 700; }
+  .grid td.diff { background: #fff3a0; }
+  .grid th.off { background: #eee; }
+  .ppl div { margin-bottom: 3px; }
+  .warn { color: #c0392b; }
+  #res-side { font-size: 13px; }
+  #res-side .detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd; }
+  #res-side .adopt { margin-top: 18px; }
+  #res-side .done { font-weight: 700; margin-top: 18px; font-size: 15px; }
   footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
 </style>
 </head>
 <body>
 <div id="keybar">Claude の鍵が入っていないので、一言の読み取りは動きません（README の手順）</div>
-<div id="topbar"><span id="distwrap"></span></div>
-<main>
+<div id="topbar"><span id="distwrap"></span><button type="button" id="to12">12月へ</button></div>
+<main id="v11">
   <section class="left">
     <h2 id="tabletitle">表</h2>
     <div id="tablewrap"></div>
@@ -91,6 +131,10 @@
     <div class="cards" id="cards"></div>
   </section>
 </main>
+<section id="v12">
+  <div class="navrow"><span class="small" id="v12sub"></span><button type="button" id="to11">11月の表へ</button></div>
+  <div id="v12body"></div>
+</section>
 <footer>勤務の並びの目安を扱う道具で、医学的な助言はしません。施設と職員はすべて作り話です。</footer>
 
 <script>
@@ -511,6 +555,268 @@ document.getElementById("form").addEventListener("submit", function (ev) {
     handle(res);
   }).catch(fail);
 });
+
+// ---- 3幕 ルールの見直し → 引き受けを返す ----
+var R = null;            // /api/next/review の返事
+var detailOpen = false;  // 札の［詳しく見る］
+var extOpen = false;     // 期間を延ばす欄
+var rvErr = "";
+var BR = null;           // /api/next/build の返事
+var adopted = false;
+var waitTimer = null;
+
+function show12(on) {
+  document.getElementById("v11").style.display = on ? "none" : "";
+  document.getElementById("topbar").style.display = on ? "none" : "";
+  document.getElementById("v12").style.display = on ? "block" : "none";
+}
+function get12() { return fetch("/api/next/review").then(function (r) { return r.json(); }); }
+
+function openReview() {
+  show12(true);
+  BR = null; adopted = false;
+  get12().then(function (r) { R = r; detailOpen = false; extOpen = false; rvErr = ""; renderReview(); });
+}
+document.getElementById("to12").addEventListener("click", openReview);
+document.getElementById("to11").addEventListener("click", function () {
+  if (waitTimer) return;
+  show12(false);
+});
+
+function next(path, body) {
+  return post("next/" + path, body).then(function (res) {
+    if (res.error) { rvErr = res.error; renderReview(); return null; }
+    return res;
+  });
+}
+
+function answerCard(c, ans, until) {
+  var body = { rule_id: c.rule_id, answer: ans };
+  if (until) body.new_until = until;
+  next("answer", body).then(function (res) {
+    if (!res) return;
+    R = res; detailOpen = false; extOpen = false; rvErr = "";
+    renderReview();
+  });
+}
+
+function renderReview() {
+  var box = document.getElementById("v12body");
+  box.textContent = "";
+  document.getElementById("v12sub").textContent = "";
+  var wrap = el("div", "rv-wrap");
+  if (!R) { box.appendChild(wrap); return; }
+  var title = R.done ? R.month + "月の表を作る前に　見直したルール" : R.head;
+  wrap.appendChild(el("h1", "", title));
+  if (R.unchanged) wrap.appendChild(el("div", "small", R.unchanged));
+  if (!R.done) {
+    var c = R.cards[R.cursor];
+    var card = el("div", "rv-card");
+    var l1 = el("div", "l1");
+    l1.appendChild(el("span", "lbl", c.label));
+    l1.appendChild(el("span", "ttl", c.title));
+    card.appendChild(l1);
+    c.lines.slice(0, 2).forEach(function (t) { card.appendChild(el("div", "ln", t)); });
+    var bs = el("div", "btns");
+    c.buttons.forEach(function (bt, i) {
+      var b = el("button", i === 0 ? "primary" : "", bt[1]);
+      b.type = "button";
+      b.addEventListener("click", function () {
+        if (bt[0] === "extend") { extOpen = !extOpen; renderReview(); return; }
+        answerCard(c, bt[0]);
+      });
+      bs.appendChild(b);
+    });
+    var mb = el("button", "more", detailOpen ? "閉じる" : "詳しく見る");
+    mb.type = "button";
+    mb.addEventListener("click", function () { detailOpen = !detailOpen; renderReview(); });
+    bs.appendChild(mb);
+    card.appendChild(bs);
+    if (extOpen) {
+      var ex = el("div", "ext");
+      ex.appendChild(el("span", "", "新しい終わりの日"));
+      var inp = el("input"); inp.type = "date"; inp.id = "extdate";
+      var ok = el("button", "primary", "この日まで延ばす"); ok.type = "button"; ok.disabled = true;
+      inp.addEventListener("input", function () { ok.disabled = !inp.value; });
+      ok.addEventListener("click", function () { answerCard(c, "extend", inp.value); });
+      ex.appendChild(inp); ex.appendChild(ok);
+      card.appendChild(ex);
+    }
+    if (detailOpen) {
+      var dt = el("div", "detail");
+      if (c.said) dt.appendChild(el("div", "", "言った言葉 「" + c.said + "」"));
+      if (c.until) dt.appendChild(el("div", "", "いつまで " + fmtUntil(c.until)));
+      card.appendChild(dt);
+    }
+    wrap.appendChild(card);
+  } else {
+    wrap.appendChild(el("div", "small", "行を押すと、そのルールだけ答えを戻せます"));
+    var rows = el("div", "sumrows");
+    var answered = R.cards.filter(function (x) { return x.answer; });
+    R.summary.forEach(function (t, i) {
+      var b = el("button", "", t);
+      b.type = "button";
+      b.addEventListener("click", function () {
+        next("undo", { rule_id: answered[i].rule_id }).then(function (res) {
+          if (!res) return;
+          R = res; detailOpen = false; extOpen = false; rvErr = "";
+          renderReview();
+        });
+      });
+      rows.appendChild(b);
+    });
+    wrap.appendChild(rows);
+    var go = el("button", "primary big", R.month + "月の表を作る");
+    go.type = "button";
+    go.addEventListener("click", startBuild);
+    wrap.appendChild(go);
+  }
+  wrap.appendChild(el("div", "rv-err", rvErr));
+  if (R.once) wrap.appendChild(el("div", "small", R.once));
+  box.appendChild(wrap);
+}
+
+function startBuild() {
+  var box = document.getElementById("v12body");
+  box.textContent = "";
+  var w = el("div", "wait");
+  w.appendChild(el("div", "t", "返さない案と返す案を、同じ条件で作っています"));
+  var sec = el("div", "sec", "0秒");
+  w.appendChild(sec);
+  box.appendChild(w);
+  var t0 = Date.now();
+  waitTimer = setInterval(function () { sec.textContent = Math.floor((Date.now() - t0) / 1000) + "秒"; }, 500);
+  post("next/build", {}).then(function (res) {
+    clearInterval(waitTimer); waitTimer = null;
+    if (res.error) { rvErr = res.error; BR = null; renderReview(); return; }
+    BR = res; adopted = false; renderResult();
+  }).catch(function () {
+    clearInterval(waitTimer); waitTimer = null;
+    rvErr = "うまくつながりませんでした。もう一度試してください"; renderReview();
+  });
+}
+
+function nightSym() {
+  var s = (S.symbols || []).filter(function (x) { return x.name === "夜勤"; })[0]
+       || (S.symbols || []).filter(function (x) { return (x.name || "").indexOf("夜勤") >= 0; })[0];
+  return s ? s.symbol : "夜";
+}
+
+function renderResult() {
+  var box = document.getElementById("v12body");
+  box.textContent = "";
+  var b = BR;
+  var wrap = el("div", "");
+  if (b.status !== "ok") {
+    var w = el("div", "rv-wrap");
+    w.appendChild(el("h1", "", "この条件では返せません"));
+    w.appendChild(el("div", "ln", b.message || ""));
+    var back = el("button", "", "見直しへ戻る"); back.type = "button"; back.style.marginTop = "14px";
+    back.addEventListener("click", function () { get12().then(function (r) { R = r; renderReview(); }); });
+    w.appendChild(back);
+    box.appendChild(w);
+    return;
+  }
+  var head = el("div", "");
+  head.appendChild(el("div", "res-main", b.main));
+  head.appendChild(el("div", "res-sub", b.sub));
+  head.appendChild(el("div", "res-line2", b.line2));
+  wrap.appendChild(head);
+  var grid = el("div", ""); grid.style.display = "grid"; grid.style.gridTemplateColumns = "minmax(0,1fr) 300px"; grid.style.gap = "24px";
+  var left = el("div", ""); left.style.minWidth = "0";
+  var night = nightSym();
+  var give = b.tables.give, base = b.tables.base;
+  var unitOf = {};
+  (S.staff || []).forEach(function (st) { unitOf[st.name] = st.unit; });
+  var names = Object.keys(give);
+  var offDay = function (d) { var wd = b.weekdays[d - 1]; return wd === "sat" || wd === "sun" || b.holidays.indexOf(d) >= 0; };
+  var t = el("table", "grid");
+  var thead = el("thead"), hr = el("tr");
+  hr.appendChild(el("th", "name", ""));
+  for (var d = 1; d <= b.days; d++) {
+    var th = el("th", offDay(d) ? "off" : "", String(d));
+    th.appendChild(el("small", "", WD[b.weekdays[d - 1]] || ""));
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr); t.appendChild(thead);
+  var tb = el("tbody"), prevUnit = null;
+  names.forEach(function (n) {
+    var tr = el("tr");
+    var u = unitOf[n];
+    if (prevUnit !== null && u !== undefined && prevUnit !== u) tr.className = "firstrow";
+    if (u !== undefined) prevUnit = u;
+    var nm = el("td", "name");
+    if (u !== undefined) nm.appendChild(el("span", "unit", u));
+    nm.appendChild(document.createTextNode(n));
+    tr.appendChild(nm);
+    for (var d2 = 1; d2 <= b.days; d2++) {
+      var sym = (give[n] || [])[d2 - 1] || "";
+      var cls = "cell";
+      if (offDay(d2)) cls += " hol";
+      if (offDay(d2) && sym === night) cls += " nightoff";
+      // 光らせるのは土日祝の夜勤が入れ替わったマスだけ（ほかのマスは解き直しで広く変わるので光らせない）
+      var bsym = base[n] ? (base[n][d2 - 1] || "") : sym;
+      if (offDay(d2) && (bsym === night) !== (sym === night)) cls += " diff";
+      tr.appendChild(el("td", cls, sym));
+    }
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  var tt = el("div", "small", (R ? R.month : 12) + "月の表（返す案）。土日祝の夜勤は太字、返さない案から土日祝の夜勤が入れ替わったマスは黄色");
+  tt.style.marginBottom = "4px";
+  left.appendChild(tt); left.appendChild(t);
+  grid.appendChild(left);
+
+  var side = el("div", ""); side.id = "res-side";
+  var mb = el("button", "", "詳しく見る"); mb.type = "button";
+  var dt = el("div", "detail"); dt.style.display = "none";
+  var inc = b.people.filter(function (p) { return p.after > p.before; });
+  var dec = b.people.filter(function (p) { return p.after < p.before; });
+  function ppl(title, arr, warn) {
+    dt.appendChild(el("div", "small", title));
+    var pl = el("div", "ppl");
+    if (!arr.length) pl.appendChild(el("div", "", "いません"));
+    arr.forEach(function (p) {
+      pl.appendChild(el("div", warn ? "warn" : "", p.name + " " + p.before + "→" + p.after + "回"));
+    });
+    dt.appendChild(pl);
+  }
+  ppl("増える人", inc, true);
+  var gap = el("div", ""); gap.style.height = "8px"; dt.appendChild(gap);
+  ppl("減る人", dec, false);
+  var acc = b.people.filter(function (p) { return p.accepted; });
+  if (acc.length) {
+    var gap2 = el("div", ""); gap2.style.height = "8px"; dt.appendChild(gap2);
+    dt.appendChild(el("div", "small", "引き受けた回数"));
+    var al = el("div", "ppl");
+    acc.forEach(function (p) { al.appendChild(el("div", "", p.name + " " + p.accepted + "回")); });
+    dt.appendChild(al);
+  }
+  mb.addEventListener("click", function () {
+    var on = dt.style.display === "none";
+    dt.style.display = on ? "block" : "none";
+    mb.textContent = on ? "閉じる" : "詳しく見る";
+  });
+  side.appendChild(mb); side.appendChild(dt);
+  var ad = el("div", "adopt");
+  if (adopted) {
+    ad.appendChild(el("div", "done", R.month + "月の表にしました"));
+  } else {
+    var ab = el("button", "primary big", R.month + "月はこれで作る"); ab.type = "button";
+    ab.addEventListener("click", function () {
+      ab.disabled = true;
+      post("next/adopt", { plan: "give" }).then(function (res) {
+        if (res.error || res.ok === false) { ab.disabled = false; ad.appendChild(el("div", "rv-err", res.error || "作れませんでした")); return; }
+        adopted = true; renderResult();
+      }).catch(function () { ab.disabled = false; });
+    });
+    ad.appendChild(ab);
+  }
+  side.appendChild(ad);
+  grid.appendChild(side);
+  wrap.appendChild(grid);
+  box.appendChild(wrap);
+}
 
 fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
   S = st;
