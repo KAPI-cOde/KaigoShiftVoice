@@ -7,7 +7,7 @@ from __future__ import annotations
 import calendar
 
 from .build import month_rules
-from .giveback import accepted_counts, build_pair
+from .giveback import accepted_counts, build_pair, pattern_counts
 from .intake import Clarify, to_proposal
 from .ledger import LedgerError
 from .names import Masker
@@ -129,6 +129,7 @@ class NextFlow:
             "people": [{"name": n, "before": gb.before[n], "after": gb.after[n], "accepted": counts.get(n, 0)}
                        for n in gb.after],
             "seconds": round(gb.give.seconds + gb.base.seconds, 2),
+            "patterns": self._patterns(gb, fac),
             "tables": {"base": gb.base.table, "give": gb.give.table},
             "days": dec.days, "weekdays": [dec.weekday(d) for d in range(1, dec.days + 1)],
             "holidays": dec.holidays,
@@ -139,6 +140,15 @@ class NextFlow:
                               "tail": m.prev_tail}
         self.store.save_month(m)
         return out
+
+    @staticmethod
+    def _patterns(gb, fac) -> dict:
+        """採用の前に見せる、並びの負担の前後の1行（合格基準にはしない。悪くなっていれば赤。B5）。"""
+        b, a = pattern_counts(gb.base.table, fac), pattern_counts(gb.give.table, fac)
+        worse = a["tobi"] > b["tobi"] or a["long_runs"] > b["long_runs"]
+        return {"before": b, "after": a, "worse": worse,
+                "line": f"飛び石（休み・勤務・休み）{b['tobi']}→{a['tobi']}回、5日以上の連勤 "
+                        f"{b['long_runs']}→{a['long_runs']}回（返す条件には入れていません）"}
 
     def adopt(self, plan: str) -> dict:
         """［12月はこれで作る］。選んだ案を12月の表にする（施設が決める）。"""

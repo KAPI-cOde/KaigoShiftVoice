@@ -894,6 +894,11 @@ function renderResult() {
     });
     dt.appendChild(pl);
   }
+  if (b.patterns) {  // 並びの負担の前後（B5。合格基準ではない。悪くなっていれば赤）
+    dt.appendChild(el("div", "small", "並びの負担"));
+    dt.appendChild(el("div", b.patterns.worse ? "warn" : "", b.patterns.line));
+    var gp = el("div", ""); gp.style.height = "8px"; dt.appendChild(gp);
+  }
   ppl("増える人", inc, true);
   var gap = el("div", ""); gap.style.height = "8px"; dt.appendChild(gap);
   ppl("減る人", dec, false);

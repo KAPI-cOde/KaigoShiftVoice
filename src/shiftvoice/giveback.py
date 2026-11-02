@@ -117,3 +117,21 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
     if not all(gb.checks[k] for k in gb.checks if k[0].isdigit()):
         gb.status, gb.message = "cannot", "この条件では返せません"
     return gb
+
+
+def pattern_counts(table: dict[str, list[str]], facility: Facility, run_len: int = 5) -> dict[str, int]:
+    """並びの負担（合格基準には入れない。B5・17章 A6）。
+    飛び石＝休み・勤務・休み（勤務が1日だけ挟まる）。長い連勤＝勤務の日が run_len 日以上続いた回数（月の中だけ）。"""
+    work = {st.symbol for st in facility.shift_types if st.counts_as_workday}
+    tobi = runs = 0
+    for row in table.values():
+        w = [c in work for c in row]
+        tobi += sum(1 for i in range(1, len(w) - 1) if w[i] and not w[i - 1] and not w[i + 1])
+        n = 0
+        for x in w + [False]:
+            if x:
+                n += 1
+            else:
+                runs += n >= run_len
+                n = 0
+    return {"tobi": tobi, "long_runs": runs}
