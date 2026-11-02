@@ -65,6 +65,7 @@ def main():
     ap.add_argument("--model", default=None)
     ap.add_argument("--out", default=str(ROOT / "data" / "runtime" / "recorded_replies.json"))
     ap.add_argument("--no-build", action="store_true")
+    ap.add_argument("--build-runs", type=int, default=1, help="組み立て（待機の定義）を何回呼ぶか。D1e は10回で8回以上")
     ap.add_argument("--only", default=None, help="この文字を含む一言だけ")
     a = ap.parse_args()
     load_dotenv(ROOT / ".env")
@@ -112,12 +113,27 @@ def main():
         secs.sort()
         print(f"所要 中央 {secs[len(secs) // 2]:.2f}秒 最長 {secs[-1]:.2f}秒（{len(secs)}回）")
     if not a.no_build:
+        from shiftvoice.standby import DefError, validate_def
         builds = json.loads((ROOT / "tests" / "fixtures" / "builds.json").read_text(encoding="utf-8"))
         b = SonnetBuilder()
+        fac = st.facility()
         for masked, want_text in builds.items():
-            got = b.build(masked)
-            print("組み立て", masked, "\n    本物=", json.dumps(got, ensure_ascii=False),
-                  "\n    用意=", json.dumps(parse_build(want_text), ensure_ascii=False))
+            want = validate_def(parse_build(want_text)["layer"], fac)
+            ok = 0
+            for i in range(a.build_runs):
+                t0 = time.time()
+                try:
+                    got = b.build(masked)
+                    g = validate_def(got.get("layer"), fac)
+                except (ReadError, DefError) as e:
+                    print(f"組み立て 失敗 {e}")
+                    continue
+                same = g == want
+                ok += same
+                print(f"組み立て {'合う' if same else '違う'} {time.time() - t0:.1f}秒"
+                      + ("" if same else "\n    本物=" + json.dumps(g, ensure_ascii=False)
+                         + "\n    用意=" + json.dumps(want, ensure_ascii=False)))
+            print(f"組み立て 合う {ok} / {a.build_runs} 回 {masked}")
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"録った返事 {out}")
 
