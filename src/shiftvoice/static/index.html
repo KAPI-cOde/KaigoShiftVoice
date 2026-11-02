@@ -311,6 +311,7 @@ function renderCards() {
           var hot = line.indexOf("引き受けた回数を翌月へ") >= 0;
           ex.appendChild(el("div", hot ? "box" : "", line));
         });
+        ex.appendChild(el("div", "", "待機でない人は、穴埋めの電話なし"));  // D6（待機だけで埋められる時の説明。埋められない時は案E）
         b.appendChild(ex);
       }
     }
