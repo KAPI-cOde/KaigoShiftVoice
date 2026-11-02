@@ -291,3 +291,17 @@ def test_t2_09_must_and_maybe_in_one(sess):
     a = snap(sess)
     assert a["table"]["岡田"][14] == "公"
     common(b, a)
+
+
+def test_t2_08_maybe_shows_tradeoff(sess):
+    """「できれば」の頼み。守れるかを先に試し、守れる時は代わりに動くマスを見せ、選ぶまで表を変えない。"""
+    b = snap(sess)
+    r = sess.say("田村さん、23日の祝日は日勤だと助かるって。できればでいいけど")
+    assert r.kind == "fix_offer" and "は守れます。代わりに" in r.message, r
+    unchanged(b, snap(sess))
+    a = sess.accept(r.uid)
+    assert a.kind == "applied"
+    after = snap(sess)
+    assert after["table"]["田村"][22] == "日"
+    common(b, after)
+    assert sess.undo().kind == "applied" and snap(sess)["table"] == b["table"]

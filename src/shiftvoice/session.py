@@ -177,6 +177,9 @@ class Session:
             return Reply("ask", u["id"], str(e))
         if p.kind == "cancel":
             return self._cancel(u, p)
+        if p.kind == "cells" and p.rules and not m.distributed and all(r["flex"] == "negotiable" for r in p.rules):
+            # 「できれば」の頼みは、守れるかを先に試し、守れる時は代わりに動くマスを見せて選んでもらう（T2-08）
+            return self._fix_offer(u, p, m, maybe=True)
         if m.distributed and p.kind == "cells":
             offer = self._standby_offer(u, p, m)
             return offer if offer is not None else self._fix_offer(u, p, m)
@@ -434,7 +437,8 @@ class Session:
             for rd in o["rules"]:
                 rd = {**rd, "id": f"r{n}", "scope": o.get("scope", "once"),
                       "meta": {**rd.get("meta", {}), "said": u["text"], "who": self.who, "at": at, "reason": None,
-                               "until": end, "source": "直した（配った後）", "uid": uid, "duty": o.get("duty")}}
+                               "until": end, "source": o.get("source", "直した（配った後）"), "uid": uid,
+                               "duty": o.get("duty")}}
                 n += 1
                 until = end if rd["scope"] == "once" else None
                 led.append("add", rule=rd, op_id=uid, frm=start, until=until, meta={"said": u["text"], "at": at})
@@ -455,7 +459,7 @@ class Session:
             self.store.save_month(m)                                     # 3 月の表
         self.store.resolve_pending(self.year, self.month, uid)           # 4 未反映の発言
 
-    def _fix_offer(self, u: dict, p, m) -> Reply:
+    def _fix_offer(self, u: dict, p, m, maybe: bool = False) -> Reply:
         """配った後のほかの直し（待機の案にならない頼み）。表は［これで直す］を押すまで変えない（画面3。Astra の指摘2）。"""
         led = Ledger.from_list(self.store.ledger().to_list())
         start, end = self._span()
@@ -469,10 +473,19 @@ class Session:
         if not rr.ok:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("failed_solve", u["id"], rr.staged.message or "直せませんでした")
+        if maybe and not rr.changes and not rr.staged.result.broken:
+            return self._apply(u, p, "once")     # いまの表のままで守れている。選んでもらう物が無い
+        if maybe and any(b["rule"].startswith("t-fix") for b in rr.staged.result.broken):
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("ask", u["id"], f"{p.summary}は、ほかのルールとぶつかって守れません。表は変えていません")
         offer = {"rules": p.rules, "scope": "once", "table": rr.table, "changes": rr.changes,
-                 "summary": p.summary, "base_rev": self.store.ledger().rev, "base_table": json.dumps(m.table)}
+                 "summary": p.summary, "base_rev": self.store.ledger().rev, "base_table": json.dumps(m.table),
+                 "source": "話した（できれば）" if maybe else "直した（配った後）"}
         self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
         who = sorted({c["staff"] for c in rr.changes})
+        if maybe:
+            return Reply("fix_offer", u["id"], f"{p.summary}は守れます。代わりに{len(rr.changes)}マス動きます"
+                         f"（{'・'.join(who)}さん）", changes=rr.changes, seconds=rr.seconds, summary=p.summary)
         return Reply("fix_offer", u["id"], f"{p.summary}。{len(rr.changes)}マス動きます（{'・'.join(who)}さん）",
                      changes=rr.changes, seconds=rr.seconds, summary=p.summary)
 
