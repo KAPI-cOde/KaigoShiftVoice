@@ -15,5 +15,8 @@
  "職員08さん、19日は夜勤じゃなくして": "{\"items\": [{\"type\": \"avoid_cell\", \"staff\": \"職員08\", \"days\": [19], \"shift\": \"夜\", \"reason\": null}]}",
  "よろしくね": "{\"items\": [{\"type\": \"none\"}]}",
  "あれをこう、いい感じに": "{\"items\": [{\"type\": \"unclear\", \"question\": \"どの人の、何日の勤務のことですか\"}]}",
- "職員16さん、連勤は毎月4日まで": "{\"items\": [{\"type\": \"consecutive_limit\", \"staff\": [\"職員16\"], \"max\": 4, \"reason\": null}]}"
+ "職員16さん、連勤は毎月4日まで": "{\"items\": [{\"type\": \"consecutive_limit\", \"staff\": [\"職員16\"], \"max\": 4, \"reason\": null}]}",
+ "毎月、土日は休みの人から待機1人。急な休みの電話はその人にだけ。引き受けた回数は、翌月も覚えておいて": "{\"items\": [{\"type\": \"custom\", \"summary\": \"土日の待機当番\"}]}",
+ "職員01さんから電話で、11月1日の日曜、お休みしたいって": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員01\", \"days\": [1], \"reason\": null}]}",
+ "職員11さん、1日休みで": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員11\", \"days\": [1], \"reason\": null}]}"
 }

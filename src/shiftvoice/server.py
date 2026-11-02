@@ -6,6 +6,8 @@ API（すべて JSON）
 - POST /api/answer  {"uid", "text"}   「毎月ですか、今月だけですか」への返事（"rule"/"once" か話し言葉）
 - POST /api/retry   {"uid"}           送り直す
 - POST /api/undo    {}                ひとつ戻す
+- POST /api/distribute {}             表を配った（ここから休みの電話は待機の人に頼む直し）
+- POST /api/accept|refuse|cancel {"uid"}  ［了承をもらって直す］［断られた］［やめる］
 鍵は環境変数 ANTHROPIC_API_KEY（.env からも読む）。画面にも記録にも出さない。
 """
 from __future__ import annotations
@@ -16,7 +18,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from .reader import HaikuReader, ReadError
+from .reader import HaikuReader, ReadError, SonnetBuilder
 from .session import Session
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -95,6 +97,16 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool):
                     r = session.say(data["text"])
                 elif self.path == "/api/answer":
                     r = session.answer(data.get("uid", ""), data.get("text", ""))
+                elif self.path == "/api/accept":
+                    r = session.accept(data.get("uid", ""))
+                elif self.path == "/api/refuse":
+                    r = session.refuse(data.get("uid", ""))
+                elif self.path == "/api/cancel":
+                    r = session.cancel(data.get("uid", ""))
+                elif self.path == "/api/distribute":
+                    session.distribute()
+                    from .session import Reply
+                    r = Reply("ask", None, "表を配った後の扱いにしました")
                 elif self.path == "/api/undo":
                     r = session.undo()
                 elif self.path == "/api/retry":
@@ -120,7 +132,7 @@ def serve(session: Session, *, port: int = 8765, has_key: bool = False) -> None:
         httpd.server_close()
 
 
-def demo_session(data_dir: Path, *, reset: bool = False, reader=None) -> tuple[Session, bool]:
+def demo_session(data_dir: Path, *, reset: bool = False, reader=None, builder=None) -> tuple[Session, bool]:
     from .store import Store
     seed = Path(__file__).resolve().parents[2] / "data" / "hidamari"
     store = Store.from_seed(seed, data_dir, reset=reset)
@@ -128,4 +140,6 @@ def demo_session(data_dir: Path, *, reset: bool = False, reader=None) -> tuple[S
     has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
     if reader is None:
         reader = HaikuReader() if has_key else NoKeyReader()
-    return Session(store, 2026, 11, reader), has_key
+    if builder is None:
+        builder = SonnetBuilder() if has_key else None
+    return Session(store, 2026, 11, reader, builder=builder), has_key

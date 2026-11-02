@@ -86,8 +86,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             raise Clarify(it.get("question") or "うまく聞き取れませんでした。もう一度言ってください")
         if it["type"] in NOT_YET:
             raise Clarify("この形の頼みは、まだ扱えません。別の言い方で言ってください")
-    kinds = {"cells" if it["type"] in DATE_TYPES else "staff" if it["type"] == "staff_info" else "rule"
-             for it in real}
+    kinds = {"cells" if it["type"] in DATE_TYPES else "staff" if it["type"] == "staff_info"
+             else "layer" if it["type"] == "layer_def" else "rule" for it in real}
     if len(kinds) > 1:
         raise Clarify("頼みが混ざっています。1つずつ言ってください")
     kind = kinds.pop()
@@ -97,7 +97,17 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         t = it["type"]
         reason = it.get("reason") or None
         p.reason = p.reason or reason
-        if t == "day_off":
+        if t == "layer_def":
+            from .standby import DefError, explain, validate_def
+            try:
+                d = validate_def(it.get("def"), facility)
+            except DefError as e:
+                raise Clarify(str(e))
+            p.rules.append({"name": d["name"], "kind": "layer", "flex": "operational",
+                            "params": {"def": d}, "who": None, "when": None,
+                            "meta": {"explain": explain(d)}})
+            sums.append(f"{d['name']}（" + "・".join(explain(d)) + "）")
+        elif t == "day_off":
             who = _names(it.get("staff"), names)
             ds = _days(it.get("days"), month)
             p.rules.append({"name": f"{_who(who)} {'・'.join(map(str, ds))}日 休み", "kind": "cell",
@@ -192,7 +202,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             sums.append(f"{_who(who)} {fm}月から" + "・".join(facility.shift(s).name for s in add) + "もできる")
     if kind == "cells":
         p.scope = "once"
-    elif kind == "rule":
+    elif kind in ("rule", "layer"):
         p.scope = "rule" if p.until else read_period(text)
     else:  # 職員の情報は言われた月から。聞かない
         p.scope = "rule"

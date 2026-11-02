@@ -1,0 +1,3 @@
+{
+ "毎月、土日は休みの人から待機1人。急な休みの電話はその人にだけ。引き受けた回数は、翌月も覚えておいて": "{\"layer\": {\"name\": \"待機当番\", \"days\": {\"weekdays\": [\"sat\", \"sun\"], \"holidays\": false}, \"per_day\": 1, \"own_shift_on_duty_day\": {\"in\": [\"公\"], \"prev_not_in\": [\"夜\", \"明\"]}, \"on_absence\": {\"call\": \"duty_only\"}, \"counters\": [{\"id\": \"assigned\"}, {\"id\": \"activated\", \"carry_to_next_month\": true}]}}"
+}

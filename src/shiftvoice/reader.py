@@ -140,3 +140,78 @@ class HaikuReader:
             rec[masked_text] = text
             p.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
         return items
+
+
+BUILD_SYSTEM = """あなたは介護施設の勤務表アプリの組み立て係です。作成者の一言から、表に無い当番（待機など）の定義を JSON で作ります。
+人は「職員NN」と伏せてあります。返事は JSON だけ。
+
+形
+{"layer": {"name": 当番の名前, "days": {"weekdays": [mon〜sun], "holidays": 祝日も入れるなら true},
+  "per_day": 1日の人数, "own_shift_on_duty_day": {"in": [当番の日の本人の勤務の記号], "prev_not_in": [前の日に置けない記号]},
+  "on_absence": {"call": "duty_only"（急な休みの電話は当番の人にだけ）か "all"},
+  "counters": [{"id": "assigned"}, {"id": "activated", "carry_to_next_month": 引き受けた回数を翌月も覚えるなら true}]}}
+読めない時は {"question": 聞き返しの1文}
+
+勤務の記号: 早 日 遅 夜 明 公 有 研。「休みの人から」は in に 公、前の日が夜勤・明けの人は外す（prev_not_in に 夜 と 明）。
+言っていないことは足さない。
+
+例
+一言「毎月、平日の夜は休みの人から呼び出し当番を2人。電話はその2人だけ」
+{"layer": {"name": "呼び出し当番", "days": {"weekdays": ["mon","tue","wed","thu","fri"], "holidays": false}, "per_day": 2, "own_shift_on_duty_day": {"in": ["公"], "prev_not_in": ["夜","明"]}, "on_absence": {"call": "duty_only"}, "counters": [{"id": "assigned"}]}}
+"""
+
+
+def parse_build(text: str) -> dict:
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        raise ReadError("組み立ての返事に JSON がない")
+    try:
+        obj = json.loads(m.group(0))
+    except json.JSONDecodeError as e:
+        raise ReadError(f"組み立ての JSON が読めない {e}") from e
+    if not isinstance(obj, dict) or not ("layer" in obj or "question" in obj):
+        raise ReadError("組み立ての返事の形が違う")
+    return obj
+
+
+class RecordedBuilder:
+    """録った（用意した）組み立ての返事。キーは伏せた後の一言。"""
+
+    def __init__(self, replies: dict[str, str]):
+        self.replies = replies
+        self.sent: list[Sent] = []
+
+    @classmethod
+    def from_file(cls, path: Path) -> "RecordedBuilder":
+        return cls(json.loads(Path(path).read_text(encoding="utf-8")))
+
+    def build(self, masked_text: str) -> dict:
+        self.sent.append(Sent(BUILD_SYSTEM, build_messages(masked_text)))
+        if masked_text not in self.replies:
+            raise ReadError("録った組み立ての返事がない一言")
+        return parse_build(self.replies[masked_text])
+
+
+@dataclass
+class SonnetBuilder:
+    """組み立て役（Sonnet 5.5・effort low・1500トークンまで。8章）。"""
+    model: str = "claude-sonnet-5-5"
+    timeout: float = 30.0
+    sent: list[Sent] = field(default_factory=list)
+
+    def build(self, masked_text: str) -> dict:
+        import anthropic
+
+        msgs = build_messages(masked_text)
+        self.sent.append(Sent(BUILD_SYSTEM, msgs))
+        try:
+            client = anthropic.Anthropic(timeout=self.timeout, max_retries=1)
+            resp = client.messages.create(
+                model=self.model, max_tokens=1500, system=BUILD_SYSTEM, messages=msgs,
+                thinking={"type": "between_tools"}, output_config={"effort": "low"},
+            )
+        except anthropic.APIError as e:
+            raise ReadError(f"組み立てを呼べませんでした（{type(e).__name__}）") from e
+        if resp.stop_reason != "end_turn":
+            raise ReadError(f"組み立ての返事が途中で止まりました（{resp.stop_reason}）")
+        return parse_build("".join(b.text for b in resp.content if b.type == "text"))

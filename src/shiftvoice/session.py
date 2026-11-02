@@ -19,7 +19,10 @@ from .model import Rule
 from .names import Masker
 from .period import read_answer
 from .reader import ReadError
+from .giveback import accepted_counts
+from .model import Acceptance
 from .resolve import changed_cells, resolve
+from .standby import ASK_WIDER, assign, duty_days, fix_absence
 from .store import Store
 
 JST = dt.timezone(dt.timedelta(hours=9))
@@ -36,16 +39,20 @@ class Reply:
     summary: str = ""
     seconds: float = 0.0
     warning: str = ""        # 守れなかった新しいルール・段を下げた知らせ（赤で出す）
+    extra: dict = field(default_factory=dict)  # 場面ごとの添え物（待機の人・引き受けの回数など）
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
 
 
 class Session:
-    def __init__(self, store: Store, year: int, month: int, reader, *, now=None, who: str = "作成者"):
+    def __init__(self, store: Store, year: int, month: int, reader, *, now=None, who: str = "作成者",
+                 builder=None, base_date: str | None = None):
         self.store, self.year, self.month, self.reader = store, year, month, reader
+        self.builder = builder
         self.now = now or (lambda: dt.datetime.now(JST))
         self.who = who
+        self.base_date = base_date  # 引き受けを数える基準日（デモ設定。None は今日）
 
     # 開く
     @property
@@ -113,6 +120,11 @@ class Session:
             return Reply("ask", u["id"], f"名簿にない名前です（{'・'.join(unknown)}）。名簿から選んでください")
         try:
             items = masker.unmask(self.reader.read(masked))
+            if self.builder and any(it.get("type") == "custom" for it in items):
+                # 型に収まらない一言（表に無い当番など）は組み立て役へ（8章）
+                b = masker.unmask(self.builder.build(masked))
+                items = ([{"type": "layer_def", "def": b["layer"]}] if "layer" in b
+                         else [{"type": "unclear", "question": b.get("question")}])
         except ReadError as e:
             self.store.update_pending(self.year, self.month, u["id"], status="failed", error=str(e))
             return Reply("error", u["id"], "読み取りに失敗しました。表もルールも変えていません")
@@ -129,6 +141,10 @@ class Session:
         except Clarify as e:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], str(e))
+        if m.distributed and p.kind == "cells":
+            offer = self._standby_offer(u, p, m)
+            if offer is not None:
+                return offer
         scope = u.get("scope") or p.scope
         if scope is None:
             self.store.update_pending(self.year, self.month, u["id"], status="ask_period")
@@ -169,7 +185,21 @@ class Session:
         changes: list[dict] = []
         secs = 0.0
         warning = ""
-        if added:
+        if added and all(r.kind == "layer" for r in added):
+            fac = self.store.facility()
+            pins = {int(k): v for k, v in ((self.store.premise(self.year, self.month) or {})
+                                            .get("standby_pins", {})).items()}
+            for r in added:
+                d = r.params["def"]
+                m.layers[d["id"]] = {"def": d, "rule_id": r.id,
+                                     "assign": assign(d, fac, self.store.staff_on(self.year, self.month),
+                                                      m, m.table, pins=pins)}
+            self.store.save_ledger(led)
+            m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev,
+                              "said": u["text"], "layers": [r.params["def"]["id"] for r in added]})
+            m.built_rev = led.rev
+            self.store.save_month(m)
+        elif added:
             tmp = Ledger.from_list(led.to_list())
             rules = [clip_to_month(r, *self._span()) for r in tmp.rules_at(between=self._span()).values()]
             fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
@@ -216,9 +246,106 @@ class Session:
         before = m.table
         self.store.save_ledger(led)
         m.table, m.built_rev = h["table"], led.rev
+        for lid in h.get("layers", []):
+            m.layers.pop(lid, None)
+        if "rest_adjust" in h:   # 配った後の直しは、公休の足し引き・応援・引き受けの記録もまとめて戻す（16章の11）
+            m.rest_adjust, m.support = h["rest_adjust"], h["support"]
         self.store.save_month(m)
+        if h.get("acceptance_id"):
+            self.store.save_acceptances([a for a in self.store.acceptances() if a.id != h["acceptance_id"]])
         return Reply("applied", h["op_id"], f"戻しました（「{h['said']}」）",
                      changes=changed_cells(before, m.table), summary="ひとつ戻す")
+
+    # 配る・待機の人に頼む
+    def distribute(self) -> None:
+        """表を配った（ここから先の休みの電話は、待機の人に頼む直しになる）。"""
+        m = self.store.month(self.year, self.month)
+        m.distributed = True
+        self.store.save_month(m)
+
+    def _accepted(self, name: str) -> int:
+        base = self.base_date or self.now().date().isoformat()
+        return accepted_counts(self.store.acceptances(), self.ym, base).get(name, 0)
+
+    def _standby_offer(self, u: dict, p, m) -> Reply | None:
+        offs = [r for r in p.rules if r["kind"] == "cell" and r["params"] == {"in": ["公"]}]
+        if len(offs) != 1 or len(p.rules) != 1 or len(offs[0]["who"] or []) != 1 or len(offs[0]["when"]) != 1:
+            return None
+        name, day = offs[0]["who"][0], offs[0]["when"][0]
+        layer = next((L for L in m.layers.values() if day in duty_days(L["def"], m)), None)
+        if layer is None:
+            return None
+        fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
+        rules = month_rules(self.store, self.year, self.month, with_premise=False)
+        duty = layer["assign"].get(str(day), [])
+        r = fix_absence(fac, staff, rules, m, m.table, name, day, duty)
+        if r["status"] == "already_off":
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("ask", u["id"], r["message"])
+        if r["status"] != "ok":
+            self.store.update_pending(self.year, self.month, u["id"], status="wider")
+            return Reply("ask", u["id"], ASK_WIDER)
+        helper = r["duty"]
+        offer = {"requester": name, "day": day, "duty": helper, "table": r["table"], "changes": r["changes"],
+                 "rest": r["rest"], "rest_adjust": r["rest_adjust"], "support": r["support"],
+                 "layer": layer["def"]["id"]}
+        self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
+        n = self._accepted(helper)
+        rb, ra = r["rest"][helper]
+        return Reply(
+                     "standby_offer", u["id"], f"その日の待機の{helper}さんに頼む案です（{len(r['changes'])}マス）",
+                     changes=r["changes"], seconds=r["seconds"],
+                     summary=f"公休　{name}さん {r['rest'][name][0]}日 → {r['rest'][name][1]}日　"
+                             f"{helper}さん {rb}日 → {ra}日",
+                     extra={"duty": helper, "requester": name, "day": day, "accepted": [n, n + 1]})
+
+    def accept(self, uid: str) -> Reply:
+        """［了承をもらって直す］。ここでだけ引き受けの記録が増える（17章 A23 の13）。"""
+        u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
+        if u is None or u.get("status") != "offer":
+            return Reply("error", uid, "了承をもらう案が見つかりません")
+        o = u["offer"]
+        m = self.store.month(self.year, self.month)
+        led = self.store.ledger()
+        at = self.now().isoformat(timespec="seconds")
+        start, end = self._span()
+        if not any(t.get("op_id") == uid for t in led.txs):
+            n = max([int(r[1:]) for r in led.rules_at() if r[1:].isdigit()] + [100]) + 1
+            rd = {"id": f"r{n}", "name": f"{o['requester']}さん {o['day']}日 休み", "kind": "cell", "flex": "wish",
+                  "params": {"in": ["公"]}, "who": [o["requester"]], "when": [o["day"]], "scope": "once",
+                  "meta": {"said": u["text"], "who": self.who, "at": at, "reason": None, "until": end,
+                           "source": "直した（配った後）", "uid": uid, "duty": o["duty"]}}
+            led.append("add", rule=rd, op_id=uid, frm=start, until=end, meta={"said": u["text"], "at": at})
+        acc = Acceptance(id=f"a-{uid}", staff=o["duty"], date=f"{self.ym}-{o['day']:02d}", layer=o["layer"],
+                         op_id=uid, tx_rev=led.rev, note=f"{o['requester']}さんの休みの穴埋め")
+        before_n = self._accepted(o["duty"])
+        self.store.save_ledger(led)                                  # 1 帳面
+        m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": u["text"],
+                          "rest_adjust": m.rest_adjust, "support": m.support, "acceptance_id": acc.id})
+        m.table, m.built_rev = o["table"], led.rev
+        m.rest_adjust, m.support = o["rest_adjust"], o["support"]
+        self.store.save_month(m)                                     # 2 月の表
+        items = [a for a in self.store.acceptances() if a.id != acc.id] + [acc]
+        self.store.save_acceptances(items)                           # 3 引き受けの記録
+        self.store.resolve_pending(self.year, self.month, uid)       # 4 未反映の発言
+        after_n = self._accepted(o["duty"])
+        return Reply("applied", uid, f"{o['duty']}さんの了承をもらって直しました", changes=o["changes"],
+                     summary=f"{self.month}月の引き受け {before_n}回 → {after_n}回",
+                     extra={"duty": o["duty"], "accepted": [before_n, after_n],
+                            "note": "引き受け＝了承をもらって表を直した回数"})
+
+    def refuse(self, uid: str) -> Reply:
+        """［断られた］。表も引き受けの記録も変えず、案Eの聞き返しへ。"""
+        u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
+        if u is None or u.get("status") != "offer":
+            return Reply("error", uid, "断られた案が見つかりません")
+        self.store.update_pending(self.year, self.month, uid, status="wider")
+        return Reply("ask", uid, ASK_WIDER)
+
+    def cancel(self, uid: str) -> Reply:
+        """［やめる］。頼みを取り下げる（表も記録も変えない）。"""
+        self.store.resolve_pending(self.year, self.month, uid)
+        return Reply("ask", uid, "やめました。表は変えていません")
 
     # 画面へ渡す
     def state(self) -> dict:
@@ -236,6 +363,11 @@ class Session:
                       for r in rules.values()],
             "pending": self.store.pending(self.year, self.month),
             "can_undo": bool(m.history),
+            "distributed": m.distributed,
+            "layers": {k: {"name": v["def"]["name"], "assign": v["assign"], "rule_id": v["rule_id"]}
+                       for k, v in m.layers.items()},
+            "accepted": accepted_counts(self.store.acceptances(), self.ym,
+                                        self.base_date or self.now().date().isoformat()),
             "last_said": m.history[-1]["said"] if m.history else None,
             "symbols": [{"symbol": st.symbol, "name": st.name} for st in fac.shift_types],
         }
