@@ -35,6 +35,7 @@ class Reply:
     rule_ids: list[str] = field(default_factory=list)
     summary: str = ""
     seconds: float = 0.0
+    warning: str = ""        # 守れなかった新しいルール・段を下げた知らせ（赤で出す）
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -167,6 +168,7 @@ class Session:
                 added.append(Rule.from_dict(tx["rule"]))
         changes: list[dict] = []
         secs = 0.0
+        warning = ""
         if added:
             tmp = Ledger.from_list(led.to_list())
             rules = [clip_to_month(r, *self._span()) for r in tmp.rules_at(between=self._span()).values()]
@@ -178,6 +180,13 @@ class Session:
                 self.store.resolve_pending(self.year, self.month, u["id"])
                 return Reply("failed_solve", u["id"], rr.staged.message or "直せませんでした", seconds=secs)
             changes = rr.changes
+            # 守れなかった新しいルールと、段を下げたことは黙らずに知らせる（7章。Astra 2026-11-02 の指摘1）
+            names = {r.id: r.name for r in added}
+            missed = sorted({names[b["rule"]] for b in rr.staged.result.broken if b["rule"] in names})
+            notes = [rr.staged.note] if rr.staged.note else []
+            if missed:
+                notes.insert(0, f"{'・'.join(missed)}は、ほかのルールとぶつかって守れませんでした")
+            warning = "。".join(notes)
             self.store.save_ledger(led)            # 1 帳面
             m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev,
                               "said": u["text"]})
@@ -192,7 +201,7 @@ class Session:
             self.store.save_staff(staff)           # 3 職員
         self.store.resolve_pending(self.year, self.month, u["id"])  # 4 未反映の発言
         return Reply("applied", u["id"], p.summary, changes=changes, rule_ids=[r.id for r in added],
-                     summary=p.summary, seconds=secs)
+                     summary=p.summary, seconds=secs, warning=warning)
 
     def undo(self) -> Reply:
         """［ひとつ戻す］。最後に採用した一言の札を取り消し（帳面に取り消しの1行）、表を直す前に戻す。"""

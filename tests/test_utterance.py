@@ -251,3 +251,22 @@ def test_undo_restores_table_and_card(sess):
     sess.undo()
     assert json.dumps(sess.store.month(2026, 11).table) == t0
     assert sess.undo().kind == "ask"
+
+
+def test_period_reason_words_not_scope():
+    """理由の「いつも」「ずっと」は期間ではない。聞く（Astra の指摘3）。"""
+    assert read_period("いつも早番が多くてつらいから、早番は5回までにして") is None
+    assert read_period("ずっと夜勤続きで疲れてるから、夜勤は3回まで") is None
+    assert read_period("これからずっと夜勤は3回まで") == "rule"
+
+
+def test_missed_wish_is_told(sess):
+    """新しい希望が守れない時は、黙って「反映した」と言わない（Astra の指摘1）。"""
+    r = sess.say("加藤さん、21日は外の研修")
+    assert r.kind == "applied" and r.warning == ""
+    sess.reader.replies["職員06さん、21日は休み"] = json.dumps(
+        {"items": [{"type": "day_off", "staff": "職員06", "days": [21], "reason": None}]}, ensure_ascii=False)
+    r2 = sess.say("加藤さん、21日は休み")   # 研修（動かせない）と休みの希望がぶつかる
+    assert r2.kind == "applied"
+    assert "守れませんでした" in r2.warning
+    assert cell(sess, "加藤", 21) == "研"

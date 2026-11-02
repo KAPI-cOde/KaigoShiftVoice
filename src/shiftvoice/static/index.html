@@ -30,6 +30,7 @@
   .said p { margin: 0 0 2px; }
   .reply { margin-top: 8px; min-height: 22px; }
   .reply .summary { font-weight: 700; }
+  .reply .warning { color: #c0392b; margin-top: 4px; }
   .reply .q { margin: 4px 0 6px; font-weight: 700; }
   button { font: inherit; background: #fff; color: #000; border: 1px solid #000; border-radius: 3px; padding: 4px 14px; cursor: pointer; }
   button:hover { background: #f4f4f4; }
@@ -241,6 +242,7 @@ function renderReply(r) {
   if (!r) return;
   if (r.kind === "applied") {
     if (r.summary) box.appendChild(el("div", "summary", r.summary));
+    if (r.warning) box.appendChild(el("div", "warning", r.warning));
     return;
   }
   if (r.kind === "ask_period") {
