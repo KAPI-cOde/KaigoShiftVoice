@@ -36,7 +36,7 @@ SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係で�
 - avoid_cell その日はその勤務にしない。staff, days, shift, reason
 - move 前に決まったマスを別の日へ移す。staff, shift, from_day, to_day, reason
 - forbid_sequence 並びの禁止（AのつぎのひにB）。staff(並び。全員なら null), first, next(記号。Bが2つ以上なら並び), strength, reason
-- count_limit 月の回数。staff(並び。全員なら null), shift, min, max(言っていなければ null), until_day(「〇日まで」なら日、なければ null), strength, reason
+- count_limit 月の回数。staff(並び。全員なら null), shift, min, max(言っていなければ null), until_day(「〇日まで」なら日、なければ null), strength, reason。「夜勤なし」「夜勤0」は max 0。「15日まで夜勤なし」は max 0 と until_day 15（日付の型にしない）
 - weekday_pref 曜日の頼み。staff, weekdays(mon〜sun), shift, avoid(避けるなら true), until_month(「12月いっぱい」なら 12。なければ null), reason
 - consecutive_limit 続けて働く日数の上限。staff, max, reason
 - staff_info 職員の情報の変更（できる勤務など）。staff, from_month, can_add(記号の並び), can_remove
