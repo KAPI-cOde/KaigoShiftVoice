@@ -128,14 +128,17 @@ class NextFlow:
         if who["run_after"] < who["run_before"]:
             parts.append(f"いちばん長い連勤 {who['run_before']}→{who['run_after']}日")
         o = gb.others
+        changed = sum(x != y for n in gb.base.table for x, y in zip(gb.base.table[n], gb.give.table[n]))
         out.update({
             "main": f"{who['name']}さん　{self.month}月に{who['accepted']}回引き受け → {self.nm}月は" + "・".join(parts),
             "who": who["name"],
-            "sub": f"引き受けた{len(gb.people)}人に、" + {("leave", "run"): "有給を1日と、短い連勤", ("leave",): "有給を1日",
-                                                        ("run",): "短い連勤"}[tuple(gb.stage)] + "。人数とルールはそのまま",
-            "line2": f"ほかの人の5日続く勤務 {o['run5_before']}→{o['run5_after']}・飛び石 {o['tobi_before']}→{o['tobi_after']}（増やさない）",
+            "sub": "ほかの人の有給と連勤は増やさない。人数とルールはそのまま",
+            "line2": f"引き受けた{len(gb.people)}人に、" + {("leave", "run"): "有給を1日と短い連勤", ("leave",): "有給を1日",
+                                                          ("run",): "短い連勤"}[tuple(gb.stage)]
+                     + f"。返さない案から変わるのは{changed}マス",
             "people": gb.people,
             "others": o,
+            "changed": changed,
             "leave_avg": round(gb.leave_avg, 1),
             "stage": list(gb.stage),
             "seconds": round(gb.give.seconds + gb.base.seconds, 2),
