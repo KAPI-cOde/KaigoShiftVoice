@@ -27,5 +27,9 @@
  "職員07さん、法事で14日、あ、違う、15日休み": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員07\", \"days\": [15], \"reason\": \"法事\"}]}",
  "職員09さんの早番を4回までにして、毎月ね": "{\"items\": [{\"type\": \"count_limit\", \"staff\": [\"職員09\"], \"shift\": \"早\", \"min\": null, \"max\": 4, \"until_day\": null, \"strength\": \"operational\", \"reason\": null}]}",
  "職員10さんから電話で、11月14日の土曜、お休みしたいって": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員10\", \"days\": [14], \"reason\": null}]}",
- "職員13さんから電話で、11月22日の日曜、お休みしたいって": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員13\", \"days\": [22], \"reason\": null}]}"
+ "職員13さんから電話で、11月22日の日曜、お休みしたいって": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員13\", \"days\": [22], \"reason\": null}]}",
+ "職員06さんの21日は研修……じゃない、職員03さん、職員03さんの研修が13日に変わったの": "{\"items\": [{\"type\": \"move\", \"staff\": \"職員03\", \"shift\": \"研\", \"from_day\": 12, \"to_day\": 13, \"reason\": null}]}",
+ "あ、職員07さんだった。職員07さんの20日お休み": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員07\", \"days\": [20], \"reason\": null}]}",
+ "職員02さんから電話で、25日お休みしたいって": "{\"items\": [{\"type\": \"day_off\", \"staff\": \"職員02\", \"days\": [25], \"reason\": null}]}",
+ "職員11さん、今月は夜勤0で。あ、毎月じゃなくて、今月だけね": "{\"items\": [{\"type\": \"count_limit\", \"staff\": [\"職員11\"], \"shift\": \"夜\", \"min\": null, \"max\": 0, \"until_day\": null, \"strength\": \"operational\", \"reason\": null}]}"
 }

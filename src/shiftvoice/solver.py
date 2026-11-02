@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from ortools.sat.python import cp_model
 
 from .model import Facility, Month, Rule, Staff
-from .rules import Instance, cell_value, check_table, expand
+from .rules import Instance, cell_value, check_table, expand, with_overrides
 
 DEFAULT_WEIGHTS = {"wish": 100000, "operational": 20000, "negotiable": 5000}
 
@@ -120,7 +120,7 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                                               {"fixed", "operational"} if stage == 2 else {"fixed", "wish"})
     penalties = []
     switches: list[tuple[Instance, cp_model.IntVar | None]] = []
-    for r in rules:
+    for r in with_overrides(rules):
         for inst in expand(r, facility, staff, month):
             if skip and (r.id, inst.key) in skip:
                 continue  # 前の表で既に外れていた場面は、直しても点にしない

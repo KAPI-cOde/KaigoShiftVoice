@@ -30,9 +30,33 @@ class Instance:
     hi: int | None
 
 
+def with_overrides(rules: list[Rule]) -> list[Rule]:
+    """人を名指しした月の回数のルールは、同じ勤務の全員向けの回数のルールより優先する。
+    （「小川さん、今月は夜勤ゼロで」が「夜勤の回数 3〜5回」とぶつかって守られなかった。2026-11-02）
+    名指しの人を、全員向けのルールの対象から外す。期間の一部だけのルール（29日まで など）・本人の希望・
+    全員向けが動かせない決まり（公休の数 など）の時は外さない（希望は段の順で、動かせない決まりはそのまま守る）。"""
+    import copy
+    named: dict[tuple, set[str]] = {}
+    for r in rules:
+        if r.kind == "count" and r.who and not r.when and r.flex in ("operational", "fixed"):
+            named.setdefault(tuple(sorted(r.params.get("shifts") or [])), set()).update(r.who)
+    if not named:
+        return rules
+    out = []
+    for r in rules:
+        ex = (named.get(tuple(sorted(r.params.get("shifts") or [])))
+              if r.kind == "count" and not r.who and r.flex != "fixed" else None)
+        if ex:
+            r = copy.copy(r)
+            r.meta = {**r.meta, "except": sorted(ex)}
+        out.append(r)
+    return out
+
+
 def _who(rule: Rule, staff: list[Staff]) -> list[Staff]:
     if not rule.who:
-        return staff
+        ex = set(rule.meta.get("except") or [])
+        return [s for s in staff if s.name not in ex] if ex else staff
     names = set(rule.who)
     return [s for s in staff if s.name in names]
 
@@ -179,7 +203,7 @@ def check_table(rules: list[Rule], facility: Facility, staff: list[Staff], month
                 table: dict[str, list[str]]) -> list[dict]:
     """表で破れている場面の一覧（ソルバーと同じ式で数える）。"""
     out = []
-    for r in rules:
+    for r in with_overrides(rules):
         for inst in expand(r, facility, staff, month):
             if broken(inst, table, month):
                 out.append({"rule": r.id, "name": r.name, "flex": r.flex, "key": inst.key,

@@ -189,3 +189,77 @@ def test_t2_19_about_five_asks_period(sess):
     a = snap(sess)
     assert a["table"]["菊池"].count("早") <= 5
     common(b, a)
+
+
+# 残り10件のうち、今の作りで確かめられる物（T2-05・08・09・18 は作っていない。18 は L6 と同じく今回は作らない）
+def test_t2_01_name_not_on_roster(sess):
+    """名簿にない人。黙って飛ばさず聞き返し、表は1マスも動かない。"""
+    b = snap(sess)
+    r = sess.say("えっと、森田さん、20日お休みしたいって。うん、20日")
+    assert r.kind == "ask" and r.message.startswith("森田さんは名簿にいません")
+    assert sess.reader.sent == []
+    unchanged(b, snap(sess))
+
+
+def test_t2_11_person_restated(sess):
+    """人の言い直し。上野さんの研修が12日から13日へ移り、加藤さんの21日は動かない。"""
+    b = snap(sess)
+    r = sess.say("加藤さんの21日は研修……じゃない、上野さん、上野さんの研修が13日に変わったの")
+    assert r.kind == "applied", r
+    a = snap(sess)
+    assert a["table"]["上野"][12] == "研" and a["table"]["上野"][11] != "研"
+    assert a["table"]["加藤"][20] == b["table"]["加藤"][20]
+    common(b, a)
+
+
+def test_t2_13_no_connection(sess):
+    """読み取りに繋がらない。表は動かず、言った文は残り、戻ったら送り直せる。"""
+    from shiftvoice.reader import ReadError
+
+    class Down:
+        sent = []
+
+        def read(self, masked, history=None):
+            raise ReadError("通信が切れている")
+    good = sess.reader
+    sess.reader = Down()
+    b = snap(sess)
+    r = sess.say("岡田さん、15と16は法事で休み")
+    assert r.kind == "error" and "変えていません" in r.message
+    unchanged(b, snap(sess))
+    sess.reader = good
+    assert sess.retry(r.uid).kind == "applied"
+
+
+def test_t2_15_after_name_question(sess):
+    """聞き返しの後に言い直す。「うまく聞き取れませんでした」にならず、岡田さんの20日が休みで入る。"""
+    sess.say("えっと、森田さん、20日お休みしたいって。うん、20日")
+    b = snap(sess)
+    r = sess.say("あ、岡田さんだった。岡田さんの20日お休み")
+    assert r.kind == "applied", r
+    a = snap(sess)
+    assert a["table"]["岡田"][19] == "公"
+    common(b, a)
+
+
+def test_t2_17_closed_before_choosing(sess):
+    """配った後の直しの案が出たまま閉じる。開き直すと、配った表のまま。"""
+    sess.distribute()
+    b = snap(sess)
+    r = sess.say("石田さんから電話で、25日お休みしたいって")
+    assert r.kind == "fix_offer", r
+    s2 = Session(Store(sess.store.root), 2026, 11, RecordedReader({}), now=lambda: FIXED_NOW)
+    s2.open()
+    unchanged(b, snap(s2))
+
+
+def test_t2_20_zero_this_month_only(sess):
+    """「ゼロで。あ、毎月じゃなくて、今月だけね」。0回として今月だけ入り、毎月か今月だけかは聞かない。"""
+    b = snap(sess)
+    r = sess.say("小島さん、今月は夜勤ゼロで。あ、毎月じゃなくて、今月だけね")
+    assert r.kind == "applied", r
+    rule = sess.store.ledger().rules_at()[r.rule_ids[0]]
+    assert rule.scope == "once" and rule.params["max"] == 0
+    a = snap(sess)
+    assert a["table"]["小島"].count("夜") == 0
+    common(b, a)
