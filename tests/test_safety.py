@@ -109,3 +109,21 @@ def test_person_rule_by_kana_or_kaikin_never_goes_to_everyone(store, text, item)
     from shiftvoice.intake import Clarify, to_proposal
     with pytest.raises(Clarify):
         to_proposal([item], text, store.facility(), store.staff(), store.month(2026, 11))
+
+
+@pytest.mark.parametrize("text", ["看護さんが少ない日だから、夜勤の次の日に早番は置かないで",
+                                  "休みをたくさん取れるように、夜勤の次の日に早番は置かないで"])
+def test_everyone_rule_with_job_word_is_not_blocked(store, text):
+    """「看護さん」「たくさん」のような名前でない語を含む全員向けのルールは止めない（周8 再レビュー a・b）。"""
+    from shiftvoice.intake import to_proposal
+    p = to_proposal([{"type": "forbid_sequence", "first": "夜", "next": "早"}], text, store.facility(),
+                    store.staff(), store.month(2026, 11))
+    assert p.rules and not p.rules[0]["who"]
+
+
+def test_nobody_clarify_tells_how_to_say_everyone(store):
+    """人が読み取れない時の聞き返しは、全員のルールなら「全員」と付ければよいことを伝える（周8 再レビュー a）。"""
+    from shiftvoice.intake import Clarify, to_proposal
+    with pytest.raises(Clarify, match="全員"):
+        to_proposal([{"type": "count_limit", "shift": "夜", "max": 4}], "おかださん、夜勤は月4回まで",
+                    store.facility(), store.staff(), store.month(2026, 11))

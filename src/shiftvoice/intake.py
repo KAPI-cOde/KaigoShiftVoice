@@ -310,7 +310,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     # ただし「おかださん」のように名簿の表記に無いかなの呼びかけは伏せられないので、「さん」などの前の語が
     # 名前でない語（利用者・みな など）でなければ、人が出たとみなす（周8 レビュー b の指摘）
     from .names import NOT_NAMES
-    not_name = NOT_NAMES | {"みな", "みんな", "お客", "医者", "先生"}
+    not_name = NOT_NAMES | {"みな", "みんな", "お客", "医者", "先生", "看護", "介護", "職員", "ケアマネ", "リーダー",
+                            "施設長", "事務", "主任", "スタッフ", "たく", "お子", "おばあ", "おじい"} | {sh.name[:2] for sh in facility.shift_types}
     said = bool(re.search(r"職員\d{2}", Masker(staff, facility).mask(text)[0])) or any(
         not any(w.endswith(n) for n in not_name)
         for w in re.findall(r"([ぁ-ゖァ-ヺー一-龥々]{1,6}?)(?:さん|くん|ちゃん)", text))
@@ -320,7 +321,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         not x.get("who") for x in p.removes)
     rules_nobody = any(not r.get("who") for r in p.rules if r["kind"] not in ("layer", "cell"))
     if cells_nobody or (said and not re.search(r"全員|みんな|皆(?!勤)", text) and rules_nobody):
-        raise Clarify("誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください")
+        raise Clarify("誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください"
+                      + ("" if cells_nobody else "（全員のルールなら「全員」と付けてください）"))
     if kind == "cells":
         p.scope = "once"
     elif kind == "cancel":
