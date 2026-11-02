@@ -62,7 +62,12 @@ def _requested_leaves(rules: list[Rule], facility: Facility) -> dict[tuple[str, 
 
 
 def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month, *,
-                hint: dict[str, list[str]] | None = None, stage: int = 1) -> SolveResult:
+                hint: dict[str, list[str]] | None = None, stage: int = 1,
+                fixed_cells: dict[tuple[str, int], str] | None = None,
+                max_dtime: float | None = None,
+                skip: set[tuple[str, str]] | None = None) -> SolveResult:
+    """fixed_cells は 動かさないマス（人, 日）→ 記号。狭い範囲の直しで、範囲の外を止めるのに使う。
+    skip は課さない場面（決まりの id, 場面の名前）。相談できる決まりで前の表で既に外れていた場面に使う。"""
     st = facility.settings.get("solve", {})
     weights = {**DEFAULT_WEIGHTS, **facility.settings.get("weights", {})}
     quality = facility.settings.get("quality", {})
@@ -83,6 +88,10 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                 x[(s.name, d, sym)] = v
                 vs.append(v)
             m.add_exactly_one(vs)
+            if fixed_cells and (s.name, d) in fixed_cells:
+                sym = fixed_cells[(s.name, d)]
+                if sym in syms:
+                    m.add(x[(s.name, d, sym)] == 1)
 
     def lin(inst: Instance):
         expr, const = [], 0
@@ -104,6 +113,8 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     switches: list[tuple[Instance, cp_model.IntVar | None]] = []
     for r in rules:
         for inst in expand(r, facility, staff, month):
+            if skip and (r.id, inst.key) in skip:
+                continue  # 前の表で既に外れていた場面は、直しても点にしない
             e = lin(inst)
             if isinstance(e, int):  # 定数だけの場面（前の月だけ）は課せない
                 continue
@@ -179,7 +190,8 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     solver = cp_model.CpSolver()
     solver.parameters.random_seed = st.get("seed", 11)
     solver.parameters.num_workers = st.get("workers", 1)
-    solver.parameters.max_deterministic_time = st.get("max_deterministic_time", 30.0)
+    solver.parameters.max_deterministic_time = (max_dtime if max_dtime is not None
+                                                else st.get("max_deterministic_time", 30.0))
     t0 = time.perf_counter()
     code = solver.solve(m)
     secs = time.perf_counter() - t0
