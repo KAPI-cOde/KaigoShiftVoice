@@ -168,6 +168,15 @@ class Session:
         start, end = self._span()
         at = self.now().isoformat(timespec="seconds")
         added: list[Rule] = []
+        # 言われた変更が全部もう入っている時だけ「もう入っています」（10章。変更を飛ばす作りは希望が消える道になったのでしない）
+        cur = led.rules_at(between=self._span()).values()
+        def same(rd):
+            return any(r.kind == rd["kind"] and r.params == rd["params"] and (r.who or None) == (rd.get("who") or None)
+                       and r.when == rd.get("when") and r.scope == scope and r.flex == rd["flex"] for r in cur)
+        if p.rules and not p.staff_changes and all(same(rd) for rd in p.rules) \
+                and not any(t.get("op_id") == u["id"] for t in led.txs):
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("ask", u["id"], f"{self.month}月はもう入っています")
         if not any(t.get("op_id") == u["id"] for t in led.txs):
             n = max([int(r[1:]) for r in led.rules_at() if r[1:].isdigit()] + [100]) + 1
             for rd in p.rules:

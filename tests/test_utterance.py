@@ -270,3 +270,12 @@ def test_missed_wish_is_told(sess):
     assert r2.kind == "applied"
     assert "守れませんでした" in r2.warning
     assert cell(sess, "加藤", 21) == "研"
+
+
+def test_t2_12_same_request_twice(sess):
+    """T2-12 同じ頼みを2回言っても、ルールは1件だけ。2回目は「もう入っています」。"""
+    sess.say("岡田さん、15と16は法事で休み")
+    rev = sess.store.ledger().rev
+    r = sess.say("岡田さん、15と16は法事で休み")
+    assert r.kind == "ask" and "もう入っています" in r.message
+    assert sess.store.ledger().rev == rev
