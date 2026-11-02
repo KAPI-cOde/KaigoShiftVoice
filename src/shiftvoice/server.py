@@ -5,6 +5,7 @@ API（すべて JSON）
 - POST /api/say     {"text"}          一言
 - POST /api/answer  {"uid", "text"}   「毎月ですか、今月だけですか」への返事（"rule"/"once" か話し言葉）
 - POST /api/retry   {"uid"}           送り直す
+- GET  /api/next/review · POST /api/next/answer|undo|build|adopt  翌月へ（ルールの見直し → 返さない案と返す案 → 採る）
 - POST /api/voice   16kHz float32     声を文字にして一言と同じ流れへ（X-Answer-Uid があれば聞き返しへの返事）
 - POST /api/undo    {}                ひとつ戻す
 - POST /api/distribute {}             表を配った（ここから休みの電話は待機の人に頼む直し）
@@ -97,6 +98,9 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+            elif self.path == "/api/next/review":
+                with lock:
+                    self._json(200, self.server.flow().review())
             elif self.path == "/api/state":
                 with lock:
                     st = session.state()
@@ -117,6 +121,23 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                 data = json.loads(self.rfile.read(n) or b"{}")
             except json.JSONDecodeError:
                 return self._json(400, {"error": "JSON が読めません"})
+            if self.path.startswith("/api/next/"):
+                with lock:
+                    fl = self.server.flow()
+                    try:
+                        if self.path == "/api/next/answer":
+                            out = fl.answer(data.get("rule_id", ""), data.get("answer", ""), data.get("new_until"))
+                        elif self.path == "/api/next/undo":
+                            out = fl.undo(data.get("rule_id", ""))
+                        elif self.path == "/api/next/build":
+                            out = fl.build()
+                        elif self.path == "/api/next/adopt":
+                            out = fl.adopt(data.get("plan", ""))
+                        else:
+                            return self._json(400, {"error": "知らない操作です"})
+                    except Exception as e:  # 帳面が受け付けない答え（二重の答えなど）
+                        return self._json(200, {"error": str(e)})
+                return self._json(200, out)
             with lock:
                 if self.path == "/api/say" and data.get("text", "").strip():
                     r = session.say(data["text"])
@@ -148,6 +169,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
 def serve(session: Session, *, port: int = 8765, has_key: bool = False, voice=None) -> None:
     session.open()
     httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(session, threading.Lock(), has_key, voice))
+    from .nextflow import NextFlow
+    httpd.flow = lambda: NextFlow(session.store, session.year, session.month)
     print(f"開きました http://127.0.0.1:{port}/ （止める時は Ctrl+C）")
     try:
         httpd.serve_forever()

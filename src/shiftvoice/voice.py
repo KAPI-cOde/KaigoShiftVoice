@@ -14,6 +14,9 @@ from pathlib import Path
 
 REVISION = "2c2133a4279f"  # oboroge0/Haas-ja-v1.0-onnx の固定した版（短い名前。手元のフックが40桁の16進を鍵の形として止めるため）
 FILES = ("encoder.onnx", "encoder.data", "decoder.onnx", "joiner.onnx", "tokens.txt")
+# 固定した版のファイルの大きさ（2026-11-02 に取得して測った）。取り込んだ後に照らす
+SIZES = {"encoder.onnx": 41836973, "encoder.data": 2435420160, "decoder.onnx": 15661602,
+         "joiner.onnx": 12158641, "tokens.txt": 28704}
 SAMPLE_RATE = 16000
 CHUNK_SECONDS = 25
 SHIFT_WORDS = ("早番", "日勤", "遅番", "夜勤", "明け", "公休", "有給", "研修", "待機", "毎月", "今月だけ")
@@ -31,11 +34,18 @@ def missing_files(d: Path | None = None) -> list[str]:
 
 def download(d: Path | None = None) -> Path:
     """無い時だけ取得する（約2.4GB）。進み具合は huggingface_hub が出す。"""
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import HfApi, snapshot_download
     d = d or model_dir()
     d.parent.mkdir(parents=True, exist_ok=True)
-    snapshot_download("oboroge0/Haas-ja-v1.0-onnx", revision=REVISION, local_dir=str(d),
+    # 短い名前が、同じ名前の枝や札ではなく、固定した版を指しているかを先に確かめる
+    sha = HfApi().model_info("oboroge0/Haas-ja-v1.0-onnx", revision=REVISION).sha or ""
+    if not sha.startswith(REVISION):
+        raise RuntimeError("声のモデルの版が、固定した版と違います。取り込みをやめました")
+    snapshot_download("oboroge0/Haas-ja-v1.0-onnx", revision=sha, local_dir=str(d),
                       allow_patterns=list(FILES) + ["LICENSE", "NOTICE", "README.md"])
+    bad = [f for f, n in SIZES.items() if (d / f).stat().st_size != n]
+    if bad:
+        raise RuntimeError(f"声のモデルのファイルの大きさが違います（{', '.join(bad)}）")
     return d
 
 
