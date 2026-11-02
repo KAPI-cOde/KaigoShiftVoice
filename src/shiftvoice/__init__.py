@@ -26,22 +26,35 @@ def main() -> None:
     if args.cmd == "state":
         return _state(args)
     if args.cmd == "demo":
-        from .server import demo_session, serve
-        _ask_key()
-        _backup(Path(args.data))
-        session, has_key = demo_session(Path(args.data), reset=args.reset)
-        if not has_key:
-            print("ANTHROPIC_API_KEY がありません。表は見られますが、一言の読み取りは動きません（README の鍵の入れ方）")
-        voice = None
-        if args.voice:
-            from . import voice as v
-            if v.missing_files():
-                print(f"声のモデルを取得します（約2.4GB）。置き場 {v.model_dir()}")
-                v.download()
-            print("声のモデルを読み込んでいます（10秒ほど）")
-            voice = v.Voice([s.name for s in session.store.staff()])
-        print("はじめて開く時は、11月の表を作るのに10秒ほどかかります")
-        serve(session, port=args.port, has_key=has_key, voice=voice, open_browser=not args.no_open)
+        from .server import _take_lock, demo_session, release_lock, serve
+        lock = _take_lock(Path(args.data), f"http://127.0.0.1:{args.port}/")   # 消す・作る・立て直す前に取る
+        if lock is None:
+            return
+        try:
+            _demo(args, lock)
+        finally:
+            release_lock(lock)
+        return
+    raise SystemExit(f"知らない命令 {args.cmd}")
+
+
+def _demo(args, lock) -> None:
+    from .server import demo_session, serve
+    _ask_key()
+    _backup(Path(args.data))
+    session, has_key = demo_session(Path(args.data), reset=args.reset)
+    if not has_key:
+        print("ANTHROPIC_API_KEY がありません。表は見られますが、一言の読み取りは動きません（README の鍵の入れ方）")
+    voice = None
+    if args.voice:
+        from . import voice as v
+        if v.missing_files():
+            print(f"声のモデルを取得します（約2.4GB）。置き場 {v.model_dir()}")
+            v.download()
+        print("声のモデルを読み込んでいます（10秒ほど）")
+        voice = v.Voice([s.name for s in session.store.staff()])
+    print("はじめて開く時は、11月の表を作るのに10秒ほどかかります")
+    serve(session, port=args.port, has_key=has_key, voice=voice, open_browser=not args.no_open, lock_path=lock)
 
 
 def _state(args) -> None:
@@ -56,13 +69,14 @@ def _state(args) -> None:
         return
     if not args.name or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", args.name):
         raise SystemExit("名前は英数字で付けてください（例 start・end）")
-    lock = data / ".open.lock"
+    from .server import lock_file
+    lock = lock_file(data)
     if args.action == "load" and lock.exists():
         import os
         try:
             os.kill(int(lock.read_text(encoding="utf-8").split("\n", 1)[0]), 0)
             raise SystemExit("サーバーが開いています。止めて（Ctrl+C）から戻してください")
-        except (ValueError, ProcessLookupError):
+        except (ValueError, ProcessLookupError, PermissionError):
             pass
     src, dst = (data, base / args.name) if args.action == "save" else (base / args.name, data)
     if not src.exists():

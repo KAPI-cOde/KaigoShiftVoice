@@ -305,3 +305,14 @@ def test_t2_08_maybe_shows_tradeoff(sess):
     assert after["table"]["田村"][22] == "日"
     common(b, after)
     assert sess.undo().kind == "applied" and snap(sess)["table"] == b["table"]
+
+
+def test_named_count_overrides_only_its_side():
+    """名指しの回数のルールは、言った側だけ全員向けを上書きする（下限だけの頼みで、全員向けの上限まで外さない）。"""
+    from shiftvoice.model import Rule
+    from shiftvoice.rules import with_overrides
+    gen = Rule(id="g", ver=1, name="夜勤の回数", kind="count", flex="operational", params={"shifts": ["夜"], "min": 3, "max": 5})
+    lo = Rule(id="a", ver=1, name="小川 4回以上", kind="count", flex="operational", params={"shifts": ["夜"], "min": 4}, who=["小川"])
+    zero = Rule(id="b", ver=1, name="小島 0回まで", kind="count", flex="operational", params={"shifts": ["夜"], "max": 0}, who=["小島"])
+    g = next(r for r in with_overrides([gen, lo, zero]) if r.id == "g")
+    assert set(g.meta["except_min"]) == {"小川", "小島"} and g.meta["except_max"] == ["小島"]   # 上限0は下限3ともぶつかる

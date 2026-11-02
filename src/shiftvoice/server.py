@@ -176,7 +176,7 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
 
 
 def serve(session: Session, *, port: int = 8765, has_key: bool = False, voice=None,
-          open_browser: bool = False) -> None:
+          open_browser: bool = False, lock_path: Path | None = None) -> None:
     session.open()
     handler = make_handler(session, threading.Lock(), has_key, voice)
     httpd = None
@@ -190,10 +190,11 @@ def serve(session: Session, *, port: int = 8765, has_key: bool = False, voice=No
     if httpd is None:
         raise SystemExit(f"{port}〜{port + 9} 番がすべて使われています。--port で別の番号を指定してください")
     url = f"http://127.0.0.1:{port}/"
-    lock = _take_lock(session.store.root, url)
+    lock = lock_path or _take_lock(session.store.root, url)
     if lock is None:
         httpd.server_close()
         return
+    lock.write_text(f"{os.getpid()}\n{url}", encoding="utf-8")   # 実際に開いた番号を書く
     from .nextflow import NextFlow
     httpd.flow = lambda: NextFlow(session.store, session.year, session.month)
     print(f"開きました {url} （止める時は Ctrl+C）", flush=True)
@@ -206,13 +207,29 @@ def serve(session: Session, *, port: int = 8765, has_key: bool = False, voice=No
         pass
     finally:
         httpd.server_close()
-        lock.unlink(missing_ok=True)
+        release_lock(lock)
+
+
+def lock_file(data: Path) -> Path:
+    """置き場の印。置き場の外（同じ親フォルダ）に置く（--reset で置き場を消しても印は残る）。"""
+    data = Path(data)
+    return data.parent / f".{data.name}.open.lock"
+
+
+def release_lock(lock: Path) -> None:
+    """自分の印だけ消す（後から開いた別のサーバーの印を消さない）。"""
+    try:
+        if lock.read_text(encoding="utf-8").split("\n", 1)[0] == str(os.getpid()):
+            lock.unlink()
+    except (OSError, ValueError):
+        pass
 
 
 def _take_lock(root: Path, url: str) -> Path | None:
     """同じ置き場を2つのサーバーで開かない（後から保存した方が前の書き込みを消すため）。
     すでに開いていれば、その URL を出して None を返す。前のサーバーが落ちて印だけ残った時は引き継ぐ。"""
-    lock = Path(root) / ".open.lock"
+    lock = lock_file(root)
+    lock.parent.mkdir(parents=True, exist_ok=True)
     if lock.exists():
         try:
             pid, old_url = lock.read_text(encoding="utf-8").split("\n", 1)

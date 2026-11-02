@@ -33,30 +33,42 @@ class Instance:
 def with_overrides(rules: list[Rule]) -> list[Rule]:
     """人を名指しした月の回数のルールは、同じ勤務の全員向けの回数のルールより優先する。
     （「小川さん、今月は夜勤ゼロで」が「夜勤の回数 3〜5回」とぶつかって守られなかった。2026-11-02）
-    名指しの人を、全員向けのルールの対象から外す。期間の一部だけのルール（29日まで など）・本人の希望・
-    全員向けが動かせない決まり（公休の数 など）の時は外さない（希望は段の順で、動かせない決まりはそのまま守る）。"""
+    名指しのルールが言った側（下限か上限）だけ、その人を全員向けの同じ側から外す（片側だけの頼みで、
+    もう片側の守りまで外さない）。期間の一部だけのルール（29日まで など）・本人の希望・
+    全員向けが動かせない決まり（公休の数 など）の時は外さない。"""
     import copy
-    named: dict[tuple, set[str]] = {}
+    named: dict[tuple, dict[str, dict]] = {}   # 勤務 → 人 → {"min": 値, "max": 値}
     for r in rules:
         if r.kind == "count" and r.who and not r.when and r.flex in ("operational", "fixed"):
-            named.setdefault(tuple(sorted(r.params.get("shifts") or [])), set()).update(r.who)
+            d = named.setdefault(tuple(sorted(r.params.get("shifts") or [])), {})
+            for w in r.who:
+                for side in ("min", "max"):
+                    if r.params.get(side) is not None:
+                        d.setdefault(w, {})[side] = r.params[side]
     if not named:
         return rules
     out = []
     for r in rules:
-        ex = (named.get(tuple(sorted(r.params.get("shifts") or [])))
-              if r.kind == "count" and not r.who and r.flex != "fixed" else None)
-        if ex:
+        d = (named.get(tuple(sorted(r.params.get("shifts") or [])))
+             if r.kind == "count" and not r.who and r.flex != "fixed" else None)
+        if d:
+            gmin, gmax = r.params.get("min"), r.params.get("max")
+            ex_min, ex_max = [], []
+            for w, v in d.items():
+                # 言った側は上書き。言っていない側も、名指しの値とぶつかる時（上限0 と 下限3 など）は外す
+                if "min" in v or ("max" in v and gmin is not None and v["max"] < gmin):
+                    ex_min.append(w)
+                if "max" in v or ("min" in v and gmax is not None and v["min"] > gmax):
+                    ex_max.append(w)
             r = copy.copy(r)
-            r.meta = {**r.meta, "except": sorted(ex)}
+            r.meta = {**r.meta, "except_min": sorted(ex_min), "except_max": sorted(ex_max)}
         out.append(r)
     return out
 
 
 def _who(rule: Rule, staff: list[Staff]) -> list[Staff]:
     if not rule.who:
-        ex = set(rule.meta.get("except") or [])
-        return [s for s in staff if s.name not in ex] if ex else staff
+        return staff
     names = set(rule.who)
     return [s for s in staff if s.name in names]
 
@@ -102,6 +114,12 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
             delta = adjust.get(s.name, 0)  # 公休の足し引き（配った後の直しの例外。12章）
             lo = p.get("min") + delta if p.get("min") is not None else None
             hi = p.get("max") + delta if p.get("max") is not None else None
+            if s.name in rule.meta.get("except_min", ()):   # 名指しのルールが下限を言った人（with_overrides）
+                lo = None
+            if s.name in rule.meta.get("except_max", ()):
+                hi = None
+            if lo is None and hi is None:
+                continue
             out.append(Instance(rule, s.name, terms, lo, hi))
     elif k == "sequence":
         # if の記号の翌日（または前日）の中身

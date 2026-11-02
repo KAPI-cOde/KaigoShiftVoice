@@ -412,8 +412,12 @@ class Session:
         led = self.store.ledger()
         if (led.rev != o.get("base_rev") or json.dumps(m.table) != o.get("base_table")) \
                 and not any(t.get("op_id") == uid for t in led.txs):
-            self.store.update_pending(self.year, self.month, uid, status="read")
-            r = self._propose({**u, "status": "read"})
+            if o.get("wider") and u.get("absence"):
+                self.store.update_pending(self.year, self.month, uid, status="wider", offer=None)
+                r = self.wider(uid)
+            else:
+                self.store.update_pending(self.year, self.month, uid, status="read")
+                r = self._propose({**u, "status": "read"})
             r.message = "表が変わったので、案を作り直しました。" + r.message
             return r
         before_n = self._accepted(o["duty"]) if o.get("duty") else 0
@@ -473,7 +477,7 @@ class Session:
         if not rr.ok:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("failed_solve", u["id"], rr.staged.message or "直せませんでした")
-        if maybe and not rr.changes and not rr.staged.result.broken:
+        if maybe and not rr.changes and not any(b["rule"].startswith("t-fix") for b in rr.staged.result.broken):
             return self._apply(u, p, "once")     # いまの表のままで守れている。選んでもらう物が無い
         if maybe and any(b["rule"].startswith("t-fix") for b in rr.staged.result.broken):
             self.store.resolve_pending(self.year, self.month, u["id"])
