@@ -6,16 +6,16 @@
 
 | 条件 | 状態 | 証拠 |
 |---|---|---|
-| 1 試験が通る（112件以上） | 満たす | 最後 `128 passed, 2 skipped in 163.61s` |
+| 1 試験が通る（112件以上） | 満たす | 最後 `136 passed, 2 skipped in 163.98s`（周10） |
 | 2 公開前の点検が ok | 満たす | 最後 `ok`（終了コード0） |
-| 3 11月・12月の動かせない決まりの外れ0件 | 満たす | 周1。`tests/test_act3.py::test_hard_rules_zero_nov_dec` |
+| 3 11月・12月の動かせない決まりの外れ0件 | 満たす | 周1、周10（5ce3ac6）で流し直して同じ。`tests/test_act3.py::test_hard_rules_zero_nov_dec` |
 | 4 安全の試験3つ | 満たす | 周1。下の一覧 |
-| 5 試行錯誤の記録が増える | 満たす | `docs/development.md` の「採点基準で上げる goal の間に直したこと」2件 |
-| 6 失敗の一覧（5件以上） | 満たす | `docs/failure-catalog.md` 13件 |
+| 5 試行錯誤の記録が増える | 満たす | `docs/development.md` の「採点基準で上げる goal の間に直したこと」2件と「2回目の goal（周8〜10）で直したこと」1件 |
+| 6 失敗の一覧（5件以上） | 満たす | `docs/failure-catalog.md` 15件（周10で2件足した） |
 | 7 README の Claude の機能の表 | 満たす | README「目的ごとに使った Claude の機能」 |
 | 8 台本と試験の対応表 | 満たす | `docs/demo-script.md` |
 | 9 README の冒頭の数字とハッカソンの後 | 満たす | README「誰の、どんな困りごとか」の試算の段落と「ハッカソンの後」 |
-| 10 最後の周のレビューで直すべき指摘0件 | 決まりの扱いで満たす | 再レビュー2回目の3役で線超え (a)1・(b)2・(c)0。3件とも直し、再レビューは上限の2回を使い切ったので、点と一緒に下の「人の判断が要ること」に書いた |
+| 10 最後の周のレビューで直すべき指摘0件 | 決まりの扱いで満たす | 2回目の goal。再レビュー2回目で (a)(b) 線超え0、(c) 線超え1（記録の書き方で点検が止まる）を直した。上限の2回を使い切ったので、残りは点と一緒に下の「人の判断が要ること」に書いた |
 
 ### 完了条件4の試験
 
@@ -127,10 +127,10 @@
 
 1. `uv run pytest -q` → `136 passed, 2 skipped in 163.98s`（周10。始めは112件。減っていない）
 2. `uv run python tools/check_public.py` → `ok`
-3. `tests/test_act3.py::test_hard_rules_zero_nov_dec` の出力（周1に貼った）。11月・12月の返さない案・返す案とも、動かせない決まりの外れ0件
+3. `tests/test_act3.py::test_hard_rules_zero_nov_dec` の出力（周1に貼った。周10の 5ce3ac6 で流し直した出力も3行とも同じ＝11月 ルール23件・12月の2案 ルール14件で、どれも外れ 動かせない0・本人の希望0・運用の都合0・相談できる0、20.84秒）。11月・12月の返さない案・返す案とも、動かせない決まりの外れ0件
 4. (a) `test_unknown_name_not_sent`・`test_t2_01_name_not_on_roster`、(b) `test_r9_no_names_sent`（呼び方の枝は `test_mask_call_and_prefix_before_digits_and_shifts`・`test_mask_leftover_is_not_sent` で補った）、(c) `tests/test_safety.py::test_bad_reply_changes_nothing`（7種）
-5. `docs/development.md` の「採点基準で上げる goal の間に直したこと」2件。それぞれ見つけた方法・直す前・直した後・試験名がある
-6. `docs/failure-catalog.md` 13件、どれも「症状・誤った直感・正しい打ち手・確かめた試験」
+5. `docs/development.md` の「採点基準で上げる goal の間に直したこと」2件と「2回目の goal（周8〜10）で直したこと」1件。それぞれ見つけた方法・直す前・直した後・試験名がある
+6. `docs/failure-catalog.md` 15件、どれも「症状・誤った直感・正しい打ち手・確かめた試験」
 7. README「目的ごとに使った Claude の機能」6行。どの行も実在するファイルか試験を指す（再レビュー2回目 a が試験名37個の実在を確かめた）
 8. `docs/demo-script.md` の10場面の対応表。どの場面も既存の試験を指す
 9. README「誰の、どんな困りごとか」の試算の段落（76件・46件・小島さん9回・田村さん6回、`tools/absence_sim.py` を流し直した出力から）と「ハッカソンの後」
