@@ -16,7 +16,7 @@ MODEL = "claude-haiku-5-5"
 MAX_TOKENS = 400
 
 TYPES = ("day_off", "set_cell", "avoid_cell", "move", "swap", "forbid_sequence", "pair_apart",
-         "count_limit", "weekday_pref", "consecutive_limit", "rest_after_night", "around_off",
+         "count_limit", "coverage", "weekday_pref", "consecutive_limit", "rest_after_night", "around_off",
          "leave_count", "weigh", "explain", "custom", "staff_info", "cancel", "none", "unclear")
 
 
@@ -37,11 +37,12 @@ SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係で�
 - move 前に決まったマスを別の日へ移す。staff, shift, from_day, to_day, reason
 - forbid_sequence 並びの禁止（AのつぎのひにB）。staff(並び。全員なら null), first, next(記号。Bが2つ以上なら並び), strength, reason
 - count_limit 月の回数。staff(並び。全員なら null), shift, min, max(言っていなければ null), until_day(「〇日まで」なら日、なければ null), strength, reason。「夜勤なし」「夜勤0」は max 0。「15日まで夜勤なし」は max 0 と until_day 15（日付の型にしない）
-- weekday_pref 曜日の頼み。staff, weekdays(mon〜sun), shift, avoid(避けるなら true), until_month(「12月いっぱい」なら 12。なければ null), reason
+- weekday_pref 人の曜日の頼み。staff, weekdays(mon〜sun), shift, avoid(避けるなら true), until_month(「12月いっぱい」なら 12。なければ null), reason。その曜日を休みにする頼みは shift 公 と avoid false
+- coverage 1日に入る人数（勤務の記号の人数だけ）。shift, min(「2人に」「2人ほしい」「2人以上」なら 2), max(「3人まで」なら 3。ちょうどなら min と同じ。言っていなければ null), weekdays(曜日を言ったら mon〜sun の並び。毎日なら null), holidays(「祝日も」「土日祝」と言った時だけ true), strength, reason
 - consecutive_limit 続けて働く日数の上限。staff, max, reason
 - staff_info 職員の情報の変更（できる勤務など）。staff, from_month, can_add(記号の並び), can_remove
 - leave_count 有給の日数の頼み（日付は任せる）。staff, count(日数。言っていなければ null), reason
-- cancel 前の頼みの取り消し（「やっぱりいらない」）。staff, days(取り消す日だけ), shift(取り消す勤務の記号。休みなら 公)。「そのままで」「触らないで」の日と人は書かない
+- cancel 前の頼みの取り消し（「やっぱりいらない」）。staff, days(取り消す日だけ。日を言っていなければ null), shift(取り消す勤務の記号。休みなら 公)。「そのままで」「触らないで」の日と人は書かない
 - swap / pair_apart / rest_after_night / around_off / weigh / explain / custom はその名前の type だけ書き、summary に一言
 - none 頼みがない。unclear 読めない時は question に聞き返しの1文
 
@@ -49,8 +50,8 @@ strength は fixed(「絶対」「動かせない」と言った時と研修な�
 reason は一言にある理由の言葉を短く抜き出す（言い換えない。「29日に試験だから」なら「29日に試験」）。なければ null。
 言い直しは後の方だけ。日の言い直し（「14日、あ、違う、15日」）も、人の言い直し（「職員06さんの…じゃない、職員03さん」）も、前の方は件にしない。
 言っていない変更は足さない（「あとはできるだけ今のまま」は件にしない）。「くらい」でも数はそのまま。「毎月」「今月だけ」は期間の言葉なので件にしない。
-曜日を言った頼み（「木曜は」「土日は」）は日付の型にせず weekday_pref にする。
-表に無い当番や仕組み（待機・呼び出し・オンコールなど、勤務の記号に無い物）を作る一言は、ほかの型に分けず custom 1件だけにする。
+曜日を言った頼み（「木曜は」「土日は」）は日付の型にしない。人の頼みは weekday_pref、勤務の人数の頼みは coverage にする。
+表に無い当番や仕組み（待機・呼び出し・オンコールなど、勤務の記号に無い物）を作る一言は、人数を言っていても coverage にせず、ほかの型に分けず custom 1件だけにする。
 move の from_day は、元の日を言っていなければ null（手元で表から補う）。
 
 例
@@ -62,6 +63,10 @@ move の from_day は、元の日を言っていなければ null（手元で表
 {"items":[{"type":"count_limit","staff":["職員05"],"shift":"遅","min":null,"max":4,"until_day":null,"strength":"operational","reason":null}]}
 一言「職員04さん、月曜は遅番にしないで。毎月」
 {"items":[{"type":"weekday_pref","staff":"職員04","weekdays":["mon"],"shift":"遅","avoid":true,"until_month":null,"reason":null}]}
+一言「職員04さんは日曜日は休みで固定してほしい」
+{"items":[{"type":"weekday_pref","staff":"職員04","weekdays":["sun"],"shift":"公","avoid":false,"until_month":null,"reason":null}]}
+一言「土日は遅番を2人にしてほしい」
+{"items":[{"type":"coverage","shift":"遅","min":2,"max":null,"weekdays":["sat","sun"],"holidays":false,"strength":"operational","reason":null}]}
 一言「職員08さんの研修、20日に変わったって」
 {"items":[{"type":"move","staff":"職員08","shift":"研","from_day":null,"to_day":20,"reason":null}]}
 一言「職員02さんの9日は……じゃない、職員05さんの9日、休みで」

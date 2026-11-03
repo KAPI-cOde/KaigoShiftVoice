@@ -188,7 +188,8 @@ class Session:
         fac, staff = self.store.facility(), self.store.staff()
         m = self.store.month(self.year, self.month)
         try:
-            p = to_proposal(u["items"], u["text"], fac, staff, m, leave_caps=self._leave_caps())
+            p = to_proposal(u["items"], u["text"], fac, staff, m, leave_caps=self._leave_caps(),
+                            rules=list(self.store.ledger().rules_at(between=self._span()).values()))
         except Clarify as e:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], str(e))
@@ -307,6 +308,8 @@ class Session:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("applied", u["id"], p.summary, summary=p.summary)
         rules = led.rules_at(between=self._span())
+        if any(rq["days"] is None for rq in p.removes):
+            return self._cancel_offer(u, p, rules, led)
         drop: dict[str, set[int]] = {}
         for rq in p.removes:
             for w in rq["who"]:
@@ -340,6 +343,34 @@ class Session:
         return Reply("applied", u["id"], f"{p.summary}。表のマスはそのままです",
                      summary=f"{p.summary}。表のマスはそのままです",
                      rule_ids=list(drop))
+
+    def _cancel_offer(self, u: dict, p: Proposal, rules: dict, led) -> Reply:
+        """日付の無い取り消し（「さっきの〇〇さんの休み、やっぱりなし」）。その人がこの月に話した、休みなどの
+        マスの頼み（帳面のマスのルール）が1つに決まる時だけ、表を変える前に取り消すかを確かめる。
+        0件・2件以上・取り込んだ希望しか無い時は、今どおり日付を聞く（迷ったら聞き返す）。"""
+        rq = p.removes[0]
+        w, sym = rq["who"][0], rq["shift"]
+        hits = [r for r in rules.values() if r.kind == "cell" and r.who == [w] and r.when
+                and str(r.meta.get("source", "")).startswith("話した")
+                and (sym is None or sym in r.params.get("in", []) + r.params.get("not_in", []))]
+        fac = self.store.facility()
+        what = "" if not sym else "休み" if fac.shift(sym).kind == "rest" else fac.shift(sym).name
+        if not hits:
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("ask", u["id"], f"{w}さんの、何日の{what or '頼み'}を取り消しますか。表もルールも変えていません")
+        if len(hits) > 1:
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("ask", u["id"], f"{w}さんの{what or ''}の頼みが{len(hits)}件あります（"
+                         + "・".join(h.name for h in hits) + "）。何日の分を取り消すか言ってください")
+        r = hits[0]
+        days = list(r.when)
+        label = f"{w}さんの{'・'.join(map(str, days))}日の{what or r.name}"
+        msg = f"{label}を取り消しますか。表のマスはそのままです"
+        offer = {"cancel": [{"who": [w], "days": days, "shift": sym}], "rules": [], "changes": [],
+                 "summary": f"{label}を取り消す。表のマスはそのまま", "done": f"{label}の指定を外しました",
+                 "base_rev": led.rev}
+        self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
+        return Reply("fix_offer", u["id"], msg, summary=offer["summary"])
 
     def undo(self) -> Reply:
         """［ひとつ戻す］。最後に採用した一言の札を取り消し（帳面に取り消しの1行）、表を直す前に戻す。"""
@@ -427,6 +458,14 @@ class Session:
         o = u["offer"]
         m = self.store.month(self.year, self.month)
         led = self.store.ledger()
+        if o.get("cancel") is not None:
+            # 日付の無い取り消しを確かめた。案を作った後に帳面が変わっていたら作り直す（古い案で外さない）
+            if led.rev != o.get("base_rev") and not any(t.get("op_id") == uid for t in led.txs):
+                self.store.update_pending(self.year, self.month, uid, status="read", offer=None)
+                r = self._propose({**u, "status": "read"})
+                r.message = "表が変わったので、案を作り直しました。" + r.message
+                return r
+            return self._cancel(u, Proposal(kind="cancel", removes=o["cancel"], summary=o["done"]))
         if (led.rev != o.get("base_rev") or json.dumps(m.table) != o.get("base_table")) \
                 and not any(t.get("op_id") == uid for t in led.txs):
             if o.get("wider") and u.get("absence"):

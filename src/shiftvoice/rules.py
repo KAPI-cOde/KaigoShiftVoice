@@ -86,7 +86,7 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
     全員向けが動かせない決まり（公休の数 など）の時は外さない。
     その前に、同じ相手に2本ある帳面の回数のルールは新しい方を残す（_replace_same）。"""
     import copy
-    rules = _replace_same(rules)
+    rules = _coverage_days(_replace_same(rules))
     named: dict[tuple, list[tuple[Rule, str, dict]]] = {}   # 勤務 → [(元のルール, 人, {"min": 値, "max": 値})]
     for r in rules:
         if r.kind == "count" and r.who and not r.when and r.flex in ("operational", "fixed"):
@@ -121,6 +121,42 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
     return out
 
 
+def on_days(p: dict, month: Month, d: int) -> bool:
+    """人数のルールが掛かる日か。曜日（weekdays）を持てばその曜日、祝日も（holidays）ならその月の祝日も。
+    曜日を持たなければ毎日。"""
+    if not p.get("weekdays"):
+        return True
+    return month.weekday(d) in p["weekdays"] or bool(p.get("holidays")) and d in month.holidays
+
+
+def _coverage_days(rules: list[Rule]) -> list[Rule]:
+    """曜日つきの人数のルールが、毎日の同じ勤務の人数のルールの上限より多く頼んだ時（「土日は早番を2人」と
+    「早番の人数 1人」）、その曜日だけ毎日のルールの上限を外す。下限は外さない（人を減らす頼みは、ぶつかって
+    守れないと知らせる方に倒す）。"""
+    import copy
+    days = [r for r in rules if r.kind == "coverage" and r.params.get("weekdays")]
+    if not days:
+        return rules
+    out = []
+    for g in rules:
+        p = g.params
+        if g.kind == "coverage" and not p.get("weekdays") and p["op"] in ("==", "<="):
+            offs = []
+            for r in days:
+                q = r.params
+                if sorted(q["shifts"] if isinstance(q["shifts"], list) else [q["shifts"]]) != \
+                        sorted(p["shifts"] if isinstance(p["shifts"], list) else [p["shifts"]]) \
+                        or q.get("scope") != p.get("scope"):
+                    continue
+                if q["n"] > p["n"] and q["op"] in ("==", ">=", "<="):
+                    offs.append({"weekdays": q["weekdays"], "holidays": bool(q.get("holidays"))})
+            if offs:
+                g = copy.copy(g)
+                g.meta = {**g.meta, "hi_off": offs}
+        out.append(g)
+    return out
+
+
 def _who(rule: Rule, staff: list[Staff]) -> list[Staff]:
     if not rule.who:
         return staff
@@ -151,12 +187,19 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
             return month.support.get(f"{s.name}/{d}", s.unit)
 
         for d in _days(rule, month):
+            if not on_days(p, month, d):
+                continue   # 曜日つきの人数（「土日は日勤を2人」）はその曜日だけ
+            hi_off = any(on_days(o, month, d) for o in rule.meta.get("hi_off", ()))
             groups = ([(u, [s for s in people if unit_on(s, d) == u]) for u in facility.units]
                       if p.get("scope") == "each_unit" else [("全体", people)])
             for gname, members in groups:
                 terms = [Term(s.name, d, syms) for s in members]
                 n = p["n"]
                 lo, hi = {"==": (n, n), ">=": (n, None), "<=": (None, n)}[p["op"]]
+                if hi_off:
+                    hi = None   # 曜日つきの人数が上限を超えて頼んだ日（with_overrides）
+                if lo is None and hi is None:
+                    continue
                 out.append(Instance(rule, f"{gname}/{d}", terms, lo, hi))
     elif k == "count":
         syms = _syms(p["shifts"], facility)

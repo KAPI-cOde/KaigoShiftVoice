@@ -163,7 +163,7 @@ def _tidy(items: list[dict], month: Month, text: str = "") -> list[dict]:
     for it in items:
         t = it.get("type")
         if t in ("set_cell", "avoid_cell", "day_off") and not it.get("days") and \
-                (key(it.get("staff")), it.get("shift")) in wd:
+                (key(it.get("staff")), "公" if t == "day_off" else it.get("shift")) in wd:
             continue   # 同じ人・同じ勤務の曜日の頼みの写し
         if t == "move" and it.get("from_day") is None and month.table:
             st = it.get("staff")
@@ -176,11 +176,50 @@ def _tidy(items: list[dict], month: Month, text: str = "") -> list[dict]:
     return out
 
 
+EVERY_WEEK = ("固定", "毎週", "いつも", "ずっと", "決まって", "定休")
+ONE_WEEK = ("今度", "次の", "来週", "今週", "再来週", "この", "その", "第")
+_WD_ONE = {"月": "mon", "火": "tue", "水": "wed", "木": "thu", "金": "fri", "土": "sat", "日": "sun"}
+
+
+def _said_weekdays(text: str) -> list[str] | None:
+    """一言が言った曜日（「日曜」「土日」「平日」）。祝日を言った時と、読めない時は None。"""
+    if "祝" in text:
+        return None
+    out: list[str] = []
+    if "平日" in text:
+        out += ["mon", "tue", "wed", "thu", "fri"]
+    if re.search(r"土日(?!曜)", text) or "週末" in text:
+        out += ["sat", "sun"]
+    out += [_WD_ONE[c] for c in re.findall(r"([月火水木金土日])曜", text)]
+    out = [w for w in WEEKDAYS if w in out]
+    return out or None
+
+
+def _weekday_off(items: list[dict], text: str) -> list[dict]:
+    """日付の無い休み・勤務の指定で、一言が曜日を言っている時は、その曜日の頼み（weekday_pref）に読み替える
+    （本物の Haiku は「遠藤さんは日曜日は休みで固定してほしい」を日付の無い day_off で返した。2026-11-03）。
+    件が1つで、一言に日付（「〇日」）が無く、曜日が読め、毎週の言葉（固定・毎週・いつも など）がある時だけ。
+    「今度の日曜」「来週の土曜」のような1日だけの言い方は読み替えない。ほかは今どおり日付を聞く。"""
+    if len(items) != 1 or items[0].get("type") not in ("day_off", "set_cell", "avoid_cell") or items[0].get("days"):
+        return items
+    if re.search(r"[0-9０-９]+日", text) or not any(w in text for w in EVERY_WEEK) \
+            or any(w in text for w in ONE_WEEK):
+        return items
+    wds = _said_weekdays(text)
+    if not wds:
+        return items
+    it = items[0]
+    shift = "公" if it["type"] == "day_off" else it.get("shift")
+    return [{"type": "weekday_pref", "staff": it.get("staff"), "weekdays": wds, "shift": shift,
+             "avoid": it["type"] == "avoid_cell", "until_month": None, "reason": it.get("reason")}]
+
+
 def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[Staff],
-                month: Month, leave_caps: dict[str, int] | None = None) -> Proposal:
-    """leave_caps は人ごとの有給の上限（帳面の回数の決まりから。日数のない有給の頼みに使う。13章）。"""
+                month: Month, leave_caps: dict[str, int] | None = None, rules: list | None = None) -> Proposal:
+    """leave_caps は人ごとの有給の上限（帳面の回数の決まりから。日数のない有給の頼みに使う。13章）。
+    rules はこの月の帳面のルール（人数の頼みを、今の同じ勤務の人数のルールと同じ数え方にそろえるのに使う）。"""
     names = {s.name for s in staff}
-    items = _tidy_leave(_tidy(items, month), text)
+    items = _tidy_leave(_weekday_off(_tidy(items, month), text), text)
     real = [it for it in items if it.get("type") != "none"]
     if not real:
         raise Clarify("表を変える頼みが見つかりませんでした。もう一度言ってください")
@@ -294,10 +333,48 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 uy = month.year + (1 if um < month.month else 0)
                 p.until = f"{uy:04d}-{um:02d}-{calendar.monthrange(uy, um)[1]:02d}"
             upto = f"（{um}月まで）" if um and 1 <= um <= 12 else ""
-            p.rules.append({"name": f"{_who(who)} {jp}曜は{facility.shift(sym).name}{'に入れない' if avoid else 'にする'}{upto}",
+            rest = facility.shift(sym).kind == "rest"
+            what = ("休みにしない" if avoid else "休み") if rest else \
+                f"{facility.shift(sym).name}{'に入れない' if avoid else 'にする'}"
+            p.rules.append({"name": f"{_who(who)} {jp}曜は{what}{upto}",
                             "kind": "weekday", "flex": "wish",
                             "params": {"weekdays": wds, ("not_in" if avoid else "in"): [sym]},
                             "who": who, "when": None})
+        elif t == "coverage":
+            sym = _sym(it.get("shift"), facility)
+            lo, hi = _num(it.get("min")), _num(it.get("max"))
+            if lo is None and hi is None:
+                raise Clarify("何人にするか教えてください")
+            if lo is not None and hi is not None and lo > hi:
+                raise Clarify("人数の下限が上限より大きくなっています。もう一度言ってください")
+            raw = it.get("weekdays")
+            wds = [w for w in (raw or []) if w in WEEKDAYS]
+            if raw and len(wds) != len(raw):
+                raise Clarify("曜日が読めませんでした。何曜日か教えてください")
+            hol = it.get("holidays") is True
+            # 今の同じ勤務の人数のルール（曜日の無いもの）と同じ数え方（記号の組・ユニットごとか）にそろえる
+            base = next((r for r in rules or [] if r.kind == "coverage" and not r.params.get("weekdays")
+                         and sym in (r.params["shifts"] if isinstance(r.params["shifts"], list)
+                                     else [r.params["shifts"]])), None)
+            if base is not None:
+                shifts, scope = list(base.params["shifts"]), base.params.get("scope", "all")
+            elif len(facility.units) > 1:
+                raise Clarify("ユニットごとの人数か、施設全体の人数か教えてください")
+            else:
+                shifts, scope = [sym], "all"
+            ops = ([("==", lo)] if lo is not None and lo == hi else
+                   [(">=", lo)] * (lo is not None) + [("<=", hi)] * (hi is not None))
+            jp = ("".join("月火水木金土日"[WEEKDAYS.index(w)] for w in wds) + ("祝" if hol else "")
+                  if wds else "毎日")
+            sname = facility.shift(sym).name
+            for op, n in ops:
+                params = {"shifts": shifts, "scope": scope, "op": op, "n": n}
+                if wds:
+                    params["weekdays"] = wds
+                    params["holidays"] = hol
+                p.rules.append({"name": f"{jp}の{sname}は{n}人" + {"==": "", ">=": "以上", "<=": "まで"}[op],
+                                "kind": "coverage", "flex": _count_strength(it.get("strength"), text, len(real) == 1),
+                                "params": params, "who": None, "when": None})
         elif t == "consecutive_limit":
             who = _names(it.get("staff"), names)
             mx = _num(it.get("max"))
@@ -309,10 +386,17 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         elif t == "cancel":
             # 取り消しは指定を外すだけ。反対の勤務を命じない（13章。T2-03）
             who = _names(it.get("staff"), names)
-            ds = _days(it.get("days"), month)
-            if not who or not ds:
+            if not who:
                 raise Clarify("誰の、何日の頼みを取り消すか教えてください")
             sym = _sym(it.get("shift"), facility) if it.get("shift") else None
+            if it.get("days") in (None, []):
+                # 日付の無い取り消し（「さっきの〇〇さんの休み、やっぱりなし」）。当てる先は帳面で探し、
+                # 1つに決まる時だけ確かめてから外す（session._cancel）
+                if len(who) != 1 or len(real) != 1:
+                    raise Clarify("誰の、何日の頼みを取り消すか教えてください")
+                p.removes.append({"who": who, "days": None, "shift": sym})
+                continue
+            ds = _days(it.get("days"), month)
             p.removes.append({"who": who, "days": ds, "shift": sym})
             what = f"{facility.shift(sym).name}の" if sym and sym != "公" else "休みの" if sym == "公" else ""
             sums.append(f"{_who(who)}の{'・'.join(map(str, ds))}日の{what}指定を外しました")
@@ -356,8 +440,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     # （再レビュー2回目 a の指摘）。マスの頼みは下で、人が無ければいつでも聞き返す
     # ただし「おかださん」のように名簿の表記に無いかなの呼びかけは伏せられないので、「さん」などの前の語が
     # 名前でない語（利用者・みな など）でなければ、人が出たとみなす（周8 レビュー b の指摘）
-    from .names import NOT_NAMES
-    not_name = NOT_NAMES | {"みな", "みんな", "お客", "医者", "先生", "看護", "介護", "職員", "ケアマネ",
+    from .names import FAMILY_WORDS, NOT_NAMES
+    not_name = NOT_NAMES | FAMILY_WORDS | {"みな", "みんな", "お客", "医者", "先生", "看護", "介護", "職員", "ケアマネ",
                             "施設長", "事務", "主任", "スタッフ", "お子", "おばあ", "おじい"} | {sh.name[:2] for sh in facility.shift_types}
     said = bool(re.search(r"職員\d{2}", Masker(staff, facility).mask(text)[0])) or any(
         not any(w.endswith(n) for n in not_name)
