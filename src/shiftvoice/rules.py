@@ -82,23 +82,8 @@ def _syms_of(v) -> set[str]:
     return {v} if isinstance(v, str) else set(v or [])
 
 
-def same_slot(new: dict, old: Rule) -> bool:
-    """新しく言った毎月のルール（帳面に入れる前の dict）が、前からある毎月のルールと同じ所を決めているか。
-    同じ所＝同じ種類・同じ相手（同じ人か、どちらも全員）で、数える勤務・曜日・並びが重なる。
-    中身まで同じ物は「もう入っています」で別に止める。ここは言い直しや、似たルールが積もるのを入口で止めるため
-    （docs/rule-cleanup.md の2）。日を決めた頼み（when）と当番は当てない。"""
-    if old.scope != "rule" or new.get("kind") != old.kind or old.kind in ("layer", "cell"):
-        return False
-    if new.get("when") or old.when:
-        return False
-    if sorted(new.get("who") or []) != sorted(old.who or []):
-        return False
-    p, q = new.get("params") or {}, old.params
-    if p == q:
-        return False
-    if old.kind == "count" and new.get("flex") == "operational" and old.flex == "operational":
-        return False   # 運用の都合の回数どうしは、新しい方が言った側だけ前のに代わる（_replace_same）。聞かない
-    k = old.kind
+def _params_overlap(k: str, p: dict, q: dict) -> bool:
+    """同じ種類の2つのルールの中身が、同じ勤務・曜日・並びに重なるか（人は見ない）。"""
     if k in ("count", "max_run"):
         return bool(_syms_of(p.get("shifts")) & _syms_of(q.get("shifts")))
     if k == "weekday":
@@ -113,6 +98,36 @@ def same_slot(new: dict, old: Rule) -> bool:
         return (bool(_syms_of(p.get("shifts")) & _syms_of(q.get("shifts")))
                 and p.get("scope") == q.get("scope") and sorted(p.get("weekdays") or []) == sorted(q.get("weekdays") or []))
     return False
+
+
+def same_slot(new: dict, old: Rule) -> bool:
+    """新しく言った毎月のルール（帳面に入れる前の dict）が、前からある毎月のルールと同じ所を決めているか。
+    同じ所＝同じ種類・同じ相手（同じ人か、どちらも全員）で、数える勤務・曜日・並びが重なる。
+    中身も強さも同じ物は「もう入っています」で別に止める。中身が同じで強さ（必ず・できれば）だけ違う言い直しは
+    同じ所として聞く（二重に入って、弱めたつもりの前のルールが残るのを止める。Astra 2026-11-03 の指摘2）。
+    ここは言い直しや、似たルールが積もるのを入口で止めるため（docs/rule-cleanup.md の2）。日を決めた頼み（when）と当番は当てない。"""
+    if old.scope != "rule" or new.get("kind") != old.kind or old.kind in ("layer", "cell"):
+        return False
+    if new.get("when") or old.when:
+        return False
+    if sorted(new.get("who") or []) != sorted(old.who or []):
+        return False
+    p, q = new.get("params") or {}, old.params
+    if p == q:
+        return new.get("flex") is not None and new.get("flex") != old.flex
+    if old.kind == "count" and new.get("flex") == "operational" and old.flex == "operational":
+        return False   # 運用の都合の回数どうしは、新しい方が言った側だけ前のに代わる（_replace_same）。聞かない
+    return _params_overlap(old.kind, p, q)
+
+
+def may_cover(a: Rule, b: Rule) -> bool:
+    """b が a と同じことを決めて a を守っていそうか（同じ種類で中身が重なり、b が a の人を含む）。
+    静かなルールの判定が、b があったおかげかもしれない時に使う（quiet.py）。"""
+    if a.kind != b.kind or a.id == b.id or b.kind in ("layer", "cell"):
+        return False
+    if b.who and not (set(b.who) & set(a.who or b.who)):
+        return False
+    return a.params == b.params or _params_overlap(a.kind, a.params, b.params)
 
 
 def with_overrides(rules: list[Rule]) -> list[Rule]:

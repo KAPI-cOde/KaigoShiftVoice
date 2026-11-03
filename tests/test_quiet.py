@@ -119,3 +119,17 @@ def test_q8_quiet_cards_capped_per_month(st):
         _fake(st, ym, {rid: "quiet" for rid in ids})
     v = review_cards(st.ledger(), 2026, 12, streaks(st, 2026, 12), 3, 5)
     assert len([c for c in v["cards"] if c.reason == "quiet"]) == 5 and v["quiet_more"] == 2
+
+
+def test_q9_quiet_dropped_when_cover_expires(st):
+    """静かなルールを守っていたかもしれない同じ中身のルールが期限切れになる月は、静かの候補に出さない。"""
+    _add(st, "g1", "早番は各ユニット1人（相談できる）", "coverage",
+         {"shifts": ["早"], "scope": "each_unit", "op": "==", "n": 1})
+    led = st.ledger()
+    led.append("change", rule_id="r001", rule={"name": "早番の人数"}, op_id="t-close", frm=None, until="2026-11-30")
+    st.save_ledger(led)
+    for ym in ("2026-09", "2026-10", "2026-11"):
+        _fake(st, ym, {"g1": "quiet"})
+    v = review_cards(st.ledger(), 2026, 12, streaks(st, 2026, 12), 3)
+    assert [c.rule_id for c in v["cards"] if c.reason == "quiet"] == []
+    assert [c.rule_id for c in v["cards"] if c.reason == "expired"] == ["r001"]

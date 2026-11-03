@@ -20,6 +20,7 @@ import datetime as dt
 from dataclasses import dataclass
 
 from .ledger import Ledger, LedgerError
+from .rules import may_cover
 from .nextmonth import next_ym
 from .store import Store
 
@@ -65,6 +66,11 @@ def review_cards(ledger: Ledger, year: int, month: int, quiet: dict[str, int] | 
     ym = f"{year:04d}-{month:02d}"
     first = next((t["rev"] for t in ledger.txs if str(t.get("op_id") or "").startswith(f"review-{ym}-")), None)
     all_prev = ledger.rules_at(at_rev=(first - 1) if first else None, between=(ps, pe))
+    # 前の月に効いていて対象の月には効かないルール（期限が来た・外した）。静かなルールがそれに守られていた
+    # だけかもしれないので、重なる物は静かの候補にしない（Astra 2026-11-03 の指摘1。測った月にはあった守りが消える）
+    te = _span(year, month)[1]
+    target = ledger.rules_at(at_rev=(first - 1) if first else None, between=(start, te))
+    gone = [r for rid, r in all_prev.items() if rid not in target]
     add_tx = {t["rule"]["id"]: t for t in ledger.txs if t["op"] == "add"}
     cards: list[Card] = []
     quiet_cards: list[Card] = []
@@ -80,7 +86,8 @@ def review_cards(ledger: Ledger, year: int, month: int, quiet: dict[str, int] | 
             cards.append(Card(rid, "expired", r.name, until, r.meta.get("said"), r.kind))
         elif t and t.get("from") == ps and r.meta.get("said"):
             cards.append(Card(rid, "added_last_month", r.name, until, r.meta.get("said"), r.kind))
-        elif quiet and r.kind != "layer" and _quiet_run(ledger, rid, ym, quiet.get(rid, 0)) >= quiet_months:
+        elif quiet and r.kind != "layer" and _quiet_run(ledger, rid, ym, quiet.get(rid, 0)) >= quiet_months \
+                and not any(may_cover(r, g) for g in gone):
             quiet_cards.append(Card(rid, "quiet", r.name, until, r.meta.get("said"), r.kind,
                                     _quiet_run(ledger, rid, ym, quiet.get(rid, 0))))
         else:

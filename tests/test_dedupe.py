@@ -62,3 +62,9 @@ def test_d4_reopen_keeps_question(sess):
     assert pend and pend[0]["status"] == "ask_replace"
     sess.open()
     assert sess.answer(r.uid, "replace").kind == "applied"
+
+
+def test_d5_strength_only_restatement_asks():
+    old = _rule(kind="count", flex="fixed", params={"shifts": ["夜"], "max": 4})
+    assert same_slot({"kind": "count", "flex": "negotiable", "who": ["斉藤"], "params": {"shifts": ["夜"], "max": 4}}, old)
+    assert not same_slot({"kind": "count", "flex": "fixed", "who": ["斉藤"], "params": {"shifts": ["夜"], "max": 4}}, old)
