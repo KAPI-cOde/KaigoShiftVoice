@@ -43,9 +43,16 @@ def start_quiet(store: Store, year: int, month: int) -> None:
 
     def run():
         try:
-            check_month(store, year, month)
-        except Exception as e:   # 測れなくても表の操作は止めない（翌月の見直しに静かな札が出ないだけ）
-            print(f"静かなルールの確かめが止まりました（{year}年{month}月） {e}")
+            try:
+                check_month(store, year, month)
+            except Exception as e:   # 測れなくても表の操作は止めない（翌月の見直しに静かな札が出ないだけ）
+                print(f"静かなルールの確かめが止まりました（{year}年{month}月） {e}")
+            if os.environ.get("ANTHROPIC_API_KEY"):
+                try:   # 理由が一時的な事情かを分ける（aging.py。理由の文だけを、名前を伏せて送る）
+                    from .aging import HaikuAging, classify_rules
+                    classify_rules(store, HaikuAging())
+                except Exception as e:
+                    print(f"事情のルールの読み分けが止まりました {type(e).__name__}")
         finally:
             _quiet_running.discard(key)
     threading.Thread(target=run, daemon=True).start()

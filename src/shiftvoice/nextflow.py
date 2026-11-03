@@ -14,6 +14,7 @@ from .ledger import LedgerError
 from .names import Masker
 from .nextmonth import copy_next_month, next_ym
 from .reader import ReadError
+from .aging import aged, temporary_months_setting
 from .quiet import no_scene_ids, overlap_streaks, quiet_months_setting, quiet_per_month_setting, streaks
 from .review import answer, history, review_cards, undo_answer
 from .store import Store
@@ -29,6 +30,11 @@ def card_lines(c, month: int, prev: int) -> dict:
                 "lines": [f"{_md(c.until)}で終わりました。{month}月には効きません",
                           f"片付けても、{prev}月の表と引き受けの記録は残ります"],
                 "buttons": [["archive", "履歴へ片付ける（おすすめ）"], ["extend", "期間を延ばす"]]}
+    if c.reason == "aged":
+        return {"label": "事情が続いているか", "title": c.name,
+                "lines": [f"{c.months}か月前に「{c.reason_text}」という事情で足したルールです",
+                          "事情が終わっていたら片付けてください。続いているなら［今月も使う］で、また何か月か後に聞きます"],
+                "buttons": [["keep", "今月も使う"], ["archive", "履歴へ片付ける"]]}
     if c.reason == "overlap":
         return {"label": "同じことを決めている2件", "title": f"{c.name}　と　{c.partner_name}",
                 "lines": [f"{c.months}か月続けて、どちらか片方を外して作り直しても、表は両方のルールどおりでした",
@@ -76,7 +82,8 @@ class NextFlow:
         self._ensure()
         led = self.store.ledger()
         v = review_cards(led, self.ny, self.nm, *self._quiet(), overlap=overlap_streaks(self.store, self.ny, self.nm),
-                         no_scene=no_scene_ids(self.store, self.ny, self.nm), split=split)
+                         no_scene=no_scene_ids(self.store, self.ny, self.nm), split=split,
+                         aged=aged(self.store, self.ny, self.nm), temp_months=temporary_months_setting(self.store))
         cards = []
         for c in v["cards"]:
             d = card_lines(c, self.nm, self.month)
@@ -115,7 +122,8 @@ class NextFlow:
         q, qm, qp = self._quiet()
         answer(self.store, self.ny, self.nm, rule_id, what, new_until=new_until, quiet=q, quiet_months=qm,
                quiet_per_month=qp, overlap=overlap_streaks(self.store, self.ny, self.nm),
-               no_scene=no_scene_ids(self.store, self.ny, self.nm), split=split)
+               no_scene=no_scene_ids(self.store, self.ny, self.nm), split=split,
+               aged=aged(self.store, self.ny, self.nm), temp_months=temporary_months_setting(self.store))
         return self.review(split)
 
     def change(self, rule_id: str, text: str, reader) -> dict:

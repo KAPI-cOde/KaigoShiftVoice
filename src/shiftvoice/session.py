@@ -794,10 +794,12 @@ class Session:
         start = self._span()[0]
         ny, nm = next_ym(self.year, self.month)
         qp = quiet_per_month_setting(self.store)
+        from .aging import aged, temporary_months_setting
         v = review_cards(self.store.ledger(), ny, nm, streaks(self.store, ny, nm), quiet_months_setting(self.store), qp,
-                         overlap_streaks(self.store, ny, nm), no_scene_ids(self.store, ny, nm))
+                         overlap_streaks(self.store, ny, nm), no_scene_ids(self.store, ny, nm),
+                         aged=aged(self.store, ny, nm), temp_months=temporary_months_setting(self.store))
         cand = sum((2 if c.reason == "overlap" else 1 + len(c.group)) for c in v["cards"]
-                   if c.reason in ("quiet", "overlap") and c.rule_id not in v["answers"]) + v["quiet_more"]
+                   if c.reason in ("quiet", "overlap", "aged") and c.rule_id not in v["answers"]) + v["quiet_more"]
         return {"total": len(mine), "added": sum(1 for r in mine if r.meta.get("said") and r.meta.get("from") == start),
                 "candidates": cand, "per_month": qp}
 
