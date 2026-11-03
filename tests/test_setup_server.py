@@ -139,3 +139,17 @@ def test_翌月の表が作れなければ置き場を残さない(srv, monkeypa
     assert not any(n.endswith(".making") for n in left)
     code, fl = call(base, "/api/facilities")
     assert all("作れない" not in f["name"] for f in fl["facilities"])
+
+
+def test_プレビューは答えを当てて読み方を返す(srv):
+    base, _, _ = srv
+    text = (Path(__file__).resolve().parent / "fixtures" / "pastes" / "03.tsv").read_text(encoding="utf-8")
+    code, pv = call(base, "/api/setup/preview", {"text": text, "year": 2026, "month": 11})
+    assert code == 200 and sorted(pv["unknown_symbols"]) == ["A", "B", "C", "N"]
+    assert pv["same_choices"][0] == {"symbol": "早", "name": "早番"} and not any(r["name"] == "夜勤の人数" for r in pv["rules"])
+    answers = {"A": {"same_as": "早"}, "B": {"same_as": "日"}, "C": {"same_as": "遅"}, "N": {"same_as": "夜"}}
+    code, pv2 = call(base, "/api/setup/preview", {"text": text, "year": 2026, "month": 11, "answers": answers})
+    assert code == 200 and any(r["name"] == "夜勤の人数" for r in pv2["rules"])
+    assert "希→公休" in pv2["reading"] and "N→夜勤" in pv2["reading"]
+    code, bad = call(base, "/api/setup/preview", {"text": text, "year": 2026, "month": 11, "answers": {"A": {"same_as": "ぬ"}}})
+    assert code == 400 and "知らない勤務" in bad["error"]

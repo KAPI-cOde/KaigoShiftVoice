@@ -141,7 +141,8 @@ def test_create_施設を作って12月の表ができる(tmp_path, proposal):
     s = fac.settings
     assert set(s["solve"]) <= {"workers", "seed", "max_deterministic_time", "resolve_max_deterministic_time"}
     assert "seed_by_month" not in s["solve"] and "note" not in s.get("giveback", {})
-    assert s["holidays"] == {"2026-11": [3, 23], "2026-12": []}
+    from shiftvoice.onboard import HOLIDAYS
+    assert s["holidays"] == HOLIDAYS and s["holidays"]["2027-01"] == [1, 11]   # 翌々月以降も入る
     led = store.ledger()
     assert led.rev == 9 and led.txs[0]["meta"]["by"] == "作成者"
     nov, dec = store.month(2026, 11), store.month(2026, 12)
@@ -169,7 +170,8 @@ def test_create_祝日の表に無い月は知らせる(tmp_path):
     pr = infer(parse_paste(t), 2027, 6)
     c = create_facility(pr, tmp_path / "h", name="試験", next_year=2027, next_month=7)
     assert any("祝日は入っていません" in x for x in c.notes)
-    assert Store(tmp_path / "h").facility().settings["holidays"] == {"2027-06": [], "2027-07": []}
+    hol = Store(tmp_path / "h").facility().settings["holidays"]
+    assert hol["2027-06"] == [] and hol["2027-07"] == [] and hol["2027-05"] == [3, 4, 5]
 
 
 def test_create_知らない記号が残る時は作らない(tmp_path):
@@ -185,3 +187,198 @@ def test_create_知らない記号が残る時は作らない(tmp_path):
         create_facility(pr, root, name="試験", next_year=2027, next_month=3,
                         answers={"半": {"name": "半休", "kind": "ふつう"}})
     assert not root.exists()
+
+
+# ---------------------------------------------------------------- 現場の書き方10通り（tests/fixtures/pastes/）
+
+PASTES = Path(__file__).resolve().parent / "fixtures" / "pastes"
+NAMES8 = ["赤坂", "井上", "内田", "遠藤", "太田", "川口", "木下", "工藤"]
+NAMES_W = ["青木", "石田", "上野", "江口", "小川", "加藤", "岡田", "落合"]
+
+
+def paste(n):
+    return (PASTES / f"{n:02d}.tsv").read_text(encoding="utf-8")
+
+
+def rule_map(pr):
+    return {r["name"]: r for r in pr.rules}
+
+
+def assert_komorebi_rules(pr):
+    """見本と同じ表なので、見つかるルールも見本と同じ9件。"""
+    by = rule_map(pr)
+    assert len(pr.rules) == 9
+    assert by["早番の人数"]["params"] == {"shifts": ["早"], "scope": "all", "op": "==", "n": 1}
+    assert by["夜勤の人数"]["params"]["n"] == 1 and by["遅番の人数"]["params"]["n"] == 1
+    assert by["公休の数"]["params"] == {"shifts": ["公"], "min": 9, "max": 9}
+    assert by["夜勤の翌日は明け"]["params"] == {"if": ["夜"], "next_in": ["明"]}
+    assert by["連勤の上限"]["params"]["max"] == 5
+
+
+def made_next(tmp_path, pr, answers=None):
+    c = create_facility(pr, tmp_path / "f", name="試験", next_year=2026, next_month=12, answers=answers)
+    return c, Store(tmp_path / "f").month(2026, 12)
+
+
+def test_貼り付け_全部の書き方で表が同じに読める(text, tmp_path):
+    base = parse_paste(text).table
+    for n in (1, 2, 6, 7, 10):
+        p = parse_paste(paste(n))
+        assert list(p.table) == NAMES8 and p.days == 30, n
+        assert p.table == base, n
+        assert p.unknown_symbols == [], n
+    # 3番は記号がA/B/C/N。希→公、有はそのまま
+    p3 = parse_paste(paste(3))
+    assert list(p3.table) == NAMES8 and p3.days == 30 and p3.unknown_symbols == ["A", "B", "N", "C"]
+    assert p3.aliases.get("希") == "公" and "希" not in {s for r in p3.table.values() for s in r}
+    assert "有" in {s for r in p3.table.values() for s in r}
+
+
+def test_貼り付け1_表題と曜日行と名前の空白(tmp_path):
+    p = parse_paste(paste(1))
+    assert p.skipped == 3 and list(p.table) == NAMES8   # 「赤 坂」の空白が取れる。集計3行は飛ばす
+    pr = infer(p, 2026, 11)
+    assert_komorebi_rules(pr)
+    c, dec = made_next(tmp_path, pr)
+    assert c.next_table_made and len(dec.table) == 8
+
+
+def test_貼り付け2_番号と職種の列(tmp_path):
+    pr = infer(parse_paste(paste(2)), 2026, 11)
+    assert list(pr.table) == NAMES8 and pr.staff[0]["name"] == "赤坂"
+    assert_komorebi_rules(pr)
+    c, _ = made_next(tmp_path, pr)
+    assert c.next_table_made
+
+
+def test_貼り付け3_ABCNは同じにする答えで夜も入る(tmp_path):
+    pasted = parse_paste(paste(3))
+    answers = {"A": {"same_as": "早"}, "B": {"same_as": "日"}, "C": {"same_as": "遅"}, "N": {"same_as": "夜"}}
+    pr = infer(pasted, 2026, 11, answers)
+    assert pr.unknown_symbols == [] and pr.same_as == {"A": "早", "B": "日", "C": "遅", "N": "夜"}
+    by = rule_map(pr)
+    assert {"早番の人数", "遅番の人数", "夜勤の人数", "夜勤の翌日は明け"} <= set(by)
+    assert by["夜勤の人数"]["params"]["n"] == 1
+    c, dec = made_next(tmp_path, pr, answers)
+    assert c.next_table_made and any("夜" in r for r in dec.table.values())
+    assert not any("1回も入っていません" in x for x in c.notes)
+
+
+def test_貼り付け4_丸数字は同じにする答えで夜も入る(tmp_path):
+    pasted = parse_paste(paste(4))
+    # 丸数字は数字に変えずに残す（本人の Excel と見比べられるように）
+    assert pasted.unknown_symbols == ["①", "②", "④", "③"]
+    answers = {"①": {"same_as": "早"}, "②": {"same_as": "日"}, "③": {"same_as": "遅"}, "④": {"same_as": "夜"}}
+    pr = infer(pasted, 2026, 11, answers)
+    by = rule_map(pr)
+    assert by["早番の人数"]["params"]["n"] == 1 and by["遅番の人数"]["params"]["n"] == 1
+    assert by["夜勤の人数"]["params"]["n"] == 1 and "夜勤の翌日は明け" in by
+    c, dec = made_next(tmp_path, pr, answers)
+    assert c.next_table_made and any("夜" in r for r in dec.table.values())
+
+
+def test_貼り付け5_入は夜でアは同じにする答え(tmp_path):
+    pasted = parse_paste(paste(5))
+    assert pasted.aliases.get("入") == "夜" and pasted.unknown_symbols == ["ア"]
+    answers = {"ア": {"same_as": "明"}}
+    pr = infer(pasted, 2026, 11, answers)
+    assert_komorebi_rules(pr)
+    c, dec = made_next(tmp_path, pr, answers)
+    assert c.next_table_made and any("夜" in r for r in dec.table.values())
+
+
+def test_同じにする先は雛形の勤務だけ():
+    with pytest.raises(OnboardError, match="知らない勤務"):
+        infer(parse_paste(paste(5)), 2026, 11, {"ア": {"same_as": "ぬ"}})
+
+
+def test_夜勤の記号を新しい勤務と答えると翌月に入らないと知らせる(tmp_path):
+    pasted = parse_paste(paste(3))
+    answers = {"A": {"same_as": "早"}, "B": {"same_as": "日"}, "C": {"same_as": "遅"},
+               "N": {"name": "夜勤B", "kind": "work"}}
+    pr = infer(pasted, 2026, 11, answers)
+    c, dec = made_next(tmp_path, pr, answers)
+    assert any("夜勤B（N）が12月の表に1回も入っていません。何の勤務かの答えを確かめてください" == x for x in c.notes)
+
+
+def test_貼り付け6_明けは明(tmp_path):
+    p = parse_paste(paste(6))
+    assert p.aliases.get("明け") == "明" and p.table == parse_paste(SAMPLE.read_text(encoding="utf-8")).table
+    assert_komorebi_rules(infer(p, 2026, 11))
+
+
+def test_貼り付け7_右端の集計列は読まない(tmp_path):
+    p = parse_paste(paste(7))
+    assert p.days == 30 and p.skipped == 5 and list(p.table) == NAMES8
+    assert_komorebi_rules(infer(p, 2026, 11))
+
+
+def test_貼り付け8_締め日が月末でない表は作らない():
+    with pytest.raises(ParseError) as e:
+        parse_paste(paste(8))
+    assert str(e.value) == ("締め日が月末でない表（16日から翌月15日など）は、まだ読めません。"
+                            "1日から月末までの表を貼ってください")
+
+
+def test_貼り付け9_ユニットごとの人数(tmp_path):
+    p = parse_paste(paste(9))
+    assert list(p.table) == NAMES8 + NAMES_W and p.unit_list == ["東", "西"]
+    assert all(p.unit_of[n] == "東" for n in NAMES8) and all(p.unit_of[n] == "西" for n in NAMES_W)
+    pr = infer(p, 2026, 11)
+    assert pr.units == ["東", "西"] and {s["unit"] for s in pr.staff} == {"東", "西"}
+    by = rule_map(pr)
+    for nm in ("早番の人数", "遅番の人数", "夜勤の人数"):
+        assert by[nm]["params"]["scope"] == "each_unit" and by[nm]["params"]["n"] == 1
+    assert by["公休の数"]["params"] == {"shifts": ["公"], "min": 9, "max": 9}
+    assert len(pr.rules) == 9
+    c, dec = made_next(tmp_path, pr)
+    assert c.next_table_made and len(dec.table) == 16
+    assert Store(tmp_path / "f").facility().units == ["東", "西"]
+
+
+def test_貼り付け10_途中の空の行と列と全角数字の見出し():
+    p = parse_paste(paste(10))
+    assert p.days == 30 and list(p.table) == NAMES8
+    assert p.table == parse_paste(SAMPLE.read_text(encoding="utf-8")).table
+    assert_komorebi_rules(infer(p, 2026, 11))
+
+
+def test_見出しが無い貼り付けでも全部空の列は取り除く():
+    rows = ["赤坂\t" + "\t".join(["早", "公"] * 14) + "\t",
+            "井上\t" + "\t".join(["公", "早"] * 14) + "\t"]
+    p = parse_paste("\n".join(rows))
+    assert p.days == 28 and not p.had_header
+
+
+def test_名前の列は見出しか中身で決まる():
+    days = [str(d) for d in range(1, 29)]
+    body = lambda nm, role: [str(1), role, nm] + ["早", "公"] * 14   # noqa: E731
+    t = "\n".join(["番号\t職種\t名前\t" + "\t".join(days), "\t".join(body("赤坂", "介護福祉士")),
+                   "\t".join(["2", "パート", "井上"] + ["公", "早"] * 14)])
+    assert list(parse_paste(t).table) == ["赤坂", "井上"]
+    t2 = t.replace("名前", "")      # 見出しが無くても、職種の言葉と数字だけの列は名前にしない
+    assert list(parse_paste(t2).table) == ["赤坂", "井上"]
+
+
+def test_パートの人の公休は人ごとに1本_翌月も同じ数(tmp_path):
+    # 8人は公休9日、1人（パート）は空欄が多く公休20日。翌月もその人は20日
+    t = parse_paste(SAMPLE.read_text(encoding="utf-8"))
+    lines = SAMPLE.read_text(encoding="utf-8").split("\n")
+    part = "青木\t" + "\t".join(["早", "公"] * 10 + [""] * 10)
+    pr = infer(parse_paste("\n".join(lines[:10] + [part] + lines[10:])), 2026, 11)
+    by = rule_map(pr)
+    assert by["公休の数"]["who"] == NAMES8 and by["公休の数"]["params"]["min"] == 9
+    one = by["公休の数（青木さん）"]
+    assert one["who"] == ["青木"] and one["params"]["min"] == one["params"]["max"] == 20
+    assert "12月は31日あります。公休の数を確かめてください" in one["meta"]["evidence"]
+    assert len(t.table) == 8
+    c, dec = made_next(tmp_path, pr)
+    assert c.next_table_made and dec.table["青木"].count("公") == 20
+
+
+def test_言葉の一覧に無い集計の行も飛ばす():
+    lines = SAMPLE.read_text(encoding="utf-8").split("\n")
+    extra = ["出勤者数\t" + "\t".join(["3"] * 30), "公休数\t" + "\t".join(["2"] * 30 ),
+             "夜勤者数\t" + "\t".join(["1"] * 30) + "\t5"]
+    p = parse_paste("\n".join(lines[:10] + extra))
+    assert list(p.table) == NAMES8 and p.skipped >= 3

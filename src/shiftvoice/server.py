@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .nextmonth import next_ym
-from .onboard import (OnboardError, ParseError, Proposal, Pasted, _short_id, create_facility, infer,
+from .onboard import (OnboardError, ParseError, Proposal, Pasted, _short_id, _template, create_facility, infer,
                       parse_paste)
 from .reader import HaikuReader, ReadError, SonnetBuilder
 from .session import Session
@@ -46,7 +46,18 @@ def _parse_setup(data: dict) -> tuple[Pasted, Proposal, int, int]:
     if not (2000 <= year <= 2100 and 1 <= month <= 12):
         raise ParseError("貼る表の年と月を確かめてください")
     pasted = parse_paste(str(data.get("text") or ""))
-    return pasted, infer(pasted, year, month), year, month
+    answers = data.get("answers")
+    return pasted, infer(pasted, year, month, answers if isinstance(answers, dict) else None), year, month
+
+
+def _reading(pasted: Pasted, prop: Proposal) -> list[str]:
+    """「勤務の記号の読み方」。別名で置き換えた物、答えで同じにした物、空欄。"""
+    names = {s["symbol"]: s["name"] for s in _template()}
+    out = [f"{raw}→{names.get(sym, sym)}" for raw, sym in pasted.aliases.items()]
+    out += [f"{raw}→{names.get(sym, sym)}" for raw, sym in prop.same_as.items()]
+    if pasted.blank_as_rest:
+        out.append(f"空欄{pasted.blank_as_rest}マス→公休")
+    return out
 
 
 def preview_out(pasted: Pasted, prop: Proposal) -> dict:
@@ -56,7 +67,9 @@ def preview_out(pasted: Pasted, prop: Proposal) -> dict:
         "staff": list(prop.table), "days": pasted.days,
         "shift_types": [{"symbol": s["symbol"], "name": s["name"], "kind": s["kind"]} for s in prop.shift_types],
         "rules": [{"id": r["id"], "name": r["name"], "evidence": r["meta"]["evidence"]} for r in prop.rules],
-        "unknown_symbols": list(prop.unknown_symbols),
+        "unknown_symbols": list(pasted.unknown_symbols),
+        "same_choices": [{"symbol": t["symbol"], "name": t["name"]} for t in _template()],
+        "reading": _reading(pasted, prop), "units": list(prop.units),
         "blank_as_rest": pasted.blank_as_rest, "skipped": pasted.skipped,
     }
 
