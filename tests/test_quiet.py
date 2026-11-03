@@ -193,3 +193,18 @@ def test_q13_overlap_card_says_which_is_safe(st):
     d = card_lines(c, 12, 11)
     assert "ゆるい方の「千葉さん 夜勤は月7回まで」を片付けても、厳しい方の「千葉さん 夜勤は月6回まで」で守られます" in d["lines"][1]
     assert d["buttons"][0] == ["archive", "「千葉さん 夜勤は月7回まで」を片付ける（おすすめ）"]
+
+
+def test_q14_rule_stats_for_list(built_dir, tmp_path):
+    """一覧の上の数（ルールの件数・今月増えた件数・片付けの候補の数）。"""
+    import shutil as sh
+    from conftest import FIXED_NOW, REPLIES
+    from shiftvoice.reader import RecordedReader
+    from shiftvoice.session import Session
+    sh.copytree(built_dir, tmp_path / "s")
+    s = Session(Store(tmp_path / "s"), 2026, 11, RecordedReader.from_file(REPLIES), now=lambda: FIXED_NOW)
+    _add(s.store, "g1", "千葉さん 夜勤は月8回まで", "count", {"shifts": ["夜"], "max": 8}, ["千葉"])
+    for ym in ("2026-09", "2026-10", "2026-11"):
+        _fake(s.store, ym, {"g1": "quiet", "r012": "quiet"})
+    rs = s.state()["rule_stats"]
+    assert rs["total"] == 13 and rs["candidates"] == 2 and rs["per_month"] == 5 and rs["added"] == 0

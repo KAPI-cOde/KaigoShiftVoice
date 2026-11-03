@@ -783,6 +783,20 @@ class Session:
             msg = f"「{name}」を戻しました。次に表を作る時から効きます"
         return Reply("applied", None, msg, summary=msg)
 
+    def _rule_stats(self, rules: dict) -> dict:
+        """一覧の上に出す、ルールの量と増え方と片付けの候補の数（docs/rule-cleanup.md の3）。"""
+        from .nextmonth import next_ym
+        from .quiet import overlap_streaks, quiet_months_setting, quiet_per_month_setting, streaks
+        mine = [r for r in rules.values() if r.scope == "rule"]
+        start = self._span()[0]
+        ny, nm = next_ym(self.year, self.month)
+        qm = quiet_months_setting(self.store)
+        ids = {r.id for r in mine}
+        cand = {k for k, n in streaks(self.store, ny, nm).items() if n >= qm and k in ids}
+        cand |= {k for k, n in overlap_streaks(self.store, ny, nm).items() if n >= qm and k in ids}
+        return {"total": len(mine), "added": sum(1 for r in mine if r.meta.get("said") and r.meta.get("from") == start),
+                "candidates": len(cand), "per_month": quiet_per_month_setting(self.store)}
+
     def why(self, name: str, day: int) -> dict:
         """マスを押した時の「なぜこのマスか」（why.py）。表の操作はしない。"""
         from .why import why_cell
@@ -809,6 +823,7 @@ class Session:
                       for r in rules.values()],
             "pending": self.store.pending(self.year, self.month),
             "archived": [h for h in _history(self.store.ledger())][-30:],
+            "rule_stats": self._rule_stats(rules),
             "can_undo": bool(m.history),
             "distributed": m.distributed,
             "layers": {k: {"name": v["def"]["name"], "assign": v["assign"], "rule_id": v["rule_id"]}
