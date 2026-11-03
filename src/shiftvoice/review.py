@@ -176,7 +176,8 @@ def review_cards(ledger: Ledger, year: int, month: int, quiet: dict[str, int] | 
         head.name = f"先月増えたルール {len(added)}件"
         cards = [c for c in cards if c.reason != "added_last_month" or c is head]
     order = {"expired": 0, "added_last_month": 1, "quiet": 2, "overlap": 2, "aged": 2}
-    cards.sort(key=lambda c: (order[c.reason], c.rule_id))
+    # 片付けの候補は上で決めた順（場面の無い札が先・長く続いた順）のまま。番号順に並べ直すと、それが崩れた
+    cards.sort(key=lambda c: (order[c.reason], c.rule_id if order[c.reason] < 2 else ""))
     answers = answers_for(ledger, year, month)
     pos = next((i for i, c in enumerate(cards) if c.rule_id not in answers), len(cards))
     return {"cards": cards, "answers": answers, "cursor": pos, "unchanged": unchanged, "once": once,

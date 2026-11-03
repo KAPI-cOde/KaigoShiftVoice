@@ -223,3 +223,15 @@ def test_q15_overlap_summary_says_which(st):
     flow = NextFlow(st, 2026, 11)
     out = flow.answer("g2", "archive")
     assert "千葉さん 夜勤は月7回まで → 片付けた（千葉さん 夜勤は月6回までは残す）" in out["summary"]
+
+
+def test_q16_no_scene_first_even_with_lower_ids(st):
+    """場面の無い札（今の名簿にいない人）は、番号の小さいほかの候補より先に出す。"""
+    _add(st, "a1", "千葉さん 夜勤は月8回まで", "count", {"shifts": ["夜"], "max": 8}, ["千葉"])
+    _add(st, "z9", "森田さん 夜勤は月3回まで", "count", {"shifts": ["夜"], "max": 3}, ["森田"])
+    for ym in ("2026-09", "2026-10", "2026-11"):
+        atomic_write_json(_path(st, int(ym[:4]), int(ym[5:])), {"month": ym, "rules": {
+            "a1": {"state": "quiet"}, "z9": {"state": "quiet", "no_scene": True}}})
+    from shiftvoice.quiet import no_scene_ids
+    v = review_cards(st.ledger(), 2026, 12, streaks(st, 2026, 12), 3, 5, None, no_scene_ids(st, 2026, 12))
+    assert [c.rule_id for c in v["cards"]] == ["z9", "a1"]
