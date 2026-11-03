@@ -538,7 +538,8 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     ny, nmo = next_ym(year, month)
     note = ""
     if calendar.monthrange(ny, nmo)[1] != days:
-        note = f"。{nmo}月は{calendar.monthrange(ny, nmo)[1]}日あります。公休の数を確かめてください"
+        note = (f"。{nmo}月は{calendar.monthrange(ny, nmo)[1]}日あるので、公休を{mode}日のままでよいか確かめてください"
+                f"（変える時は、作った後に「公休は月{mode + 1}日」のように一言で）")
     outliers = {nm: v for nm, v in rests.items() if v != mode}
     add("公休の数", "count", "operational", {"shifts": ["公"], "min": mode, "max": mode},
         f"公休は{len(rests)}人中{hit}人が{mode}日" + note,

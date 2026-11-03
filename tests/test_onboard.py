@@ -382,7 +382,7 @@ def test_パートの人の公休は人ごとに1本_翌月も同じ数(tmp_path
     assert by["公休の数"]["who"] == NAMES8 and by["公休の数"]["params"]["min"] == 9
     one = by["公休の数（青木さん）"]
     assert one["who"] == ["青木"] and one["params"]["min"] == one["params"]["max"] == 20
-    assert "12月は31日あります。公休の数を確かめてください" in one["meta"]["evidence"]
+    assert "12月は31日あるので、公休を" in one["meta"]["evidence"] and "一言で" in one["meta"]["evidence"]
     assert len(t.table) == 8
     c, dec = made_next(tmp_path, pr)
     assert c.next_table_made and dec.table["青木"].count("公") == 20
