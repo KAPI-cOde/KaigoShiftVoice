@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from shiftvoice.build import build_original  # noqa: E402
 from shiftvoice.nextmonth import copy_next_month, next_ym  # noqa: E402
-from shiftvoice.quiet import check_month, quiet_months_setting, streaks  # noqa: E402
+from shiftvoice.quiet import check_month, no_scene_ids, overlap_streaks, quiet_months_setting, streaks  # noqa: E402
 from shiftvoice.review import review_cards  # noqa: E402
 from shiftvoice.store import Store  # noqa: E402
 
@@ -44,8 +44,8 @@ def gen_rules(staff: list[dict], rnd: random.Random) -> list[dict]:
         n = s["name"]
         can = s["can"]
         if "夜" in can:
-            add(f"{n}さん 夜勤は月{rnd.choice([4, 5, 6, 8])}回まで", "count", "operational",
-                {"shifts": ["夜"], "max": rnd.choice([4, 5, 6, 8])}, [n])
+            k = rnd.choice([4, 5, 6, 8])
+            add(f"{n}さん 夜勤は月{k}回まで", "count", "operational", {"shifts": ["夜"], "max": k}, [n])
         for sym in ("早", "遅"):
             if sym in can and rnd.random() < 0.8:
                 k = rnd.choice([5, 6, 7, 9, 12])
@@ -61,8 +61,8 @@ def gen_rules(staff: list[dict], rnd: random.Random) -> list[dict]:
             wd = rnd.choice(WD)
             add(f"{n}さん {WDJ[wd]}曜は休みにしたい", "weekday", "negotiable", {"weekdays": [wd], "in": ["公"]}, [n])
         if rnd.random() < 0.5:
-            add(f"{n}さん 連勤は{rnd.choice([3, 4])}日まで", "max_run", "negotiable",
-                {"shifts": "work", "max": rnd.choice([3, 4])}, [n])
+            k = rnd.choice([3, 4])
+            add(f"{n}さん 連勤は{k}日まで", "max_run", "negotiable", {"shifts": "work", "max": k}, [n])
         if "夜" in can and rnd.random() < 0.4:
             add(f"{n}さん 夜勤の前の日は早番にしない", "sequence", "negotiable",
                 {"if": ["早"], "next_not_in": ["夜"]}, [n])
@@ -121,16 +121,17 @@ def main() -> None:
         q = check_month(store, y, m, workers=a.workers)
         st = [v["state"] for v in q["rules"].values()]
         print(f"  静か {st.count('quiet')}件（場面なし {sum(1 for v in q['rules'].values() if v.get('no_scene'))}件）"
-              f"・効いた {st.count('needed')}件・不明 {st.count('unknown')}件  {q['seconds']}秒", flush=True)
+              f"・重なり {st.count('overlap')}件・効いた {st.count('needed')}件・不明 {st.count('unknown')}件  {q['seconds']}秒",
+              flush=True)
         prev = (y, m)
         y, m = next_ym(y, m)
     copy_next_month(store, *prev)
     s = streaks(store, y, m)
-    v = review_cards(store.ledger(), y, m, s, quiet_months_setting(store))
-    quiet = [c for c in v["cards"] if c.reason == "quiet"]
-    print(f"{y}-{m:02d} の見直しに出る 静か {len(quiet)}件 / 見直し全体 {len(v['cards'])}件 / 変更なし {v['unchanged']}件")
-    for c in quiet:
-        print("  ", c.months, "か月", c.name)
+    v = review_cards(store.ledger(), y, m, s, quiet_months_setting(store), overlap=overlap_streaks(store, y, m),
+                     no_scene=no_scene_ids(store, y, m))
+    print(f"{y}-{m:02d} の見直しに出る {len(v['cards'])}件 / ほかに静か・重なり {v['quiet_more']}件 / 変更なし {v['unchanged']}件")
+    for c in v["cards"]:
+        print("  ", c.reason, c.months, "か月", c.name, ("と " + c.partner_name) if c.partner_name else "")
 
 
 if __name__ == "__main__":

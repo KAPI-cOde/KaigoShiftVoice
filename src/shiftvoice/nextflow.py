@@ -14,7 +14,7 @@ from .ledger import LedgerError
 from .names import Masker
 from .nextmonth import copy_next_month, next_ym
 from .reader import ReadError
-from .quiet import quiet_months_setting, quiet_per_month_setting, streaks
+from .quiet import no_scene_ids, overlap_streaks, quiet_months_setting, quiet_per_month_setting, streaks
 from .review import answer, history, review_cards, undo_answer
 from .store import Store
 
@@ -29,18 +29,29 @@ def card_lines(c, month: int, prev: int) -> dict:
                 "lines": [f"{_md(c.until)}で終わりました。{month}月には効きません",
                           f"片付けても、{prev}月の表と引き受けの記録は残ります"],
                 "buttons": [["archive", "履歴へ片付ける（おすすめ）"], ["extend", "期間を延ばす"]]}
+    if c.reason == "overlap":
+        return {"label": "同じことを決めている2件", "title": f"{c.name}　と　{c.partner_name}",
+                "lines": [f"{c.months}か月続けて、どちらか片方を外して作り直しても、表は両方のルールどおりでした",
+                          "片方を片付けると、もう片方だけで守ります。両方を一度に外すと守りが消えるので、片方だけ選んでください"],
+                "buttons": [["archive", f"「{c.name}」を片付ける"], ["archive_partner", f"「{c.partner_name}」を片付ける"],
+                            ["keep", "両方使う"]]}
     if c.reason == "quiet":
-        return {"label": "無くても同じだった", "title": c.name,
-                "lines": [f"{c.months}か月続けて、このルールを外して作り直しても、表はこのルールどおりでした",
+        what = f"この{1 + len(c.group)}件のルール" if c.group else "このルール"
+        first = (f"{c.months}か月続けて、{what}が当てはまる人と日がありませんでした（表にいない人のルールなど）"
+                 if c.no_scene else f"{c.months}か月続けて、このルールを外して作り直しても、表はこのルールどおりでした")
+        return {"label": "当てはまる日が無い" if c.no_scene else "無くても同じだった", "title": c.name,
+                "lines": [first,
                           f"片付けると、表を作る時に考えるルールが1件減ります。{prev}月までの表は変わらず、"
                           "また要る時は一言で足し直せます"],
-                "buttons": [["archive", "履歴へ片付ける"], ["keep", "今月も使う"]]}
+                "buttons": [["archive", f"{1 + len(c.group)}件とも履歴へ片付ける" if c.group else "履歴へ片付ける"],
+                            ["keep", "今月も使う"]]}
     # 当番（待機など）の中身を話して直すのは、まだ作っていない。［変える］を出さない
     buttons = [["keep", "今月も使う"]] + ([] if c.kind == "layer" else [["change", "変える（話す）"]])
     return {"label": "先月増えた", "title": c.name, "lines": ["今月も使いますか"], "buttons": buttons}
 
 
-ANSWER_WORDS = {"archive": "片付けた", "extend": "延ばした", "keep": "今月も使う", "change": "変えた"}
+ANSWER_WORDS = {"archive": "片付けた", "extend": "延ばした", "keep": "今月も使う", "change": "変えた",
+                "archive_partner": "もう片方を片付けた"}
 
 
 class NextFlow:
@@ -55,7 +66,8 @@ class NextFlow:
     def review(self) -> dict:
         self._ensure()
         led = self.store.ledger()
-        v = review_cards(led, self.ny, self.nm, *self._quiet())
+        v = review_cards(led, self.ny, self.nm, *self._quiet(), overlap=overlap_streaks(self.store, self.ny, self.nm),
+                         no_scene=no_scene_ids(self.store, self.ny, self.nm))
         cards = []
         for c in v["cards"]:
             d = card_lines(c, self.nm, self.month)
@@ -72,7 +84,7 @@ class NextFlow:
                         f"（残り{max(n - v['cursor'] - 1, 0)}件）" if v["cursor"] < n else
                         f"{self.nm}月の表を作る前に　見直しは済みました",
                 "unchanged": f"変更なし {v['unchanged']}件（今回見直すのは、期限が来たルール・先月増えたルール・"
-                             f"{self._quiet()[1]}か月続けて静かなルールだけ）",
+                             "片付けの候補（無くても同じだった・同じことを決めている）だけ）",
                 "once": f"{self.month}月だけの頼み{v['once']}件は、{self.nm}月へ引き継ぎません",
                 "quiet_more": (f"静かなルールはほかに{v['quiet_more']}件あります。一度に見るのは"
                                f"{self._quiet()[2]}件までにして、来月また出します") if v["quiet_more"] else "",
@@ -87,7 +99,8 @@ class NextFlow:
     def answer(self, rule_id: str, what: str, new_until: str | None = None) -> dict:
         q, qm, qp = self._quiet()
         answer(self.store, self.ny, self.nm, rule_id, what, new_until=new_until, quiet=q, quiet_months=qm,
-               quiet_per_month=qp)
+               quiet_per_month=qp, overlap=overlap_streaks(self.store, self.ny, self.nm),
+               no_scene=no_scene_ids(self.store, self.ny, self.nm))
         return self.review()
 
     def change(self, rule_id: str, text: str, reader) -> dict:

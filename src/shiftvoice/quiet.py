@@ -119,7 +119,25 @@ def _prev(year: int, month: int) -> tuple[int, int]:
     return (year - 1, 12) if month == 1 else (year, month - 1)
 
 
-def streaks(store: Store, year: int, month: int) -> dict[str, int]:
+def no_scene_ids(store: Store, year: int, month: int) -> set[str]:
+    """前の月に、当てはまる場面が1つも無かった札（表にいない人のルールなど）。見直しで先に出す（迷わず決められる）。"""
+    y, m = _prev(year, month)
+    last = read_json(_path(store, y, m)) or {"rules": {}}
+    return {rid for rid, v in last["rules"].items() if v.get("no_scene")}
+
+
+def overlap_streaks(store: Store, year: int, month: int) -> dict[str, int]:
+    """前の月に「重なり」だった札の、続けて静か・重なりだった月の数。重なりの札は1件ずつ外せば表はそれどおり
+    （片方は外せる）が、同じことを決める相手と一緒には外せない。"""
+    y, m = _prev(year, month)
+    last = read_json(_path(store, y, m))
+    if not last:
+        return {}
+    lap = {rid for rid, v in last["rules"].items() if v.get("state") == "overlap"}
+    return {rid: n for rid, n in streaks(store, year, month, ("quiet", "overlap")).items() if rid in lap}
+
+
+def streaks(store: Store, year: int, month: int, states: tuple[str, ...] = ("quiet",)) -> dict[str, int]:
     """対象の月（year, month）の前の月までさかのぼって、続けて静かだった月の数（札ごと）。
     記録の無い月で数えるのを止める（測っていない月を静かとは数えない）。"""
     out: dict[str, int] = {}
@@ -129,7 +147,7 @@ def streaks(store: Store, year: int, month: int) -> dict[str, int]:
         data = read_json(_path(store, y, m))
         if not data:
             break
-        quiet = {rid for rid, v in data["rules"].items() if v.get("state") == "quiet"}
+        quiet = {rid for rid, v in data["rules"].items() if v.get("state") in states}
         alive = quiet if alive is None else alive & quiet
         if not alive:
             break

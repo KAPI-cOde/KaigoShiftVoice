@@ -133,3 +133,49 @@ def test_q9_quiet_dropped_when_cover_expires(st):
     v = review_cards(st.ledger(), 2026, 12, streaks(st, 2026, 12), 3)
     assert [c.rule_id for c in v["cards"] if c.reason == "quiet"] == []
     assert [c.rule_id for c in v["cards"] if c.reason == "expired"] == ["r001"]
+
+
+def test_q10_overlap_pair_card(st):
+    """同じことを決めている2件は1枚の札にして、片方だけ片付けられる。両方使うと答えたら、2件とも当分聞かない。"""
+    _add(st, "g1", "千葉さん 夜勤は月6回まで", "count", {"shifts": ["夜"], "max": 6}, ["千葉"], flex="fixed")
+    _add(st, "g2", "千葉さん 夜勤は月7回まで", "count", {"shifts": ["夜"], "max": 7}, ["千葉"], flex="fixed")
+    for ym in ("2026-09", "2026-10"):
+        _fake(st, ym, {"g1": "quiet", "g2": "quiet"})
+    _fake(st, "2026-11", {"g1": "overlap", "g2": "overlap"})
+    from shiftvoice.quiet import overlap_streaks
+    lap = overlap_streaks(st, 2026, 12)
+    assert lap == {"g1": 3, "g2": 3}
+    v = review_cards(st.ledger(), 2026, 12, streaks(st, 2026, 12), 3, 5, lap)
+    cards = [(c.rule_id, c.reason, c.partner) for c in v["cards"]]
+    assert cards == [("g2", "overlap", "g1")]       # 先に出す片付けはゆるい方（月7回まで）
+    answer(st, 2026, 12, "g2", "archive_partner", quiet=streaks(st, 2026, 12), quiet_months=3, overlap=lap)
+    now = st.ledger().rules_at()
+    assert "g2" in now and "g1" not in now
+
+
+def test_q11_overlap_keep_suppresses_both(st):
+    _add(st, "g1", "千葉さん 夜勤は月6回まで", "count", {"shifts": ["夜"], "max": 6}, ["千葉"], flex="fixed")
+    _add(st, "g2", "千葉さん 夜勤は月7回まで", "count", {"shifts": ["夜"], "max": 7}, ["千葉"], flex="fixed")
+    for ym in ("2026-09", "2026-10", "2026-11"):
+        _fake(st, ym, {"g1": "overlap", "g2": "overlap"})
+    from shiftvoice.quiet import overlap_streaks
+    answer(st, 2026, 12, "g2", "keep", quiet={}, quiet_months=3, overlap=overlap_streaks(st, 2026, 12))
+    for ym in ("2026-12", "2027-01"):
+        _fake(st, ym, {"g1": "overlap", "g2": "overlap"})
+    assert review_cards(st.ledger(), 2027, 2, {}, 3, 5, overlap_streaks(st, 2027, 2))["cards"] == []
+
+
+def test_q12_absent_person_rules_in_one_card(st):
+    """表にいない人のルールは、人ごとに1枚にまとめ、1回で全部片付けられる。"""
+    _add(st, "g1", "森田さん 夜勤は月3回まで", "count", {"shifts": ["夜"], "max": 3}, ["森田"])
+    _add(st, "g2", "森田さん 日曜は早番に入れない", "weekday", {"weekdays": ["sun"], "not_in": ["早"]}, ["森田"])
+    for ym in ("2026-09", "2026-10", "2026-11"):
+        atomic_write_json(_path(st, int(ym[:4]), int(ym[5:])),
+                          {"month": ym, "rules": {k: {"state": "quiet", "no_scene": True} for k in ("g1", "g2")}})
+    from shiftvoice.quiet import no_scene_ids
+    ns = no_scene_ids(st, 2026, 12)
+    v = review_cards(st.ledger(), 2026, 12, streaks(st, 2026, 12), 3, 5, None, ns)
+    assert [(c.rule_id, c.group) for c in v["cards"]] == [("g1", ["g2"])]
+    answer(st, 2026, 12, "g1", "archive", quiet=streaks(st, 2026, 12), quiet_months=3, no_scene=ns)
+    now = st.ledger().rules_at()
+    assert "g1" not in now and "g2" not in now
