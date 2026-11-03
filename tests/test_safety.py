@@ -175,8 +175,25 @@ def test_unknown_person_still_stops_next_to_family_word(sess):
     assert unknown == ["森田"]
 
 
-@pytest.mark.parametrize("text", ["よし子さん、12日は休み", "岡田さんとはな子さん、12日は休み", "まご孫さん、12日は休み", "なお子さん、12日は休み", "旦那さんのなお子さん、12日休み"])
+@pytest.mark.parametrize("text", ["よし子さん、12日は休み", "岡田さんとはな子さん、12日は休み", "まご孫さん、12日は休み", "なお子さん、12日は休み", "旦那さんのなお子さん、12日休み",
+                                  "とも子さん、12日は休み", "もも子さん、12日は休み", "かの子さん、12日は休み",
+                                  "とお子さん、12日は休み", "12日はとも子さんが休み"])
 def test_hiragana_name_ending_in_family_word_still_stops(sess, text):
     """ひらがなに家族の言葉が続く名前（よし子さん）は名前の一部。名簿にない名前として止め、伏せずに送らない。"""
     _, unknown = Masker(sess.store.staff(), sess.store.facility()).mask(text)
     assert unknown, text
+
+
+def test_every_not_name_word_after_hiragana_still_stops(sess):
+    """名前でない語の一覧（NOT_NAMES・FAMILY_WORDS）のどの語でも、前にひらがなの名前が付けば名前の一部として止める。
+    一覧を広げるたびに「〇〇＋一覧の語＋さん」の実名を伏せずに送る抜け道ができた（失敗の一覧14、2026-11-03 の家族の言葉）。
+    一覧に語を足したら、この試験が全部の語で確かめる。"""
+    from shiftvoice.names import FAMILY_WORDS, NOT_NAMES
+    m = Masker(sess.store.staff(), sess.store.facility())
+    leaks = []
+    for w in sorted(NOT_NAMES | FAMILY_WORDS):
+        for head in ("よし", "なお", "まご", "とも", "かの", "とお", "はお"):
+            _, unknown = m.mask(f"{head}{w}さん、12日は休み")
+            if not unknown:
+                leaks.append(head + w)
+    assert leaks == [], leaks

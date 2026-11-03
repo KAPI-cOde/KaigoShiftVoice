@@ -22,7 +22,37 @@ NOT_NAMES = {"皆", "母", "父", "お母", "お父", "家族", "利用者", "�
 # 前が「お」「ご」か、文の頭・区切りの時だけ名前でないとみなす。「よし子さん」「はな子さん」のように前にひらがなが
 # 続く時は名前の一部なので、今どおり名簿にない名前として止める（伏せずに送らないため。自動のセキュリティレビューの指摘）
 FAMILY_WORDS = {"子", "孫", "旦那", "主人", "妻", "夫", "嫁", "兄", "姉", "弟", "妹", "祖母", "祖父", "親"}
-FAMILY_BEFORE = set("おご、。,.・ 　のとがはもへに（(「")
+SEPARATORS = set("、。,.・ 　（(「」)）!！?？")
+PARTICLES = set("はがのにをともへでや")
+
+
+def _hard_boundary(t: str, j: int) -> bool:
+    """t[j] の直後で、ひらがなの名前が続いていないと言える所か。文の頭（j < 0）は含めない。
+    漢字・カタカナ・数字・句読点の後、または「〇〇さん」などの呼び方の終わり。迷ったら False（止める側）。"""
+    if j < 0:
+        return False
+    c = t[j]
+    if c in SEPARATORS or not re.fullmatch(r"[ぁ-ゖ]", c):
+        return True
+    return bool(re.search(HONORIFIC + "$", t[:j + 1]))
+
+
+def _not_name_here(t: str, i: int) -> bool:
+    """t[i:] から始まる名前でない語（子・母・皆など）が、ここでは名前の一部でないと言えるか（fail closed）。
+    （例）12日の後の「皆」、「岡田さんの」の後の「息子」、「12日は」の後の「お子」は名前でない。「よし子さん」「とも子さん」「かの子さん」
+    「なお子さん」「とお子さん」は、名前の一部かもしれないので名前でないとは言わない（伏せずに送らない）。"""
+    if i == 0 or (t[i - 1] in SEPARATORS) or _hard_boundary(t, i - 1):
+        return True                                   # 文の頭・区切り・漢字などの直後
+    prev = t[i - 1]
+    if prev in "おご":
+        if i - 2 < 0 or t[i - 2] in SEPARATORS or _hard_boundary(t, i - 2):
+            return True                               # 「お子さん」で始まる・「12日お子さん」
+        if t[i - 2] in PARTICLES and _hard_boundary(t, i - 3):
+            return True                               # 「12日はお子さん」（助詞の前が区切り）
+        return False
+    if prev in PARTICLES and _hard_boundary(t, i - 2):
+        return True                                   # 呼び方の後の助詞に続く語（岡田さんの＋息子）
+    return False
 
 
 @dataclass
@@ -80,14 +110,11 @@ class Masker:
         unknown = []
         for mm in re.finditer(r"([一-龥々ァ-ヶA-Za-z]{1,6})" + HONORIFIC, t):
             m = mm.group(1)
-            if re.fullmatch(r"職員\d{0,2}", m) or m in NOT_NAMES:
+            if re.fullmatch(r"職員\d{0,2}", m):
                 continue
-            i = mm.start(1)
-            prev = t[i - 1] if i > 0 else ""
-            prev2 = t[i - 2] if i > 1 else ""
-            if prev and prev in "おご" and re.fullmatch(r"[ぁ-ゖ]", prev2 or "x") and prev2 not in "はがのにをともへでや":
-                prev = "あ"   # 「なお子さん」「まご孫さん」の「お」「ご」は名前の一部（前が助詞でないひらがな）
-            if m in FAMILY_WORDS and (prev == "" or prev in FAMILY_BEFORE):
+            # 名前でない語も家族の言葉も、前が区切りの時だけ名前でないとみなす（前がひらがなの名前なら名前の一部。
+            # 一覧の全部の語を tests/test_safety.py::test_every_not_name_word_after_hiragana_still_stops が確かめる）
+            if (m in FAMILY_WORDS or m in NOT_NAMES) and _not_name_here(t, mm.start(1)):
                 continue
             unknown.append(m)
         return t, list(self.leftover) + unknown
