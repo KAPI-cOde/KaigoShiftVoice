@@ -1,0 +1,202 @@
+[
+ {
+  "reason": "腰を痛めている",
+  "temporary": true,
+  "why": "回復の経過を確かめたい"
+ },
+ {
+  "reason": "膝の手術後のリハビリ中",
+  "temporary": true,
+  "why": "リハビリは終わる見込み"
+ },
+ {
+  "reason": "子どもの保育園の送り",
+  "temporary": false,
+  "why": "数年続き3か月では変わらない"
+ },
+ {
+  "reason": "子どもが小学校に入学した",
+  "temporary": true,
+  "why": "慣れるまでの一時的な事情"
+ },
+ {
+  "reason": "介護福祉士の試験勉強中",
+  "temporary": true,
+  "why": "試験が終われば終わる"
+ },
+ {
+  "reason": "通信制の学校に通っている",
+  "temporary": false,
+  "why": "卒業まで年単位で続く"
+ },
+ {
+  "reason": "親の介護が始まった",
+  "temporary": false,
+  "why": "長期化しやすい"
+ },
+ {
+  "reason": "家族が入院している",
+  "temporary": true,
+  "why": "退院で状況が変わる"
+ },
+ {
+  "reason": "持病で月1回通院する",
+  "temporary": false,
+  "why": "継続的な通院"
+ },
+ {
+  "reason": "妊娠中",
+  "temporary": true,
+  "why": "出産まで、その後も変わる"
+ },
+ {
+  "reason": "産後の復帰したばかり",
+  "temporary": true,
+  "why": "育児に慣れると変わる"
+ },
+ {
+  "reason": "年齢的に夜勤がつらい",
+  "temporary": false,
+  "why": "年齢は戻らない"
+ },
+ {
+  "reason": "ある職員と相性が悪い",
+  "temporary": true,
+  "why": "状況が変わりうるので確認"
+ },
+ {
+  "reason": "新人で夜勤に慣れていない",
+  "temporary": true,
+  "why": "慣れれば解消する"
+ },
+ {
+  "reason": "通勤が片道1時間半",
+  "temporary": false,
+  "why": "転居しない限り続く"
+ },
+ {
+  "reason": "引っ越し前で通勤が遠い",
+  "temporary": true,
+  "why": "転居で解消する"
+ },
+ {
+  "reason": "車の修理中で電車通勤",
+  "temporary": true,
+  "why": "修理で終わる"
+ },
+ {
+  "reason": "睡眠が浅く体調が不安定",
+  "temporary": true,
+  "why": "改善したか確かめたい"
+ },
+ {
+  "reason": "うつで休職から復帰した",
+  "temporary": true,
+  "why": "経過確認が必要"
+ },
+ {
+  "reason": "腱鞘炎の疑いがある",
+  "temporary": true,
+  "why": "治療で変わる"
+ },
+ {
+  "reason": "宗教上の行事がある",
+  "temporary": false,
+  "why": "継続する決まり"
+ },
+ {
+  "reason": "他の職場とのダブルワーク",
+  "temporary": false,
+  "why": "本人の働き方の条件"
+ },
+ {
+  "reason": "週末は別の学校の授業",
+  "temporary": true,
+  "why": "講座の期間で終わる"
+ },
+ {
+  "reason": "配偶者の転勤待ち",
+  "temporary": true,
+  "why": "転勤で状況が変わる"
+ },
+ {
+  "reason": "夫が単身赴任中",
+  "temporary": true,
+  "why": "赴任が終われば変わる"
+ },
+ {
+  "reason": "ひとり親で夕方に迎えがある",
+  "temporary": false,
+  "why": "状況が変わらない"
+ },
+ {
+  "reason": "洗剤のアレルギーがある",
+  "temporary": false,
+  "why": "体質で続く"
+ },
+ {
+  "reason": "腰痛が持病",
+  "temporary": false,
+  "why": "慢性で続く"
+ },
+ {
+  "reason": "夜勤明けに体調を崩しやすい",
+  "temporary": false,
+  "why": "体質的で継続"
+ },
+ {
+  "reason": "夜道が不安と本人が希望",
+  "temporary": false,
+  "why": "長年の本人の希望"
+ },
+ {
+  "reason": "子どもが受験期",
+  "temporary": true,
+  "why": "受験が終われば終わる"
+ },
+ {
+  "reason": "親の通院に付き添う",
+  "temporary": false,
+  "why": "通院は長く続く"
+ },
+ {
+  "reason": "資格取得の実習期間中",
+  "temporary": true,
+  "why": "実習が終われば終わる"
+ },
+ {
+  "reason": "利用者との関係で配置調整",
+  "temporary": true,
+  "why": "関係の変化を確かめたい"
+ },
+ {
+  "reason": "ユニットに慣れるまで",
+  "temporary": true,
+  "why": "慣れれば解消する"
+ },
+ {
+  "reason": "家族の看取りの時期",
+  "temporary": true,
+  "why": "時期が過ぎれば変わる"
+ },
+ {
+  "reason": "視力が落ち細かい作業が苦手",
+  "temporary": false,
+  "why": "回復は見込めない"
+ },
+ {
+  "reason": "入浴介助が苦手",
+  "temporary": false,
+  "why": "個人の特性で続く"
+ },
+ {
+  "reason": "週3日勤務の契約",
+  "temporary": false,
+  "why": "契約上の働き方"
+ },
+ {
+  "reason": "夜勤の仮眠が取れない",
+  "temporary": true,
+  "why": "環境や体調の変化を確かめたい"
+ }
+]
