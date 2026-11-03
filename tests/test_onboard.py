@@ -136,7 +136,7 @@ def test_infer_夜明が9割に満たなければ作らない():
 def test_create_施設を作って12月の表ができる(tmp_path, proposal):
     root = tmp_path / "komorebi"
     c = create_facility(proposal, root, name="こもれびの家", next_year=2026, next_month=12)
-    assert c.root == root and c.staff_count == 8 and c.rule_count == 10
+    assert c.root == root and c.staff_count == 8 and c.rule_count == 11
     assert c.next_table_made and c.seconds >= 0
     for f in ("facility.json", "staff.json", "ledger.json", "months/2026-11.json", "months/2026-12.json"):
         assert (root / f).exists()
@@ -149,7 +149,7 @@ def test_create_施設を作って12月の表ができる(tmp_path, proposal):
     from shiftvoice.onboard import HOLIDAYS
     assert s["holidays"] == HOLIDAYS and s["holidays"]["2027-01"] == [1, 11]   # 翌々月以降も入る
     led = store.ledger()
-    assert led.rev == 10 and led.txs[0]["meta"]["by"] == "作成者"
+    assert led.rev == 11 and led.txs[0]["meta"]["by"] == "作成者"
     nov, dec = store.month(2026, 11), store.month(2026, 12)
     assert nov.table == proposal.table and nov.prev_tail == {}
     assert dec.prev_tail == {k: v[-5:] for k, v in proposal.table.items()}
@@ -210,9 +210,9 @@ def rule_map(pr):
 
 
 def assert_komorebi_rules(pr):
-    """見本と同じ表なので、見つかるルールも見本と同じ10件（日勤は下限と上限の2本）。"""
+    """見本と同じ表なので、見つかるルールも見本と同じ11件（日勤は下限と上限の2本、夜勤の回数を含む）。"""
     by = rule_map(pr)
-    assert len(pr.rules) == 10
+    assert len(pr.rules) == 11 and by["夜勤の回数（夜勤に入れる人）"]["params"]["capable_only"]
     assert by["早番の人数"]["params"] == {"shifts": ["早"], "scope": "all", "op": "==", "n": 1}
     assert by["夜勤の人数"]["params"]["n"] == 1 and by["遅番の人数"]["params"]["n"] == 1
     assert by["公休の数"]["params"] == {"shifts": ["公"], "min": 9, "max": 9}
@@ -342,7 +342,7 @@ def test_貼り付け9_ユニットごとの人数(tmp_path):
     for nm in ("早番の人数", "遅番の人数", "夜勤の人数"):
         assert by[nm]["params"]["scope"] == "each_unit" and by[nm]["params"]["n"] == 1
     assert by["公休の数"]["params"] == {"shifts": ["公"], "min": 9, "max": 9}
-    assert len(pr.rules) == 10
+    assert len(pr.rules) == 11
     c, dec = made_next(tmp_path, pr)
     assert c.next_table_made and len(dec.table) == 16
     assert Store(tmp_path / "f").facility().units == ["東", "西"]
@@ -752,10 +752,12 @@ def test_違い_ユニットごとの人数の幅():
     assert not [d for d in compare_months(cur, nxt, ST5, 11, 12) if d["kind"] == "unit_count_range"]
 
 
-def test_作った後の違い_見本の月では夜勤の回数と曜日の形が出る(tmp_path, proposal):
+def test_作った後の違い_見本の月では曜日の形が出て夜勤の回数は出ない(tmp_path, proposal):
+    """夜勤の回数のルールを貼った表から見つけるので、夜勤の偏りは出ない。土日と平日の人数の違いはルールにせず
+    （計算が重くなるため）、違いに出して一言で直す。"""
     c, _ = made_next(tmp_path, proposal)
     kinds = {d["kind"] for d in c.diffs}
-    assert c.next_table_made and {"weekday_shape", "night_count"} <= kinds
+    assert c.next_table_made and "weekday_shape" in kinds and "night_count" not in kinds
     assert all("札" not in d["text"] and "決まり" not in d["text"] for d in c.diffs)
 
 

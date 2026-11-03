@@ -531,6 +531,15 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
             add(f"{names[sym]}の人数（上限）", "coverage", "negotiable",
                 {"shifts": [sym], "scope": scope, "op": "<=", "n": hi},
                 f"{month}月の{names[sym]}は日によって{where}{lo}〜{hi}人。いちばん多い日の{hi}人を上限にした")
+    # 土日祝と平日の人数の違いはルールにしない（足すと表を作る計算が10倍ほど重くなった。2026-11-03）。
+    # 違いは作った後の画面に赤で出し、一言（「土日の日勤は1人に」）で直す
+    # 夜勤の回数。夜勤をした人の回数の幅を、夜勤に入れる人の月の回数にする（ひだまりの「夜勤の回数」と同じ形）
+    nights = [sum(1 for x in row if x in night_syms) for row in table.values()]
+    did = [k for k in nights if k > 0]
+    if night_syms and did:
+        add("夜勤の回数（夜勤に入れる人）", "count", "operational",
+            {"shifts": list(night_syms), "min": min(did), "max": max(did), "capable_only": True},
+            f"{month}月に夜勤をした人は{min(did)}〜{max(did)}回")
     # 記号の最初の1文字が同じ2つ（早1と早2など）は、合わせた人数が毎日同じなら、その合計も守る
     groups: dict[str, list[str]] = {}
     for sym in ordinary:
