@@ -368,7 +368,7 @@ class Session:
         msg = f"{label}を取り消しますか。表のマスはそのままです"
         offer = {"cancel": [{"who": [w], "days": days, "shift": sym}], "rules": [], "changes": [],
                  "summary": f"{label}を取り消す。表のマスはそのまま", "done": f"{label}の指定を外しました",
-                 "base_rev": led.rev}
+                 "message": msg, "base_rev": led.rev}   # 開き直した時も同じ文で出す
         self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
         return Reply("fix_offer", u["id"], msg, summary=offer["summary"])
 

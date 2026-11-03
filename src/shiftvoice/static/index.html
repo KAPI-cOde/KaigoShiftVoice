@@ -1273,7 +1273,7 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
                message: "その日の待機の" + o.duty + "さんに頼む案です（" + (o.changes || []).length + "マス）",
                summary: "公休　" + pr(o.requester) + "　" + pr(o.duty) }
              : { kind: "fix_offer", uid: of.id, changes: o.changes || [],
-                 message: (o.summary || "") + "。" + (o.changes || []).length + "マス動きます" };
+                 message: o.message || ((o.summary || "") + "。" + (o.changes || []).length + "マス動きます") };
     (offerR.changes).forEach(function (c) { glowCells[c.staff + "|" + c.day] = true; });
     renderTable();
     renderReply(offerR);
