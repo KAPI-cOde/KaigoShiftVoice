@@ -43,9 +43,14 @@ def view(store: Store, year: int, month: int) -> dict:
             groups["overlap"].append({"loose": c.rule_id, "strict": c.partner, "known": c.loose,
                                       "loose_name": c.name, "strict_name": c.partner_name, "months": c.months})
         elif c.reason == "quiet":
-            groups["quiet"].append({"id": c.rule_id, "name": c.name, "months": c.months})
+            groups["quiet"].append({"id": c.rule_id, "name": c.name, "months": c.months, "who": _who(rules[c.rule_id])})
         elif c.reason == "aged":
-            groups["aged"].append({"id": c.rule_id, "name": c.name, "months": c.months, "reason": c.reason_text})
+            groups["aged"].append({"id": c.rule_id, "name": c.name, "months": c.months, "reason": c.reason_text,
+                                   "who": _who(rules[c.rule_id])})
+    # 人ごとに並べる（名簿の順、全員のルールは最後）。人の名前の方がルールと結びつけやすい（作者 2026-11-04）
+    order = {s.name: i for i, s in enumerate(store.staff())}
+    for k in ("quiet", "aged"):
+        groups[k].sort(key=lambda x: (x["who"] == "全員", order.get(x["who"].split("・")[0], 999), x["name"]))
     n = (sum(len(g["ids"]) for g in groups["absent"]) + len(groups["overlap"]) + len(groups["quiet"])
          + len(groups["aged"]))
     total = sum(1 for r in led.rules_at().values() if r.scope == "rule")
@@ -53,6 +58,10 @@ def view(store: Store, year: int, month: int) -> dict:
             "head": (f"ルールは{total}件。このうち{n}件は、{qm}か月のあいだ表を作るのに効いていなかったか、"
                      "一時的な事情で足したルールです。片付けると一覧が読みやすくなります（あとから一覧の"
                      "「片付けたルール」で戻せます）") if n else f"ルールは{total}件。いま片付けの候補はありません"}
+
+
+def _who(r) -> str:
+    return "・".join(r.who) if r.who else "全員"
 
 
 def apply(store: Store, year: int, month: int, archive: list[str], keep: list[str], now: dt.datetime) -> dict:

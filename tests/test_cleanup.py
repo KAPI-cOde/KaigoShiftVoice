@@ -75,3 +75,19 @@ def test_c4_stale_ids_refused(st):
     from shiftvoice.ledger import LedgerError
     with pytest.raises(LedgerError):
         apply(st, 2026, 11, ["g3"], [], NOW)
+
+
+def test_c5_quiet_listed_by_person(st):
+    """無くても同じだったルールは人ごと（名簿の順、全員のルールは最後）に並べる。"""
+    from shiftvoice.cleanup import view
+    led = st.ledger()
+    for rid, who in (("q1", "千葉"), ("q2", "青木"), ("q3", None), ("q4", "千葉")):
+        led.append("add", rule={"id": rid, "name": f"ルール{rid}", "kind": "count", "flex": "negotiable",
+                                "params": {"shifts": ["早"], "max": 20}, "who": [who] if who else None, "when": None,
+                                "scope": "rule", "meta": {"said": "x"}}, op_id=f"t-{rid}", frm="2026-06-01")
+    st.save_ledger(led)
+    for ym in ("2026-09", "2026-10", "2026-11"):
+        atomic_write_json(_path(st, int(ym[:4]), int(ym[5:])), {"month": ym, "rules": {
+            k: {"state": "quiet"} for k in ("q1", "q2", "q3", "q4")}})
+    q = view(st, 2026, 11)["groups"]["quiet"]
+    assert [(x["who"], x["id"]) for x in q] == [("青木", "q2"), ("千葉", "q1"), ("千葉", "q4"), ("全員", "q3")]
