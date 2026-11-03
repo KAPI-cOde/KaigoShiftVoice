@@ -179,3 +179,17 @@ def test_q12_absent_person_rules_in_one_card(st):
     answer(st, 2026, 12, "g1", "archive", quiet=streaks(st, 2026, 12), quiet_months=3, no_scene=ns)
     now = st.ledger().rules_at()
     assert "g1" not in now and "g2" not in now
+
+
+def test_q13_overlap_card_says_which_is_safe(st):
+    """重なりの札は、ゆるい方を片付けても厳しい方で守られると書き、そのボタンにおすすめを付ける（読み手2人が迷った）。"""
+    from shiftvoice.nextflow import card_lines
+    _add(st, "g1", "千葉さん 夜勤は月6回まで", "count", {"shifts": ["夜"], "max": 6}, ["千葉"], flex="fixed")
+    _add(st, "g2", "千葉さん 夜勤は月7回まで", "count", {"shifts": ["夜"], "max": 7}, ["千葉"], flex="fixed")
+    for ym in ("2026-09", "2026-10", "2026-11"):
+        _fake(st, ym, {"g1": "overlap", "g2": "overlap"})
+    from shiftvoice.quiet import overlap_streaks
+    c = review_cards(st.ledger(), 2026, 12, {}, 3, 5, overlap_streaks(st, 2026, 12))["cards"][0]
+    d = card_lines(c, 12, 11)
+    assert "ゆるい方の「千葉さん 夜勤は月7回まで」を片付けても、厳しい方の「千葉さん 夜勤は月6回まで」で守られます" in d["lines"][1]
+    assert d["buttons"][0] == ["archive", "「千葉さん 夜勤は月7回まで」を片付ける（おすすめ）"]

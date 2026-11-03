@@ -439,7 +439,7 @@ function renderGrouped(box, list) {
     if (gone.length) {
       var gn = {};
       gone.forEach(function (c) { c.who.forEach(function (w) { gn[w] = true; }); });
-      box.appendChild(el("div", "grpnote", "うち、表にいない人（" + Object.keys(gn).join("・") + "さん）のルールが" +
+      box.appendChild(el("div", "grpnote", "うち、今の名簿にいない人（" + Object.keys(gn).join("・") + "さん）のルールが" +
         gone.length + "件あります。毎月の見直しで片付けの候補に出します"));
     }
   }
@@ -573,7 +573,7 @@ function renderReplyBody(r) {
       rp.appendChild(b);
     });
     box.appendChild(rp);
-    box.appendChild(el("div", "q2", "置き換える＝前のルールを外して、いま言ったルールだけにします。前のルールは［ひとつ戻す］で戻せます"));
+    box.appendChild(el("div", "q2", "置き換える＝前のルールを外して、いま言ったルールだけにします。前のルールは［ひとつ戻す］で戻せます。別に足す＝前のルールも残して、両方を守ります"));
     return;
   }
   if (r.kind === "error") {
@@ -850,7 +850,8 @@ function get12() { return fetch("/api/next/review").then(function (r) { return r
 
 function openReview() {
   show12(true);
-  BR = null; adopted = false;
+  BR = null; adopted = false; R = null;
+  renderReview();   // 前の計算が終わるまで待つことがあるので、待つ間は一言出す（白い画面にしない）
   get12().then(function (r) { R = r; detailOpen = false; extOpen = false; chOpen = false; rvErr = ""; renderReview(); });
 }
 document.getElementById("to12").addEventListener("click", openReview);
@@ -881,7 +882,7 @@ function renderReview() {
   box.textContent = "";
   document.getElementById("v12sub").textContent = "";
   var wrap = el("div", "rv-wrap");
-  if (!R) { box.appendChild(wrap); return; }
+  if (!R) { wrap.appendChild(el("div", "small", "見直すルールを読み込んでいます")); box.appendChild(wrap); return; }
   var title = R.done ? R.month + "月の表を作る前に　見直したルール" : R.head;
   wrap.appendChild(el("h1", "", title));
   if (R.unchanged) wrap.appendChild(el("div", "small", R.unchanged));

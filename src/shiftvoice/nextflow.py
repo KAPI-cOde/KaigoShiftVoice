@@ -32,16 +32,18 @@ def card_lines(c, month: int, prev: int) -> dict:
     if c.reason == "overlap":
         return {"label": "同じことを決めている2件", "title": f"{c.name}　と　{c.partner_name}",
                 "lines": [f"{c.months}か月続けて、どちらか片方を外して作り直しても、表は両方のルールどおりでした",
-                          "片方を片付けると、もう片方だけで守ります。両方を一度に外すと守りが消えるので、片方だけ選んでください"],
-                "buttons": [["archive", f"「{c.name}」を片付ける"], ["archive_partner", f"「{c.partner_name}」を片付ける"],
-                            ["keep", "両方使う"]]}
+                          (f"ゆるい方の「{c.name}」を片付けても、厳しい方の「{c.partner_name}」で守られます。"
+                           if c.loose else "片方を片付けると、もう片方だけで守ります。")
+                          + "両方を一度に外すと守りが消えるので、片方だけ選んでください"],
+                "buttons": [["archive", f"「{c.name}」を片付ける" + ("（おすすめ）" if c.loose else "")],
+                            ["archive_partner", f"「{c.partner_name}」を片付ける"], ["keep", "両方使う"]]}
     if c.reason == "quiet":
         what = f"この{1 + len(c.group)}件のルール" if c.group else "このルール"
-        first = (f"{c.months}か月続けて、{what}が当てはまる人と日がありませんでした（表にいない人のルールなど）"
+        first = (f"{c.months}か月続けて、{what}が当てはまる人と日がありませんでした（今の名簿にいない人のルールなど）"
                  if c.no_scene else f"{c.months}か月続けて、このルールを外して作り直しても、表はこのルールどおりでした")
         return {"label": "当てはまる日が無い" if c.no_scene else "無くても同じだった", "title": c.name,
                 "lines": [first,
-                          f"片付けると、表を作る時に考えるルールが1件減ります。{prev}月までの表は変わらず、"
+                          f"片付けると、表を作る時に考えるルールが{1 + len(c.group)}件減ります。{prev}月までの表は変わらず、"
                           "また要る時は一言で足し直せます"],
                 "buttons": [["archive", f"{1 + len(c.group)}件とも履歴へ片付ける" if c.group else "履歴へ片付ける"],
                             ["keep", "今月も使う"]]}
@@ -78,13 +80,13 @@ class NextFlow:
         def word(c):
             a = v["answers"][c["rule_id"]]
             return ANSWER_WORDS[c["answer"]] + (f"（{a['new_name']}）" if a.get("new_name") else "")
-        summary = [f"{c['title']} → {word(c)}" for c in cards if c["answer"]]
+        summary = [f"{c['title']} → {'両方使う' if c['reason'] == 'overlap' and c['answer'] == 'keep' else word(c)}"
+                   for c in cards if c["answer"]]
         return {"month": self.nm, "cards": cards, "cursor": v["cursor"], "total": n,
                 "head": f"{self.nm}月の表を作る前に　見直すルール {n}件中{min(v['cursor'] + 1, n)}件目"
                         f"（残り{max(n - v['cursor'] - 1, 0)}件）" if v["cursor"] < n else
                         f"{self.nm}月の表を作る前に　見直しは済みました",
-                "unchanged": f"変更なし {v['unchanged']}件（今回見直すのは、期限が来たルール・先月増えたルール・"
-                             "片付けの候補（無くても同じだった・同じことを決めている）だけ）",
+                "unchanged": f"変更なし {v['unchanged']}件（見直すのは、期限が来た・先月増えた・片付けの候補だけ）",
                 "once": f"{self.month}月だけの頼み{v['once']}件は、{self.nm}月へ引き継ぎません",
                 "quiet_more": (f"静かなルールはほかに{v['quiet_more']}件あります。一度に見るのは"
                                f"{self._quiet()[2]}件までにして、来月また出します") if v["quiet_more"] else "",

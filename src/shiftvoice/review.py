@@ -48,6 +48,7 @@ class Card:
     partner: str | None = None        # 重なりの札の相手（同じことを決めているもう1件）
     partner_name: str | None = None
     no_scene: bool = False            # 当てはまる場面が無かった（作り直さずに静かと数えた）
+    loose: bool = False               # 重なりの札で、この札（rule_id）の方がゆるいと分かる時
     group: list[str] = field(default_factory=list)   # 一緒に片付ける札（同じ人の、当てはまる場面が無い札）
 
 
@@ -113,12 +114,13 @@ def review_cards(ledger: Ledger, year: int, month: int, quiet: dict[str, int] | 
                 continue
             used |= {a, b}
             unchanged -= 2          # 2件とも変更なしに数えていた
-            if _stricter(all_prev[b], all_prev[a]) is False:
+            st = _stricter(all_prev[b], all_prev[a])
+            if st is False:
                 a, b = b, a         # 先に出す（おすすめに見える）片付けは、ゆるい方にする
             ra = all_prev[a]
             quiet_cards.append(Card(a, "overlap", ra.name, ra.meta.get("until"), ra.meta.get("said"), ra.kind,
                                     min(_quiet_run(ledger, a, ym, overlap[a]), _quiet_run(ledger, b, ym, overlap[b])),
-                                    b, all_prev[b].name))
+                                    b, all_prev[b].name, loose=st is not None))
     # 同じ人の、当てはまる場面が無い札（表にいない人のルール）は1枚にまとめる。1回で決められるように
     merged: list[Card] = []
     by_who: dict[tuple, Card] = {}
@@ -135,7 +137,8 @@ def review_cards(ledger: Ledger, year: int, month: int, quiet: dict[str, int] | 
     for c in merged:
         if c.group:
             n = 1 + len(c.group)
-            c.name = f"{'・'.join(all_prev[c.rule_id].who)}さんのルール {n}件（{c.name} ほか）"
+            names = "、".join(all_prev[x].name for x in [c.rule_id] + c.group)
+            c.name = f"{'・'.join(all_prev[c.rule_id].who)}さんのルール {n}件（{names}）"
     quiet_cards = merged
     # 静かな札は長く続いた順に、月に quiet_per_month 件まで。残りは変更なしに数え、件数だけ知らせる
     quiet_cards.sort(key=lambda c: (not c.no_scene, -c.months, c.rule_id))   # 当てはまる場面が無い札を先に

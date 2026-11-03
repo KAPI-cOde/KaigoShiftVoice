@@ -46,10 +46,11 @@ def why_cell(rules: list[Rule], fac: Facility, staff: list[Staff], month: Month,
             block = (not counted) and ((coef > 0 and at_hi) or (coef < 0 and at_lo))
             if r.kind == "count":
                 who = f"{inst.key}さんの" if inst.key != "全体" else ""
+                # 「9日で上限」は、公休にできない理由として逆に読まれた（読み手2人とも。2026-11-04）
                 if at_hi:
-                    fact = f"{who}{_names(fac, syms)} {v}{_unit(fac, syms)}で上限"
+                    fact = f"{who}{_names(fac, syms)}はもう{v}{_unit(fac, syms)}（上限）"
                 else:
-                    fact = f"{who}{_names(fac, syms)} {v}{_unit(fac, syms)}で下限"
+                    fact = f"{who}{_names(fac, syms)}はちょうど{v}{_unit(fac, syms)}（下限）"
             elif r.kind == "coverage":
                 fact = f"{day}日の{_names(fac, syms)} {v}人"
             elif r.kind == "cell":
