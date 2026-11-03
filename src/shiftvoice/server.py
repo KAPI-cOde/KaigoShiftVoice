@@ -28,13 +28,13 @@ from .session import Session
 from .store import Store, read_json
 
 SAMPLE_PASTE = Path(__file__).resolve().parents[2] / "data" / "samples" / "komorebi-2026-11.tsv"
-SAMPLE_NAME = "こもれびの家（作り話）"
+SAMPLE_NAME = "こもれびの家（架空）"
 
 STATIC = Path(__file__).resolve().parent / "static"
 
 
 def sample_info() -> dict:
-    """見本の貼り付け（作り話の施設B）。"""
+    """見本の貼り付け（架空の施設B）。"""
     return {"text": SAMPLE_PASTE.read_text(encoding="utf-8"), "name": SAMPLE_NAME, "year": 2026, "month": 11}
 
 

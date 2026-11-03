@@ -1,4 +1,4 @@
-"""ソルバーの試験（S1・S2・S3・S5・S6）。作り話のひだまりの郷だけで、API を呼ばない。"""
+"""ソルバーの試験（S1・S2・S3・S5・S6）。架空のひだまりの郷だけで、API を呼ばない。"""
 import copy
 
 from shiftvoice.rules import check_table

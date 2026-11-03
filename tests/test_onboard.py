@@ -1,4 +1,4 @@
-"""取り込み（Excel の勤務表を貼る → 施設のデータ）の試験。見本は作り話の施設B。"""
+"""取り込み（Excel の勤務表を貼る → 施設のデータ）の試験。見本は架空の施設B。"""
 from pathlib import Path
 
 import pytest
@@ -527,7 +527,7 @@ def test_出口の確かめ_毎日いた勤務が翌月に無ければできた�
     answers = {s: {"same_as": "夜"} for s in pasted.unknown_symbols}
     pr = infer(pasted, 2026, 11, answers)
     assert pr.problems == []          # 入口ではすり抜ける
-    c = create_facility(pr, tmp_path / "f", name="三交代の家（作り話）", next_year=2026, next_month=12,
+    c = create_facility(pr, tmp_path / "f", name="三交代の家（架空）", next_year=2026, next_month=12,
                         answers=answers)
     assert not c.next_table_made
     assert "1回も入りませんでした" in c.stage_note

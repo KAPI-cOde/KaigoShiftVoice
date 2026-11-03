@@ -172,7 +172,7 @@
   <div class="navrow"><span class="small" id="v12sub"></span><button type="button" id="to11">表へ</button></div>
   <div id="v12body"></div>
 </section>
-<footer>勤務の並びや負担の偏りを見えるようにして整えるためのアプリです。医学的な判断や助言は行いません。施設と職員はすべて作り話です。</footer>
+<footer>勤務の並びや負担の偏りを見えるようにして整えるためのアプリです。医学的な判断や助言は行いません。施設と職員はすべて架空です。</footer>
 
 <script>
 "use strict";
@@ -1125,7 +1125,7 @@ function renderSetup1(box) {
   var ta = el("textarea"); ta.id = "su-text"; ta.value = SU.text; ta.placeholder = "ここに貼り付けます";
   ta.addEventListener("input", function () { SU.text = ta.value; });
   box.appendChild(suField("貼る欄", ta));
-  var sm = el("button", "link", "見本（作り話の施設）を貼ってみる"); sm.type = "button"; sm.id = "su-sample";
+  var sm = el("button", "link", "見本（架空の施設）を貼ってみる"); sm.type = "button"; sm.id = "su-sample";
   sm.addEventListener("click", function () {
     fetch("/api/setup/sample").then(function (r) { return r.json(); }).then(function (x) {
       SU.name = x.name; SU.year = x.year; SU.month = x.month; SU.text = x.text; SU.pv = null; SU.err = "";

@@ -10,7 +10,7 @@ SAMPLE = Path(__file__).resolve().parents[1] / "data" / "samples" / "komorebi-20
 
 def test_作った施設で翌々月の表を作って採れる(tmp_path):
     prop = infer(parse_paste(SAMPLE.read_text(encoding="utf-8")), 2026, 11)
-    c = create_facility(prop, tmp_path / "f", name="こもれびの家（作り話）", next_year=2026, next_month=12)
+    c = create_facility(prop, tmp_path / "f", name="こもれびの家（架空）", next_year=2026, next_month=12)
     assert c.next_table_made
     store = Store(tmp_path / "f")
     flow = NextFlow(store, 2026, 12)

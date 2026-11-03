@@ -43,7 +43,7 @@ def test_bad_reply_changes_nothing(sess, what):
 
 def test_mask_call_and_prefix_before_digits_and_shifts(store):
     """呼び方や名前の頭のすぐ後ろに数字や勤務が続いても伏せる（読点の落ちた声の一言。レビュー c の指摘）。
-    ひだまりの名簿は2字で呼び方が無いので、呼び方と3字以上の名前の職員を作り話で足して試す。"""
+    ひだまりの名簿は2字で呼び方が無いので、呼び方と3字以上の名前の職員を架空で足して試す。"""
     from shiftvoice.model import Staff
     staff = store.staff() + [Staff(name="遠藤ゆう", unit=store.facility().units[0], can=["日"], call="ゆうちゃ")]
     m = Masker(staff, store.facility())

@@ -56,7 +56,7 @@ def paste_body(**kw):
 def test_見本とプレビュー(srv):
     base, _, _ = srv
     code, sample = call(base, "/api/setup/sample")
-    assert code == 200 and sample["name"] == "こもれびの家（作り話）" and (sample["year"], sample["month"]) == (2026, 11)
+    assert code == 200 and sample["name"] == "こもれびの家（架空）" and (sample["year"], sample["month"]) == (2026, 11)
     code, pv = call(base, "/api/setup/preview", paste_body(text=sample["text"]))
     assert code == 200 and len(pv["staff"]) == 8 and pv["next_month"] == 12
     assert [s["symbol"] for s in pv["shift_types"]][:3] == ["早", "日", "遅"]
@@ -76,7 +76,7 @@ def test_作る_もう一度は開くだけ_デモへ戻る(srv):
     base, _, demo_root = srv
     code, pv = call(base, "/api/setup/preview", paste_body())
     drop = [pv["rules"][0]["id"]]
-    code, out = call(base, "/api/setup/create", paste_body(name="こもれびの家（作り話）", answers={}, drop_rules=drop))
+    code, out = call(base, "/api/setup/create", paste_body(name="こもれびの家（架空）", answers={}, drop_rules=drop))
     assert code == 200 and out["ok"] and not out["existing"]
     assert isinstance(out["diffs"], list) and out["from_month"] == 11
     assert all(set(d) == {"kind", "text"} for d in out["diffs"])
@@ -92,9 +92,9 @@ def test_作る_もう一度は開くだけ_デモへ戻る(srv):
     assert code == 200 and st2["month"] == 12 and len(st2["staff"]) == 8
     # もう一度作ろうとすると、作り直さずに開く
     mtime = (new_root / "ledger.json").stat().st_mtime_ns
-    code, again = call(base, "/api/setup/create", paste_body(name="こもれびの家（作り話）", answers={}, drop_rules=[]))
+    code, again = call(base, "/api/setup/create", paste_body(name="こもれびの家（架空）", answers={}, drop_rules=[]))
     assert "もう作ってあるので、前に作った施設を開きました" in again["message"] and "今回貼った表は使っていません" in again["message"]
-    assert "別の名前にしてください" in again["message"] and again["message"].startswith("『こもれびの家（作り話）』")
+    assert "別の名前にしてください" in again["message"] and again["message"].startswith("『こもれびの家（架空）』")
     assert code == 200 and again["existing"] is True and again["diffs"] is None and (new_root / "ledger.json").stat().st_mtime_ns == mtime
     assert len([c for c in again["state"]["cards"] if c["scope"] == "rule"]) == len(pv["rules"]) - 1
     # 一覧とデモへの切り替え
@@ -137,7 +137,7 @@ def test_翌月の表が作れなければ置き場を残さない(srv, monkeypa
         return c
 
     monkeypatch.setattr(server, "create_facility", fail)
-    code, out = call(base, "/api/setup/create", paste_body(name="作れない施設（作り話）", answers={}))
+    code, out = call(base, "/api/setup/create", paste_body(name="作れない施設（架空）", answers={}))
     assert code == 400 and "翌月の表が作れませんでした" in out["error"]
     left = [d.name for d in demo_root.parent.iterdir() if d.name not in ("hidamari",)]
     assert not any(n.endswith(".making") for n in left)
@@ -162,7 +162,7 @@ def test_プレビューは答えを当てて読み方を返す(srv):
 def test_問題がある貼り付けは知らせて作らない(srv):
     base, _, root = srv
     text = (Path(__file__).resolve().parent / "fixtures" / "pastes" / "14.tsv").read_text(encoding="utf-8")
-    body = {"text": text, "year": 2027, "month": 2, "name": "宿直の家（作り話）"}
+    body = {"text": text, "year": 2027, "month": 2, "name": "宿直の家（架空）"}
     code, pv = call(base, "/api/setup/preview", body)
     assert code == 200 and pv["suggestions"] == {"宿": "night"} and len(pv["problems"]) == 1 and "宿" in pv["problems"][0]
     code, bad = call(base, "/api/setup/create", dict(body, answers={}))
@@ -176,7 +176,7 @@ def test_問題がある貼り付けは知らせて作らない(srv):
 def test_作れない貼り付けは外せばできるルールを知らせて置き場を残さない(srv):
     base, _, demo_root = srv
     text = (Path(__file__).resolve().parent / "fixtures" / "pastes" / "31.tsv").read_text(encoding="utf-8")
-    code, out = call(base, "/api/setup/create", {"text": text, "year": 2026, "month": 11, "name": "作れない家（作り話）"})
+    code, out = call(base, "/api/setup/create", {"text": text, "year": 2026, "month": 11, "name": "作れない家（架空）"})
     assert code == 400 and "外すと作れます" in out["error"] and "連勤の上限" in out["error"]
     assert not any(d.name.endswith(".making") for d in demo_root.parent.iterdir())
 

@@ -38,7 +38,7 @@ PLACES = {
 def komorebi_dir(tmp_path_factory):
     prop = infer(parse_paste(SAMPLE.read_text(encoding="utf-8")), 2026, 11)
     out = tmp_path_factory.mktemp("komorebi") / "f"
-    c = create_facility(prop, out, name="こもれびの家（作り話）", next_year=2026, next_month=12)
+    c = create_facility(prop, out, name="こもれびの家（架空）", next_year=2026, next_month=12)
     assert c.next_table_made
     return out
 
