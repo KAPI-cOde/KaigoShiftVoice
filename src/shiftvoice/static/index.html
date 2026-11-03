@@ -64,6 +64,8 @@
   .card .explain div.box { border: 1px solid #000; border-radius: 3px; padding: 1px 6px; margin: 2px 0; display: inline-block; }
   .reply .offer { font-weight: 700; margin-bottom: 2px; }
   .reply .offer2 { margin-bottom: 6px; }
+  .reply .sentline { font-size: 11px; color: #777; margin-top: 8px; font-weight: 400; word-break: break-all; }
+  .reply .sentnote { margin-top: 2px; }
   .reply .note { font-size: 11px; margin-left: 10px; font-weight: 400; }
   button.primary { background: #000; color: #fff; }
   #talk.on { background: #000; color: #fff; }
@@ -385,7 +387,19 @@ function renderSaid() {
   saidList.slice(-3).forEach(function (s) { box.appendChild(el("p", "", "「" + s + "」")); });
 }
 
+var sentExplained = false;
 function renderReply(r) {
+  renderReplyBody(r);
+  if (!r || !r.sent_known) return;   // 一言の返事だけ。Claude へ送った文（伏せた後）を灰色で1行
+  var box = document.getElementById("reply");
+  var line = el("div", "sentline", r.sent === null || r.sent === undefined
+    ? "Claude へは送っていません"
+    : "Claude へ送った文　" + r.sent);
+  if (!sentExplained && r.sent) { line.appendChild(el("div", "sentnote", "名簿の名前は番号に置き換えて送ります")); sentExplained = true; }
+  box.appendChild(line);
+}
+
+function renderReplyBody(r) {
   var box = document.getElementById("reply");
   box.textContent = "";
   if (!r) return;

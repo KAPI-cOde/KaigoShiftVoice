@@ -42,6 +42,8 @@ class Reply:
     seconds: float = 0.0
     warning: str = ""        # 守れなかった新しいルール・段を下げた知らせ（赤で出す）
     extra: dict = field(default_factory=dict)  # 場面ごとの添え物（待機の人・引き受けの回数など）
+    sent: str | None = None  # その一言で Claude へ送った文（名前を番号に伏せた後。呼ばなかった時は None）
+    sent_known: bool = False  # 一言の返事で、sent を画面に出してよい時 True（False なら何も出さない）
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -62,6 +64,7 @@ class Session:
         self.now = now or (lambda: dt.datetime.now(JST))
         self.who = who
         self.base_date = base_date  # 引き受けを数える基準日（デモ設定。None は今日）
+        self._sent: dict[str, str | None] = {}  # 一言ごとに Claude へ送った文（伏せた後）
 
     # 開く
     @property
@@ -117,16 +120,27 @@ class Session:
         text = text.strip()
         u = self.store.add_pending(self.year, self.month, text, at=self.now().isoformat(timespec="seconds"),
                                    status="new")
-        return self._read(u)
+        return self._stamp(self._read(u))
+
+    def _stamp(self, r: Reply) -> Reply:
+        """返事に、その一言で Claude へ送った文を添える（送っていなければ None）。"""
+        if r.uid in self._sent:
+            r.sent, r.sent_known = self._sent[r.uid], True
+        return r
+
+    def _recall(self, u: dict) -> None:
+        if "sent_text" in u:
+            self._sent[u["id"]] = u["sent_text"]
 
     def retry(self, uid: str) -> Reply:
         """［送り直す］。同じ発言 ID で読み直す。"""
         u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
         if u is None:
             return Reply("error", uid, "送り直す発言が見つかりません")
+        self._recall(u)
         if u.get("items") is not None:
-            return self._safe_propose(u)
-        return self._read(u)
+            return self._stamp(self._safe_propose(u))
+        return self._stamp(self._read(u))
 
     def _read(self, u: dict) -> Reply:
         fac, staff = self.store.facility(), self.store.staff()
@@ -137,7 +151,9 @@ class Session:
             wrong = unknown[0]
             cands = masker.suggest(wrong)
             cands = cands if len(cands) == 1 else []   # 1人に絞れる時だけ候補にする（森田→石田・岡田 のような当て推量を出さない）
-            self.store.update_pending(self.year, self.month, u["id"], status="ask_name", unknown=unknown)
+            self._sent[u["id"]] = None
+            self.store.update_pending(self.year, self.month, u["id"], status="ask_name", unknown=unknown,
+                                      sent_text=None)
             if wrong in masker.leftover:   # 呼び方・名前の頭が伏せきれずに残った。名前を選ぶと、その名前に置き換えて読む
                 cands = [masker.leftover[wrong]]
                 msg = f"「{wrong}」は{cands[0]}さんのことですか（表もルールも変えていません）"
@@ -146,6 +162,9 @@ class Session:
                        f"{wrong}さんは名簿にいません。名簿から選んでください")
             return Reply("ask", u["id"], msg, extra={"ask_name": {"wrong": wrong, "candidates": cands,
                                                                   "roster": [x.name for x in staff]}})
+        sent = masked if getattr(self.reader, "calls_claude", True) else None
+        self._sent[u["id"]] = sent
+        self.store.update_pending(self.year, self.month, u["id"], sent_text=sent)
         try:
             items = masker.unmask(self.reader.read(masked))
             if self.builder and any(it.get("type") == "custom" for it in items):
@@ -181,7 +200,7 @@ class Session:
         text = u["text"].replace(wrong, right)
         self.store.update_pending(self.year, self.month, uid, text=text, heard=u["text"], status="new",
                                   unknown=None)
-        return self._read({**u, "text": text})
+        return self._stamp(self._read({**u, "text": text}))
 
     def _leave_caps(self) -> dict[str, int]:
         """人ごとの有給の上限（職員と対象月を持つ回数の決まり。13章）。"""
@@ -229,10 +248,11 @@ class Session:
         u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
         if u is None:
             return Reply("error", uid, "聞き返した発言が見つかりません")
+        self._recall(u)
         if scope is None:
-            return Reply("ask_period", uid, ASK_PERIOD)
+            return self._stamp(Reply("ask_period", uid, ASK_PERIOD))
         self.store.update_pending(self.year, self.month, uid, scope=scope)
-        return self._safe_propose({**u, "scope": scope})
+        return self._stamp(self._safe_propose({**u, "scope": scope}))
 
     def _apply(self, u: dict, p: Proposal, scope: str) -> Reply:
         m = self.store.month(self.year, self.month)

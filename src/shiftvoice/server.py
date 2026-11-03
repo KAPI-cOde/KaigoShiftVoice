@@ -110,6 +110,7 @@ def _latest_month(root: Path) -> tuple[int, int] | None:
 class NoKeyReader:
     """鍵が無い時。読み取りは呼べないと返す（表も帳面も変えない）。"""
     sent: list = []
+    calls_claude = False   # Claude を呼ばない（画面には「Claude へは送っていません」と出す）
 
     def read(self, masked_text, history=None):
         raise ReadError("ANTHROPIC_API_KEY がありません")
