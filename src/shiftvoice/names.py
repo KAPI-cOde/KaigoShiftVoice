@@ -17,42 +17,38 @@ from .model import Facility, Staff
 BOUNDARY = r"(?=さん|くん|ちゃん|[、。,.\s　のはがにもとをへやで]|$)"
 HONORIFIC = r"(?:さん|くん|ちゃん|様|氏|君|先生)"
 # 「〇〇さん」でも人の名前ではない言葉
-NOT_NAMES = {"皆", "母", "父", "お母", "お父", "家族", "利用者", "看護師", "相談員", "新人", "息子", "娘", "奥"}
-# 家族の言葉（「お子さんの熱で休み」が名簿にない名前「子」で止まった。2026-11-03 作った施設で本物の一言を測った時）。
-# 前が「お」「ご」か、文の頭・区切りの時だけ名前でないとみなす。「よし子さん」「はな子さん」のように前にひらがなが
-# 続く時は名前の一部なので、今どおり名簿にない名前として止める（伏せずに送らないため。自動のセキュリティレビューの指摘）
-FAMILY_WORDS = {"子", "孫", "旦那", "主人", "妻", "夫", "嫁", "兄", "姉", "弟", "妹", "祖母", "祖父", "親"}
-SEPARATORS = set("、。,.・ 　（(「」)）!！?？")
-PARTICLES = set("はがのにをともへでや")
+NOT_NAMES = {"皆", "利用者", "看護師", "相談員", "新人"}
+# 家族の言葉（「お子さんの熱で休み」が名簿にない名前「子」で止まった。2026-11-03 作った施設で本物の一言を測った時）
+FAMILY_WORDS = {"子", "孫", "旦那", "主人", "妻", "夫", "嫁", "兄", "姉", "弟", "妹", "祖母", "祖父", "親",
+                "母", "父", "お母", "お父", "家族", "息子", "娘", "奥"}
+SAFE_STOP = set("、。,.・ 　（(「」)）!！?？\n")
+_NAMEISH = re.compile(r"[一-龥々ァ-ヶA-Za-z]")
 
 
-def _hard_boundary(t: str, j: int) -> bool:
-    """t[j] の直後で、ひらがなの名前が続いていないと言える所か。文の頭（j < 0）は含めない。
-    漢字・カタカナ・数字・句読点の後、または「〇〇さん」などの呼び方の終わり。迷ったら False（止める側）。"""
-    if j < 0:
-        return False
-    c = t[j]
-    if c in SEPARATORS or not re.fullmatch(r"[ぁ-ゖ]", c):
-        return True
-    return bool(re.search(HONORIFIC + "$", t[:j + 1]))
-
-
-def _not_name_here(t: str, i: int) -> bool:
-    """t[i:] から始まる名前でない語（子・母・皆など）が、ここでは名前の一部でないと言えるか（fail closed）。
-    （例）12日の後の「皆」、「岡田さんの」の後の「息子」、「12日は」の後の「お子」は名前でない。「よし子さん」「とも子さん」「かの子さん」
-    「なお子さん」「とお子さん」は、名前の一部かもしれないので名前でないとは言わない（伏せずに送らない）。"""
-    if i == 0 or (t[i - 1] in SEPARATORS) or _hard_boundary(t, i - 1):
-        return True                                   # 文の頭・区切り・漢字などの直後
-    prev = t[i - 1]
-    if prev in "おご":
-        if i - 2 < 0 or t[i - 2] in SEPARATORS or _hard_boundary(t, i - 2):
-            return True                               # 「お子さん」で始まる・「12日お子さん」
-        if t[i - 2] in PARTICLES and _hard_boundary(t, i - 3):
-            return True                               # 「12日はお子さん」（助詞の前が区切り）
-        return False
-    if prev in PARTICLES and _hard_boundary(t, i - 2):
-        return True                                   # 呼び方の後の助詞に続く語（岡田さんの＋息子）
-    return False
+def _redact_not_names(t: str) -> str:
+    """名前でない語（皆・利用者・家族の言葉など）に呼び方が付いた所で、その前に区切り以外の字（ひらがな・長音など）が
+    続く時は、その字ごと「（家族）」「（皆）」などに置き換えてから送る。
+    前の字が名前の一部か（「よし子さん」「とお子さん」）、助詞か（「12日はお子さん」）は、字からは見分けられない。
+    見分けを当てにいくと、レビューのたびに抜け道が見つかった（失敗の一覧14・18）。置き換えれば、名前の一部だったとしても
+    外へは出ず、人が読み取れなければ今どおり聞き返す。前が区切り・数字・呼び方の終わりなら、そのまま送る。"""
+    words = sorted(NOT_NAMES | FAMILY_WORDS, key=len, reverse=True)
+    pat = re.compile("(" + "|".join(map(re.escape, words)) + ")" + HONORIFIC)
+    out, pos = [], 0
+    for mm in pat.finditer(t):
+        i, w = mm.start(1), mm.group(1)
+        if i < pos or (i > 0 and _NAMEISH.fullmatch(t[i - 1])):
+            continue   # 前が漢字・カタカナなら、もっと長い名前の一部（漢字＋子の名前）。名簿にない名前として下で止める
+        j = i
+        while (j > 0 and i - j < 8 and t[j - 1] not in SAFE_STOP and not t[j - 1].isdigit()
+               and not re.search(HONORIFIC + "$", t[:j])):
+            j -= 1
+        if j == i:
+            continue
+        out.append(t[pos:j])
+        out.append("（家族）" if w in FAMILY_WORDS else f"（{w}）")
+        pos = mm.end()
+    out.append(t[pos:])
+    return "".join(out)
 
 
 @dataclass
@@ -107,14 +103,13 @@ class Masker:
             if need_boundary and alias in t and alias not in self.leftover:
                 self.leftover[alias] = name
         t = t.replace("ゼロ", "0")
+        # 名前でない語の前にひらがななどが続く所は、その字ごと置き換えてから送る（名前の一部でも外へ出さない）。
+        # 一覧の全部の語を tests/test_safety.py::test_every_not_name_word_after_hiragana_still_stops が確かめる
+        t = _redact_not_names(t)
         unknown = []
         for mm in re.finditer(r"([一-龥々ァ-ヶA-Za-z]{1,6})" + HONORIFIC, t):
             m = mm.group(1)
-            if re.fullmatch(r"職員\d{0,2}", m):
-                continue
-            # 名前でない語も家族の言葉も、前が区切りの時だけ名前でないとみなす（前がひらがなの名前なら名前の一部。
-            # 一覧の全部の語を tests/test_safety.py::test_every_not_name_word_after_hiragana_still_stops が確かめる）
-            if (m in FAMILY_WORDS or m in NOT_NAMES) and _not_name_here(t, mm.start(1)):
+            if re.fullmatch(r"職員\d{0,2}", m) or m in NOT_NAMES or m in FAMILY_WORDS:
                 continue
             unknown.append(m)
         return t, list(self.leftover) + unknown

@@ -179,21 +179,25 @@ def test_unknown_person_still_stops_next_to_family_word(sess):
                                   "とも子さん、12日は休み", "もも子さん、12日は休み", "かの子さん、12日は休み",
                                   "とお子さん、12日は休み", "12日はとも子さんが休み"])
 def test_hiragana_name_ending_in_family_word_still_stops(sess, text):
-    """ひらがなに家族の言葉が続く名前（よし子さん）は名前の一部。名簿にない名前として止め、伏せずに送らない。"""
-    _, unknown = Masker(sess.store.staff(), sess.store.facility()).mask(text)
-    assert unknown, text
+    """ひらがなに家族の言葉が続く名前（よし子さん）は名前の一部かもしれない。止めるか、名前の頭ごと置き換えて、
+    名前の頭を Claude へ送らない。"""
+    import re
+    masked, unknown = Masker(sess.store.staff(), sess.store.facility()).mask(text)
+    head = re.search(r"([ぁ-ゖ]+)(?:子|孫)さん", text).group(1)[-2:]
+    assert unknown or head + "子" not in masked and head + "孫" not in masked, (text, masked)
 
 
 def test_every_not_name_word_after_hiragana_still_stops(sess):
-    """名前でない語の一覧（NOT_NAMES・FAMILY_WORDS）のどの語でも、前にひらがなの名前が付けば名前の一部として止める。
-    一覧を広げるたびに「〇〇＋一覧の語＋さん」の実名を伏せずに送る抜け道ができた（失敗の一覧14、2026-11-03 の家族の言葉）。
-    一覧に語を足したら、この試験が全部の語で確かめる。"""
+    """名前でない語の一覧（NOT_NAMES・FAMILY_WORDS）のどの語でも、前にひらがななどの名前の頭が付いた形は、
+    名簿にない名前として止めるか、名前の頭ごと置き換えて送る。どちらでも名前の頭は Claude へ送らない。
+    一覧を広げるたびに抜け道ができた（失敗の一覧14・18）。一覧に語を足すと、この試験が全部の語で確かめる。"""
     from shiftvoice.names import FAMILY_WORDS, NOT_NAMES
     m = Masker(sess.store.staff(), sess.store.facility())
     leaks = []
     for w in sorted(NOT_NAMES | FAMILY_WORDS):
-        for head in ("よし", "なお", "まご", "とも", "かの", "とお", "はお"):
-            _, unknown = m.mask(f"{head}{w}さん、12日は休み")
-            if not unknown:
-                leaks.append(head + w)
+        for head in ("よし", "なお", "まご", "とも", "かの", "とお", "はお", "ゆー", "ｱｲ"):
+            for before in ("", "12日", "12日は", "岡田さんの"):
+                masked, unknown = m.mask(f"{before}{head}{w}さん、休み")
+                if not unknown and head in masked:
+                    leaks.append(before + head + w)
     assert leaks == [], leaks
