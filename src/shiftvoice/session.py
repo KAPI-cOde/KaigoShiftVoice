@@ -47,6 +47,13 @@ class Reply:
         return dict(self.__dict__)
 
 
+def _next_id(led) -> int:
+    """次のルールの番号。外したルールの番号も使い回さない（言い直しで外した r101 の後に、新しい頼みが同じ r101 に
+    なっていた。2026-11-03 本物の Haiku で確かめた時に見つけた）。"""
+    ids = {t["rule"]["id"] for t in led.txs if t["op"] == "add" and isinstance(t.get("rule"), dict)} | set(led.rules_at())
+    return max([int(r[1:]) for r in ids if r[1:].isdigit()] + [100]) + 1
+
+
 class Session:
     def __init__(self, store: Store, year: int, month: int, reader, *, now=None, who: str = "作成者",
                  builder=None, base_date: str | None = None):
@@ -195,6 +202,10 @@ class Session:
             return Reply("ask", u["id"], str(e))
         if p.kind == "cancel":
             return self._cancel(u, p)
+        if p.kind == "cells" and p.replace_from and not m.distributed:
+            r = self._replace_offer(u, p, m)
+            if r is not None:
+                return r
         if p.kind == "cells" and p.rules and not m.distributed and all(r["flex"] == "negotiable" for r in p.rules):
             # 「できれば」の頼みは、守れるかを先に試し、守れる時は代わりに動くマスを見せて選んでもらう（T2-08）
             return self._fix_offer(u, p, m, maybe=True)
@@ -234,7 +245,7 @@ class Session:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], f"{self.month}月はもう入っています")
         if not any(t.get("op_id") == u["id"] for t in led.txs):
-            n = max([int(r[1:]) for r in led.rules_at() if r[1:].isdigit()] + [100]) + 1
+            n = _next_id(led)
             for rd in p.rules:
                 rd = dict(rd)
                 rd["id"] = f"r{n}"
@@ -349,12 +360,24 @@ class Session:
         マスの頼み（帳面のマスのルール）が1つに決まる時だけ、表を変える前に取り消すかを確かめる。
         0件・2件以上・取り込んだ希望しか無い時は、今どおり日付を聞く（迷ったら聞き返す）。"""
         rq = p.removes[0]
-        w, sym = rq["who"][0], rq["shift"]
-        hits = [r for r in rules.values() if r.kind == "cell" and r.who == [w] and r.when
+        w, sym = (rq["who"] or [None])[0], rq["shift"]
+        hits = [r for r in rules.values() if r.kind == "cell" and (w is None or r.who == [w]) and r.when
                 and str(r.meta.get("source", "")).startswith("話した")
                 and (sym is None or sym in r.params.get("in", []) + r.params.get("not_in", []))]
         fac = self.store.facility()
         what = "" if not sym else "休み" if fac.shift(sym).kind == "rest" else fac.shift(sym).name
+        if w is None:
+            # 人も日も無い取り消し（「さっきのやっぱりなし」）。この月に話したマスの頼みが1件で、1人の頼みの時だけ
+            if not hits:
+                self.store.resolve_pending(self.year, self.month, u["id"])
+                return Reply("ask", u["id"], "取り消す頼みが見つかりませんでした。誰の、何日の頼みか言ってください。"
+                             "表もルールも変えていません")
+            if len(hits) > 1 or len(hits[0].who or []) != 1:
+                self.store.resolve_pending(self.year, self.month, u["id"])
+                return Reply("ask", u["id"], f"今月話した頼みが{len(hits)}件あります（"
+                             + "・".join(h.name for h in hits) + "）。誰の、何日の分を取り消すか言ってください。"
+                             "表もルールも変えていません")
+            w = hits[0].who[0]
         if not hits:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], f"{w}さんの、何日の{what or '頼み'}を取り消しますか。表もルールも変えていません")
@@ -364,7 +387,11 @@ class Session:
                          + "・".join(h.name for h in hits) + "）。何日の分を取り消すか言ってください")
         r = hits[0]
         days = list(r.when)
-        label = f"{w}さんの{'・'.join(map(str, days))}日の{what or r.name}"
+        if not what:   # 勤務を言っていない取り消しは、外す頼みから言い方を決める（「8日の内田さん 8日 休み」と出ていた）
+            rs = (r.params.get("in") or [""])[0]
+            what = (("休み" if fac.shift(rs).kind == "rest" else fac.shift(rs).name)
+                    if rs in fac.symbols else f"頼み（{r.name}）")
+        label = f"{w}さんの{'・'.join(map(str, days))}日の{what}"
         msg = f"{label}を取り消しますか。表のマスはそのままです"
         offer = {"cancel": [{"who": [w], "days": days, "shift": sym}], "rules": [], "changes": [],
                  "summary": f"{label}を取り消す。表のマスはそのまま", "done": f"{label}の指定を外しました",
@@ -458,7 +485,7 @@ class Session:
         o = u["offer"]
         m = self.store.month(self.year, self.month)
         led = self.store.ledger()
-        if o.get("cancel") is not None:
+        if o.get("cancel") is not None and not o.get("replace"):
             # 日付の無い取り消しを確かめた。案を作った後に帳面が変わっていたら作り直す（古い案で外さない）
             if led.rev != o.get("base_rev") and not any(t.get("op_id") == uid for t in led.txs):
                 self.store.update_pending(self.year, self.month, uid, status="read", offer=None)
@@ -493,7 +520,14 @@ class Session:
         at = self.now().isoformat(timespec="seconds")
         start, end = self._span()
         if not any(t.get("op_id") == uid for t in led.txs):
-            n = max([int(r[1:]) for r in led.rules_at() if r[1:].isdigit()] + [100]) + 1
+            for d in o.get("replace") or []:   # 言い直しで外す前の頼み（同じ op_id なので、ひとつ戻すと一緒に戻る）
+                meta = {"said": u["text"], "who": self.who, "at": at, "kind": "cancel"}
+                if d.get("rest"):
+                    led.append("change", rule_id=d["rule_id"], rule={"when": d["rest"], "name": d["name"]},
+                               op_id=uid, meta=meta)
+                else:
+                    led.append("remove", rule_id=d["rule_id"], op_id=uid, meta=meta)
+            n = _next_id(led)
             for rd in o["rules"]:
                 rd = {**rd, "id": f"r{n}", "scope": o.get("scope", "once"),
                       "meta": {**rd.get("meta", {}), "said": u["text"], "who": self.who, "at": at, "reason": None,
@@ -536,6 +570,59 @@ class Session:
             m.rest_adjust, m.support = o.get("rest_adjust", m.rest_adjust), o.get("support", m.support)
             self.store.save_month(m)                                     # 3 月の表
         self.store.resolve_pending(self.year, self.month, uid)           # 4 未反映の発言
+
+    def _replace_offer(self, u: dict, p, m) -> Reply | None:
+        """言い直し（「赤坂さんじゃなくて井上さん、10日が休みで」）。言い直された人の、同じ日に話したマスの頼みが
+        1件に決まる時だけ、それを外して新しい頼みを入れる案を、表を変える前に確かめる。
+        無ければ None（今どおり入れる）。2件以上なら聞き返す（どれを外すか決めない）。"""
+        import re
+        rd = p.rules[0]
+        days, w = set(rd["when"]), p.replace_from[0]
+        led0 = self.store.ledger()
+        rules = led0.rules_at(between=self._span())
+        hits = [r for r in rules.values() if r.kind == "cell" and r.who and w in r.who and r.when
+                and days & set(r.when) and str(r.meta.get("source", "")).startswith("話した")]
+        if not hits:
+            return None
+        if len(hits) > 1 or hits[0].who != [w]:
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("ask", u["id"], f"{w}さんの{'・'.join(map(str, sorted(days)))}日の頼みが{len(hits)}件あります（"
+                         + "・".join(h.name for h in hits) + "）。どれを外すか言ってください。表もルールも変えていません")
+        old = hits[0]
+        gone = sorted(days & set(old.when))
+        rest = [d for d in old.when if d not in days]
+        name = re.sub(r"[\d・]+日", "・".join(map(str, rest)) + "日", old.name, count=1) if rest else old.name
+        drop = [{"rule_id": old.id, "rest": rest, "name": name}]
+        led = Ledger.from_list(led0.to_list())
+        start, end = self._span()
+        if rest:
+            led.append("change", rule_id=old.id, rule={"when": rest, "name": name})
+        else:
+            led.append("remove", rule_id=old.id)
+        added = [Rule.from_dict(led.append("add", rule={**rd, "id": "t-fix0", "scope": "once"},
+                                           frm=start, until=end)["rule"])]
+        rules2 = [clip_to_month(r, start, end) for r in led.rules_at(between=self._span()).values()]
+        fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
+        rr = resolve(fac, staff, rules2, m, m.table, [r for r in rules2 if r.id == "t-fix0"])
+        if not rr.ok:
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("failed_solve", u["id"], rr.staged.message or "直せませんでした")
+        sym = (old.params.get("in") or old.params.get("not_in") or [""])[0]
+        what = (("休み" if fac.shift(sym).kind == "rest" else fac.shift(sym).name)
+                if sym and "in" in old.params else f"頼み（{old.name}）")
+        new_sym = rd["params"].get("in", [""])[0] if "in" in rd["params"] else ""
+        new_what = ("休み" if new_sym and fac.shift(new_sym).kind == "rest" else
+                    fac.shift(new_sym).name if new_sym else rd["name"])
+        nw = rd["who"][0]
+        dd = "・".join(map(str, sorted(days)))
+        label = f"{w}さんの{'・'.join(map(str, gone))}日の{what}を外して、{nw}さんの{dd}日を{new_what}にします"
+        who = sorted({c["staff"] for c in rr.changes})
+        msg = f"{label}。{len(rr.changes)}マス動きます" + (f"（{'・'.join(who)}さん）" if who else "")
+        offer = {"rules": p.rules, "scope": "once", "table": rr.table, "changes": rr.changes, "replace": drop,
+                 "summary": label, "message": msg, "base_rev": led0.rev, "base_table": json.dumps(m.table),
+                 "source": "話した"}
+        self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
+        return Reply("fix_offer", u["id"], msg, changes=rr.changes, seconds=rr.seconds, summary=label)
 
     def _fix_offer(self, u: dict, p, m, maybe: bool = False) -> Reply:
         """配った後のほかの直し（待機の案にならない頼み）。表は［これで直す］を押すまで変えない（画面3。Astra の指摘2）。"""

@@ -30,6 +30,7 @@ class Proposal:
     until: str | None = None           # YYYY-MM-DD
     reason: str | None = None
     summary: str = ""
+    replace_from: list[str] | None = None   # 言い直し（「AさんじゃなくてBさん」）で、前の頼みを外すかもしれない人
 
 
 class Clarify(Exception):
@@ -176,6 +177,7 @@ def _tidy(items: list[dict], month: Month, text: str = "") -> list[dict]:
     return out
 
 
+REPHRASE_WORDS = ("じゃなくて", "じゃなく", "ではなくて", "ではなく", "じゃない", "でなくて")
 EVERY_WEEK = ("固定", "毎週", "いつも", "ずっと", "決まって", "定休")
 ONE_WEEK = ("今度", "次の", "来週", "今週", "再来週", "この", "その", "第")
 _WD_ONE = {"月": "mon", "火": "tue", "水": "wed", "木": "thu", "金": "fri", "土": "sat", "日": "sun"}
@@ -386,6 +388,12 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         elif t == "cancel":
             # 取り消しは指定を外すだけ。反対の勤務を命じない（13章。T2-03）
             who = _names(it.get("staff"), names)
+            if not who and it.get("days") in (None, []) and len(real) == 1:
+                # 人も日も無い取り消し（「さっきのやっぱりなし」）。この月に話したマスの頼みが1件に決まる時だけ、
+                # 確かめてから外す（session._cancel_offer）。一言に名簿の人が出ていれば下で聞き返す
+                sym = _sym(it.get("shift"), facility) if it.get("shift") else None
+                p.removes.append({"who": None, "days": None, "shift": sym})
+                continue
             if not who:
                 raise Clarify("誰の、何日の頼みを取り消すか教えてください")
             sym = _sym(it.get("shift"), facility) if it.get("shift") else None
@@ -443,23 +451,40 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     from .names import FAMILY_WORDS, NOT_NAMES
     not_name = NOT_NAMES | FAMILY_WORDS | {"みな", "みんな", "お客", "医者", "先生", "看護", "介護", "職員", "ケアマネ",
                             "施設長", "事務", "主任", "スタッフ", "お子", "おばあ", "おじい"} | {sh.name[:2] for sh in facility.shift_types}
-    said = bool(re.search(r"職員\d{2}", Masker(staff, facility).mask(text)[0])) or any(
+    masker = Masker(staff, facility)
+    named = {masker.to_name[c] for c in re.findall(r"職員\d{2}", masker.mask(text)[0]) if c in masker.to_name}
+    said = bool(named) or any(
         not any(w.endswith(n) for n in not_name)
         for w in re.findall(r"([ぁ-ゖァ-ヺー一-龥々]{1,6}?)(?:さん|くん|ちゃん)", text))
     # マスの頼み（休み・勤務・移動）と取り消しは、人が無いまま全員に効かせない。「全員15日休み」は頼みとして
     # ありえず、さんの無いかなの名前や「皆」を含む一言でもすり抜けないように（再レビュー2回目 b の指摘）
     cells_nobody = any(not r.get("who") for r in p.rules if r["kind"] == "cell") or any(
-        not x.get("who") for x in p.removes)
+        not x.get("who") and (said or x.get("days") is not None) for x in p.removes)
     rules_nobody = any(not r.get("who") for r in p.rules if r["kind"] not in ("layer", "cell"))
     # 回数と連勤は人ごとに言うことが多いので、人が無い返事は「全員」「みんな」と言い、名前も出ていない時だけ
     # 全員に効かせる（言葉の手がかりで人を当てる作りは呼び方ごとに穴が出続けたため。作者の答え 2026-11-03）
     everyone = bool(re.search(r"全員|みんな|皆(?!勤)", text))
     per_nobody = any(not r.get("who") for r in p.rules if r["kind"] in ("count", "max_run"))
-    if cells_nobody or (per_nobody and (not everyone or said)) or (said and not everyone and rules_nobody):
+    # 「みんな夜勤は月4回までで、井上さんだけは3回までにして」。全員と名指しが1つの一言に入る時は、言った人が
+    # 全員、名指しの回数のルールに入っている時だけ通す（名指しは with_overrides で全員向けより優先する）。
+    # 名前が出たのに、その人の分の返事が無ければ今どおり聞き返す
+    per_named = {w for r in p.rules if r["kind"] in ("count", "max_run") for w in (r.get("who") or [])}
+    both = everyone and bool(named) and named <= per_named and not any(
+        not r.get("who") for r in p.rules if r["kind"] not in ("layer", "cell", "count", "max_run")) and not any(
+        not any(w.endswith(n) for n in not_name) and not any(w.endswith(n) for n in named)
+        for w in re.findall(r"([ぁ-ゖァ-ヺー一-龥々]{1,6}?)(?:さん|くん|ちゃん)", text))
+    if cells_nobody or (per_nobody and (not everyone or (said and not both))) \
+            or (said and not everyone and rules_nobody):
         raise Clarify("誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください"
                       + ("" if cells_nobody else "（全員のルールなら「全員」と付けてください）"))
     if kind == "cells":
         p.scope = "once"
+        # 言い直し（「赤坂さんじゃなくて井上さん、10日が休みで」）。読み取りは新しい人の頼みだけを返すので、
+        # 言った人のうち頼みに無い人が1人の時だけ印を付け、前の頼みを外すかは帳面を見て確かめる（session）
+        others = sorted(named - {w for r in p.rules for w in (r.get("who") or [])})
+        if any(w in text for w in REPHRASE_WORDS) and len(others) == 1 and len(p.rules) == 1 \
+                and len(p.rules[0].get("who") or []) == 1:
+            p.replace_from = others
     elif kind == "cancel":
         p.scope = "once"   # 取り消しは前の頼みを外すだけ。聞かない
     elif kind in ("rule", "layer"):
