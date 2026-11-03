@@ -456,6 +456,7 @@ function makeCard(c) {
     top.appendChild(el("span", "per", m.until ? fmtUntil(m.until) : "毎月"));
     b.appendChild(top);
     if (m.reason) b.appendChild(el("div", "why", "理由 " + m.reason));
+    if (c.shadowed_by) b.appendChild(el("div", "why", "「" + c.shadowed_by + "」もあり、厳しい方が効きます"));
     if (selected === c.id) {
       var dt = el("div", "detail");
       dt.appendChild(el("div", "", m.said ? "言った言葉 「" + m.said + "」" : "最初から入っているルールです"));

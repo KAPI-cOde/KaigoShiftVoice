@@ -50,6 +50,18 @@ class Reply:
         return dict(self.__dict__)
 
 
+def _shadowed(r: Rule, rules: dict) -> str | None:
+    """同じ人・同じ所を決める、もっと厳しい毎月のルールがあれば、その名前（一覧で「厳しい方が効きます」と添える）。
+    千葉さんの月6回まで・月7回までのように2件あると、どちらが効くか分からないと読み手2人が迷った（2026-11-04）。"""
+    from .review import _stricter
+    from .rules import may_cover
+    for o in rules.values():
+        if o.id != r.id and o.scope == r.scope and (o.who or None) == (r.who or None) and may_cover(r, o) \
+                and _stricter(o, r) is True:
+            return o.name
+    return None
+
+
 def _next_id(led) -> int:
     """次のルールの番号。外したルールの番号も使い回さない（言い直しで外した r101 の後に、新しい頼みが同じ r101 に
     なっていた。2026-11-03 本物の Haiku で確かめた時に見つけた）。"""
@@ -757,7 +769,8 @@ class Session:
             "shift_names": [[st.symbol, st.name] for st in fac.shift_types],
             "table": m.table,
             "cards": [{"id": r.id, "name": r.name, "flex": r.flex, "scope": r.scope, "who": r.who,
-                       "when": r.when, "kind": r.kind, "params": r.params, "meta": r.meta}
+                       "when": r.when, "kind": r.kind, "params": r.params, "meta": r.meta,
+                       "shadowed_by": _shadowed(r, rules)}
                       for r in rules.values()],
             "pending": self.store.pending(self.year, self.month),
             "can_undo": bool(m.history),

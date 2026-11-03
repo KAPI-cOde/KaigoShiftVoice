@@ -68,3 +68,15 @@ def test_d5_strength_only_restatement_asks():
     old = _rule(kind="count", flex="fixed", params={"shifts": ["夜"], "max": 4})
     assert same_slot({"kind": "count", "flex": "negotiable", "who": ["斉藤"], "params": {"shifts": ["夜"], "max": 4}}, old)
     assert not same_slot({"kind": "count", "flex": "fixed", "who": ["斉藤"], "params": {"shifts": ["夜"], "max": 4}}, old)
+
+
+def test_d6_list_says_stricter_wins(sess):
+    """同じ人の上限が2件ある時、ゆるい方に「厳しい方が効きます」と添える。"""
+    led = sess.store.ledger()
+    for rid, mx in (("g1", 6), ("g2", 7)):
+        led.append("add", rule={"id": rid, "name": f"千葉さん 夜勤は月{mx}回まで", "kind": "count", "flex": "fixed",
+                                "params": {"shifts": ["夜"], "max": mx}, "who": ["千葉"], "when": None,
+                                "scope": "rule", "meta": {}}, op_id=f"t-{rid}", frm="2026-06-01")
+    sess.store.save_ledger(led)
+    cards = {c["id"]: c for c in sess.state()["cards"]}
+    assert cards["g2"]["shadowed_by"] == "千葉さん 夜勤は月6回まで" and cards["g1"]["shadowed_by"] is None
