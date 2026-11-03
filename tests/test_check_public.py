@@ -44,3 +44,12 @@ def test_key_like_string_is_reported_and_masked(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "config.txt:1" in out
     assert key not in out
+
+
+def test_untracked_new_file_is_checked_too(tmp_path, capsys):
+    """add の前に点検を流しても、まだ追跡していない新しいファイルの名前を見落とさない（2026-11-03 に見落とした）。"""
+    root = _make_repo(tmp_path, {"doc.md": "青木さんに確認した。\n"})
+    name = "山田" + "さ" + "ん"
+    (root / "new_test.py").write_text(f"# {name}の試験\n", encoding="utf-8")   # add していない
+    assert check_public.main(root) == 1
+    assert "new_test.py:1" in capsys.readouterr().out

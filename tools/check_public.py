@@ -50,7 +50,9 @@ def _allowed_names(root: Path) -> set[str]:
 
 def _tracked_files(root: Path) -> list[str]:
     out = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z"],
+        # 追跡中のファイルに加え、まだ add していない新しいファイルも見る（.gitignore の物は除く）。
+        # add の前に点検を流して、新しい試験のファイルの名前を見落としたことがあるため（2026-11-03）
+        ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         check=True,
         capture_output=True,
     ).stdout

@@ -26,7 +26,7 @@ def _lines():
 
 def _part_row(rest_mark: str) -> str:
     """週3日だけ日勤に入るパートの人（11月1日は日曜）。"""
-    row = ["野口"]
+    row = ["青木"]
     for d in range(1, 31):
         wd = (d + 5) % 7
         row.append("日" if wd in (1, 3, 5) else rest_mark(d))
@@ -56,10 +56,10 @@ def no_leave(plain, tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def with_part(tmp_path_factory):
-    """公休の違うパートの人がいて、人ごとの公休のルール（公休の数（野口さん））がある施設。"""
+    """公休の違うパートの人がいて、人ごとの公休のルール（公休の数（青木さん））がある施設。"""
     text = "\n".join(_lines() + [_part_row(lambda d: "公")]) + "\n"
     prop = infer(parse_paste(text), 2026, 11)
-    assert any(r["name"] == "公休の数（野口さん）" for r in prop.rules)
+    assert any(r["name"] == "公休の数（青木さん）" for r in prop.rules)
     out = tmp_path_factory.mktemp("part") / "f"
     c = create_facility(prop, out, name="こもれびの家（作り話）", next_year=2026, next_month=12)
     assert c.next_table_made
@@ -175,12 +175,12 @@ def test_全員の公休を一言で変えると新しい数が効く(plain, tmp
 
 def test_人ごとの公休のルールを一言で変えると新しい数が効く(with_part, tmp_path):
     store = _copy(with_part, tmp_path)
-    assert _rest(store)["野口"] == 18
-    text = "野口さん、公休は毎月11日"
-    s = _session(store, {text: [{"type": "count_limit", "staff": "野口", "shift": "公", "min": 11, "max": 11}]})
+    assert _rest(store)["青木"] == 18
+    text = "青木さん、公休は毎月11日"
+    s = _session(store, {text: [{"type": "count_limit", "staff": "青木", "shift": "公", "min": 11, "max": 11}]})
     r = _say(s, text)
     assert r["kind"] == "applied" and "守れませんでした" not in r["warning"]
-    assert _rest(store)["野口"] == 11
+    assert _rest(store)["青木"] == 11
 
 
 def test_まとめた公休のルールの中の1人を一言で変えると効く(with_part, tmp_path):
@@ -190,7 +190,7 @@ def test_まとめた公休のルールの中の1人を一言で変えると効�
     r = _say(s, text)
     assert r["kind"] == "applied" and "守れませんでした" not in r["warning"]
     rest = _rest(store)
-    assert rest["赤坂"] == 11 and rest["野口"] == 18 and rest["井上"] == 9
+    assert rest["赤坂"] == 11 and rest["青木"] == 18 and rest["井上"] == 9
 
 
 def test_パートの人がいる施設で全員の公休を変えても人ごとのルールは残る(with_part, tmp_path):
@@ -200,7 +200,7 @@ def test_パートの人がいる施設で全員の公休を変えても人ご�
     r = _say(s, text)
     assert r["kind"] == "applied" and "守れませんでした" not in r["warning"]
     rest = _rest(store)
-    assert rest.pop("野口") == 18
+    assert rest.pop("青木") == 18
     assert set(rest.values()) == {10}
 
 
