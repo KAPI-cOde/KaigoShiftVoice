@@ -157,3 +157,19 @@ def test_count_with_everyone_word_goes_to_everyone(store, text):
     p = to_proposal([{"type": "count_limit", "shift": "夜", "max": 4}], text, store.facility(), store.staff(),
                     store.month(2026, 11))
     assert p.rules and not p.rules[0]["who"]
+
+
+@pytest.mark.parametrize("text", ["岡田さん、12日はお子さんの熱で急に休み", "岡田さん、15日はお孫さんの運動会で休み",
+                                  "岡田さん、20日は旦那さんの通院の付き添いで休み"])
+def test_family_words_are_not_unknown_names(sess, text):
+    """家族の言葉は名簿にない名前として止めない。岡田さんは伏せて送る。"""
+    m = Masker(sess.store.staff(), sess.store.facility())
+    masked, unknown = m.mask(text)
+    assert unknown == [] and "岡田" not in masked
+
+
+def test_unknown_person_still_stops_next_to_family_word(sess):
+    """家族の言葉があっても、名簿にない人の名前は今どおり止める。"""
+    m = Masker(sess.store.staff(), sess.store.facility())
+    _, unknown = m.mask("森田さん、12日はお子さんの熱で休み")
+    assert unknown == ["森田"]
