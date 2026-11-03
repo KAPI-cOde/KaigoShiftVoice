@@ -32,7 +32,7 @@ def _fake(store, ym, states):
 
 def test_q1_no_scene_is_quiet_without_solving(st):
     """名簿にいない人のルールは、作り直さずに静かと数える（当てはまる場面が無い）。"""
-    _add(st, "g1", "森さん 夜勤は月3回まで", "count", {"shifts": ["夜"], "max": 3}, ["森"])
+    _add(st, "g1", "森田さん 夜勤は月3回まで", "count", {"shifts": ["夜"], "max": 3}, ["森田"])
     q = check_month(st, 2026, 11, only=["g1"], workers=1)
     assert q["rules"]["g1"] == {"state": "quiet", "no_scene": True, "seconds": 0.0}
 
