@@ -43,8 +43,9 @@ def _redact_not_names(t: str) -> str:
         if i < pos or (i > 0 and _NAMEISH.fullmatch(t[i - 1])):
             continue   # 前が漢字・カタカナなら、もっと長い名前の一部（漢字＋子の名前）。名簿にない名前として下で止める
         j = i
-        while (j > 0 and t[j - 1] not in SAFE_STOP and not t[j - 1].isdigit() and not _NAMEISH.fullmatch(t[j - 1])
-               and not re.search(HONORIFIC + "$", t[:j])):   # 漢字（「12日は」の日）でも止める。日付を食わない
+        while (j > 0 and t[j - 1] not in SAFE_STOP and not t[j - 1].isdigit()
+               and not (t[j - 1] == "日" and j > 1 and t[j - 2].isdigit())   # 「12日」の日で止める（日付を食わない）
+               and not re.search(HONORIFIC + "$", t[:j])):
             j -= 1
         if j == i:
             continue
@@ -128,8 +129,16 @@ class Masker:
             run = mm.group(1)
             j = mm.start(1)
             after = t[mm.end():mm.end() + 1]
-            if all(c in PARTICLES_HEAD for c in run) or (after == "と" and run[-1] in PARTICLES_HEAD):
-                continue   # 「明けはちゃんと休み」「シフトをくんで」（呼び名でない）
+            word = t[mm.end() - 3:mm.end()] if t[mm.end() - 3:mm.end()] == "ちゃん" else t[mm.end() - 2:mm.end()]
+            before = t[mm.start(1) - 1] if mm.start(1) > 0 else ""
+            # 通すのは決まった言い方だけ（迷ったら聞き返す。名前を送らないため）。「ちゃんと」「くんで」「くんだ」の
+            # 前が助詞1字で、その前が文の頭・句読点・漢字・カタカナの時だけ（「シフトをくんで」「、もちゃんと」）
+            fixed = (word == "ちゃん" and after == "と") or (word == "くん" and after in ("で", "だ"))
+            # 前が助詞1字（その前は文の頭・句読点・漢字・カタカナ）か、漢字の送り仮名1字＋助詞（「休みをちゃんと」）の時だけ
+            if fixed and run[-1] in PARTICLES_HEAD and (
+                    (len(run) == 1 and (before == "" or before in SAFE_STOP or _NAMEISH.fullmatch(before)))
+                    or (len(run) == 2 and before and _NAMEISH.fullmatch(before))):
+                continue
             while j > 0 and run and run[0] in PARTICLES_HEAD and len(run) > 2:
                 run, j = run[1:], j + 1   # 前の助詞（「はゆうちゃん」の「は」）は名前に入れない
             if run not in KANA_NOT_NAMES and run not in unknown:

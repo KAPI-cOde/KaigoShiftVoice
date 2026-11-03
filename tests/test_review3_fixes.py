@@ -69,7 +69,7 @@ def test_sama_name_is_not_sent(sess, text, unknown):
     assert unknown in names
 
 
-@pytest.mark.parametrize("text", ["明けはちゃんと休みにして", "シフトをくんでほしい", "岡田さん、おばあちゃんの通院で12日休み",
+@pytest.mark.parametrize("text", ["休みをちゃんと取らせて", "シフトをくんでほしい", "岡田さん、おばあちゃんの通院で12日休み",
                                   "岡田さん、じいちゃんの法事で12日休み"])
 def test_common_words_with_chan_kun_do_not_stop(sess, text):
     _, names = Masker(sess.store.staff(), sess.store.facility()).mask(text)
@@ -79,3 +79,18 @@ def test_common_words_with_chan_kun_do_not_stop(sess, text):
 def test_redaction_keeps_the_date(sess):
     masked, _ = Masker(sess.store.staff(), sess.store.facility()).mask("岡田さん、12日はお子さんの熱で休み")
     assert "12日" in masked and "（家族）" in masked
+
+
+@pytest.mark.parametrize("text,name", [("明けはともちゃんと話して", "とも"), ("12日はけいくんで決まり", "けい"), ("ともちゃん、12日休み", "とも"),
+                                       ("かずやくんと岡田さん、12日休み", "かずや"), ("はるとくんと話して12日休み", "はると"),
+                                       ("なおちゃんと岡田さん、12日休み", "なお")])
+def test_name_before_chan_to_is_not_skipped(sess, text, name):
+    """「〜ちゃんと」「〜くんで」でも、前に名前らしいひらがながあれば聞き返す（名前を送らない）。"""
+    masked, names = Masker(sess.store.staff(), sess.store.facility()).mask(text)
+    assert names, (text, masked)
+
+
+def test_redaction_walks_past_kanji_name(sess):
+    """漢字の名前の一部（美よ子さん）も置き換えの外に残さない。止まるのは「12日」の日だけ。"""
+    masked, names = Masker(sess.store.staff(), sess.store.facility()).mask("岡田さん、12日は美よ子さんの用事で休み")
+    assert "美" not in masked or names
