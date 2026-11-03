@@ -176,3 +176,15 @@ def test_m12_group_card_flags_pairs(sess):
     head = next(c for c in v["cards"] if c.reason == "added_last_month")
     assert head.pairs
     assert "は同じ所を決めています" in card_lines(head, 12, 11)["lines"][1]
+
+
+def test_m12_split_change_second_card(sess):
+    """［1件ずつ見る］の後で2件目を［変える］と、その1件だけが変わる（敵対レビュー 2026-11-04 の A・B）。"""
+    _four_added(sess)
+    nr = {"name": "千葉さん 水曜は遅番に入れない", "kind": "weekday", "flex": "wish",
+          "params": {"weekdays": ["wed"], "not_in": ["遅"]}, "who": ["千葉"], "when": None}
+    answer(sess.store, 2026, 12, "a1", "change", new_rule=nr, said="千葉さん、水曜は遅番なしで", split=True)
+    a = answers_for(sess.store.ledger(), 2026, 12)
+    assert set(a) == {"a1"} and not a["a1"].get("group")
+    v = review_cards(sess.store.ledger(), 2026, 12)        # 開き直しても1件ずつのまま
+    assert len([c for c in v["cards"] if c.reason == "added_last_month"]) == 4

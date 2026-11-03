@@ -981,7 +981,7 @@ function renderReview() {
       var cok = el("button", "primary", "この中身に変える"); cok.type = "button"; cok.disabled = !chText.trim();
       cok.addEventListener("click", function () {
         cok.disabled = true;
-        next("change", { rule_id: c.rule_id, text: chText }).then(function (res) {
+        next("change", { rule_id: c.rule_id, text: chText, split: splitAdded }).then(function (res) {
           if (!res) return;
           R = res; chOpen = false; chText = ""; detailOpen = false; rvErr = "";
           renderReview();
@@ -1005,7 +1005,7 @@ function renderReview() {
       var b = el("button", "", t);
       b.type = "button";
       b.addEventListener("click", function () {
-        next("undo", { rule_id: answered[i].rule_id }).then(function (res) {
+        next("undo", { rule_id: answered[i].rule_id, split: splitAdded }).then(function (res) {
           if (!res) return;
           R = res; detailOpen = false; extOpen = false; rvErr = "";
           renderReview();

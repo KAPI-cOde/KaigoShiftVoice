@@ -352,9 +352,10 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                             out = fl.answer(data.get("rule_id", ""), data.get("answer", ""), data.get("new_until"),
                                             bool(data.get("split")))
                         elif self.path == "/api/next/change":
-                            out = fl.change(data.get("rule_id", ""), data.get("text", ""), box.session.reader)
+                            out = fl.change(data.get("rule_id", ""), data.get("text", ""), box.session.reader,
+                                            split=bool(data.get("split")))
                         elif self.path == "/api/next/undo":
-                            out = fl.undo(data.get("rule_id", ""))
+                            out = fl.undo(data.get("rule_id", ""), split=bool(data.get("split")))
                         elif self.path == "/api/next/build":
                             out = fl.build()
                         elif self.path == "/api/next/adopt":

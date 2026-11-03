@@ -126,7 +126,7 @@ class NextFlow:
                aged=aged(self.store, self.ny, self.nm), temp_months=temporary_months_setting(self.store))
         return self.review(split)
 
-    def change(self, rule_id: str, text: str, reader) -> dict:
+    def change(self, rule_id: str, text: str, reader, split: bool = False) -> dict:
         """［変える（話す）］。先月増えた札を、話した（書いた）一言の中身に置き換える（M8）。
         読み取りは1幕の一言と同じ（名前を伏せて送る・型はコードが確かめる）。読めない時は札を変えない。"""
         self._ensure()
@@ -150,15 +150,17 @@ class NextFlow:
         if p.kind != "rule" or len(p.rules) != 1:
             return {"error": "このルールの変え方を1つだけ言ってください。ルールは変えていません"}
         try:
+            # ［1件ずつ見る］の時は split を渡す（渡さないと札がまとめ直され、2件目以降を変えられなかった。
+            # 敵対レビュー 2026-11-04 の A）
             answer(self.store, self.ny, self.nm, rule_id, "change", new_rule=p.rules[0], said=text,
-                   new_until=p.until)
+                   new_until=p.until, split=split)
         except LedgerError as e:
             return {"error": str(e)}
-        return self.review()
+        return self.review(split)
 
-    def undo(self, rule_id: str) -> dict:
+    def undo(self, rule_id: str, split: bool = False) -> dict:
         undo_answer(self.store, self.ny, self.nm, rule_id)
-        return self.review()
+        return self.review(split)
 
     def build(self, base_date: str | None = None) -> dict:
         """返さない案と返す案を同じ条件で作る。数えるのは返していない引き受け（さかのぼるのは施設の設定の
