@@ -39,7 +39,7 @@ def _redact_not_names(t: str) -> str:
         if i < pos or (i > 0 and _NAMEISH.fullmatch(t[i - 1])):
             continue   # 前が漢字・カタカナなら、もっと長い名前の一部（漢字＋子の名前）。名簿にない名前として下で止める
         j = i
-        while (j > 0 and i - j < 8 and t[j - 1] not in SAFE_STOP and not t[j - 1].isdigit()
+        while (j > 0 and t[j - 1] not in SAFE_STOP and not t[j - 1].isdigit()
                and not re.search(HONORIFIC + "$", t[:j])):
             j -= 1
         if j == i:
@@ -109,8 +109,13 @@ class Masker:
         unknown = []
         for mm in re.finditer(r"([一-龥々ァ-ヶA-Za-z]{1,6})" + HONORIFIC, t):
             m = mm.group(1)
-            if re.fullmatch(r"職員\d{0,2}", m) or m in NOT_NAMES or m in FAMILY_WORDS:
+            if re.fullmatch(r"職員\d{0,2}", m):
                 continue
+            if m in NOT_NAMES or m in FAMILY_WORDS:
+                # 置き換えの後に残った名前でない語は、直前が区切り・数字・呼び方の終わり・文の頭の時だけ通す（閉じる側）
+                i = mm.start(1)
+                if i == 0 or t[i - 1] in SAFE_STOP or t[i - 1].isdigit() or re.search(HONORIFIC + "$", t[:i]):
+                    continue
             unknown.append(m)
         return t, list(self.leftover) + unknown
 

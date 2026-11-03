@@ -195,7 +195,7 @@ def test_every_not_name_word_after_hiragana_still_stops(sess):
     m = Masker(sess.store.staff(), sess.store.facility())
     leaks = []
     for w in sorted(NOT_NAMES | FAMILY_WORDS):
-        for head in ("よし", "なお", "まご", "とも", "かの", "とお", "はお", "ゆー", "ｱｲ"):
+        for head in ("よし", "なお", "まご", "とも", "かの", "とお", "はお", "ゆー", "ｱｲ", "あいうえおかきくけこ"):
             for before in ("", "12日", "12日は", "岡田さんの"):
                 masked, unknown = m.mask(f"{before}{head}{w}さん、休み")
                 if not unknown and head in masked:
