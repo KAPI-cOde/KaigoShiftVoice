@@ -56,8 +56,13 @@ def _days(v, month: Month) -> list[int]:
     return ds
 
 
+NO_LEAVE = "この施設には有給の記号がありません。表もルールも変えていません"
+
+
 def _sym(v, facility: Facility) -> str:
     if v not in facility.symbols:
+        if v in ("有", "有給") and _leave_sym(facility) is None:
+            raise Clarify(NO_LEAVE)   # 取り込んで作った施設には、有給の記号が無いことがある
         raise Clarify(f"勤務が読めませんでした（{v}）")
     return v
 
@@ -78,8 +83,9 @@ def _who(names: list[str] | None) -> str:
     return "・".join(f"{n}さん" for n in names) if names else "全員"
 
 
-def _leave_sym(facility: Facility) -> str:
-    return next(st.symbol for st in facility.shift_types if st.kind == "leave")
+def _leave_sym(facility: Facility) -> str | None:
+    """有給の記号。施設の勤務の種類に無ければ None。"""
+    return next((st.symbol for st in facility.shift_types if st.kind == "leave"), None)
 
 
 FIXED_WORDS = ("必ず", "かならず", "絶対", "ぜったい", "どうしても", "外せない", "動かせない")
@@ -287,6 +293,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             elif n <= 0:
                 raise Clarify("有給の日数を教えてください")
             lv = _leave_sym(facility)
+            if lv is None:
+                raise Clarify(NO_LEAVE)
             p.rules.append({"name": f"{who[0]}さん 有給{n}日（日付は任せる）", "kind": "count", "flex": "wish",
                             "params": {"shifts": [lv], "min": n}, "who": who, "when": None})
         elif t == "staff_info":

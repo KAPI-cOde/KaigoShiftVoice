@@ -30,36 +30,91 @@ class Instance:
     hi: int | None
 
 
+def _sides(new: dict, old: dict) -> set[str]:
+    """新しい回数のルールが言った側（下限・上限）と、言っていない側でも新しい値とぶつかる古い側。"""
+    out = {side for side in ("min", "max") if new.get(side) is not None}
+    if "max" in out and "min" not in out and old.get("min") is not None and new["max"] < old["min"]:
+        out.add("min")
+    if "min" in out and "max" not in out and old.get("max") is not None and new["min"] > old["max"]:
+        out.add("max")
+    return out
+
+
+def _replace_same(rules: list[Rule]) -> list[Rule]:
+    """同じ記号の組を同じ相手に数える、帳面の回数のルールが2本ある時は、新しい方（後ろ）が古い方に代わる。
+    相手が同じとは、全員どうし（全員向けと、取り込みで作った何人かまとめた公休の数を含む）か、同じ人どうし。
+    新しい方が言った側だけ古い方から外す。毎月か今月だけかは帳面の期間のまま（今月だけの方は翌月に残らない）。
+    （取り込みの知らせが勧める「公休は月10日」が、元の公休の数とぶつかって効かなかった。敵対レビュー 2026-11-03）
+    当てるのは運用の都合（operational）どうしで、月の全部に効くものだけ。帳面に無いルール（返す案の g-・前提の p-）は
+    当てない（帳面のルールは rules_at が meta に from を入れる）。"""
+    import copy
+
+    def ok(r: Rule) -> bool:
+        return r.kind == "count" and not r.when and r.flex == "operational" and "from" in r.meta
+
+    out = list(rules)
+    for i, new in enumerate(rules):
+        if not ok(new):
+            continue
+        key = tuple(sorted(new.params.get("shifts") or []))
+        for j in range(i):
+            old = out[j]
+            if not ok(old) or tuple(sorted(old.params.get("shifts") or [])) != key:
+                continue
+            sides = _sides(new.params, old.params)
+            if not new.who:
+                if old.who and len(old.who) == 1:
+                    continue   # 1人だけのルールは全員向けより優先する（with_overrides）。新しい全員向けでも消さない
+                old = copy.copy(old)
+                old.params = {k: v for k, v in old.params.items() if k not in sides}
+            else:
+                hit = sorted(set(new.who) & set(old.who or []))
+                if not hit:
+                    continue   # 古い方が全員向けなら、下の名指しの優先で外れる
+                old = copy.copy(old)
+                old.meta = {**old.meta, **{f"except_{side}": sorted(set(old.meta.get(f"except_{side}", ())) | set(hit))
+                                           for side in sides}}
+            out[j] = old
+    return out
+
+
 def with_overrides(rules: list[Rule]) -> list[Rule]:
-    """人を名指しした月の回数のルールは、同じ勤務の全員向けの回数のルールより優先する。
+    """人を名指しした月の回数のルールは、同じ勤務の全員向け（と、より多くの人をまとめた）回数のルールより優先する。
     （「小川さん、今月は夜勤ゼロで」が「夜勤の回数 3〜5回」とぶつかって守られなかった。2026-11-02）
     名指しのルールが言った側（下限か上限）だけ、その人を全員向けの同じ側から外す（片側だけの頼みで、
     もう片側の守りまで外さない）。期間の一部だけのルール（29日まで など）・本人の希望・
-    全員向けが動かせない決まり（公休の数 など）の時は外さない。"""
+    全員向けが動かせない決まり（公休の数 など）の時は外さない。
+    その前に、同じ相手に2本ある帳面の回数のルールは新しい方を残す（_replace_same）。"""
     import copy
-    named: dict[tuple, dict[str, dict]] = {}   # 勤務 → 人 → {"min": 値, "max": 値}
+    rules = _replace_same(rules)
+    named: dict[tuple, list[tuple[Rule, str, dict]]] = {}   # 勤務 → [(元のルール, 人, {"min": 値, "max": 値})]
     for r in rules:
         if r.kind == "count" and r.who and not r.when and r.flex in ("operational", "fixed"):
-            d = named.setdefault(tuple(sorted(r.params.get("shifts") or [])), {})
             for w in r.who:
-                for side in ("min", "max"):
-                    if r.params.get(side) is not None:
-                        d.setdefault(w, {})[side] = r.params[side]
+                v = {side: r.params[side] for side in ("min", "max") if r.params.get(side) is not None}
+                if v:
+                    named.setdefault(tuple(sorted(r.params.get("shifts") or [])), []).append((r, w, v))
     if not named:
         return rules
     out = []
     for r in rules:
-        d = (named.get(tuple(sorted(r.params.get("shifts") or [])))
-             if r.kind == "count" and not r.who and r.flex != "fixed" else None)
-        if d:
+        src = (named.get(tuple(sorted(r.params.get("shifts") or [])))
+               if r.kind == "count" and not r.when and r.flex != "fixed" else None)
+        if src and r.who:
+            # 何人かをまとめたルール（取り込みで作った公休の数など）は、その中の人をより少ない人数で名指ししたルールに譲る
+            src = [(s, w, v) for s, w, v in src if s is not r and w in r.who and len(s.who) < len(r.who)]
+        if src:
+            d: dict[str, dict] = {}
+            for _s, w, v in src:
+                d.setdefault(w, {}).update(v)
             gmin, gmax = r.params.get("min"), r.params.get("max")
-            ex_min, ex_max = [], []
+            ex_min, ex_max = set(r.meta.get("except_min", ())), set(r.meta.get("except_max", ()))
             for w, v in d.items():
                 # 言った側は上書き。言っていない側も、名指しの値とぶつかる時（上限0 と 下限3 など）は外す
                 if "min" in v or ("max" in v and gmin is not None and v["max"] < gmin):
-                    ex_min.append(w)
+                    ex_min.add(w)
                 if "max" in v or ("min" in v and gmax is not None and v["min"] > gmax):
-                    ex_max.append(w)
+                    ex_max.add(w)
             r = copy.copy(r)
             r.meta = {**r.meta, "except_min": sorted(ex_min), "except_max": sorted(ex_max)}
         out.append(r)

@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .model import Acceptance, Facility, Month, Rule, Staff
+from .build import solve_staged
 from .solver import SolveResult, solve_month
 
 DEFAULT = {"leave": "有", "extra_leave": 1, "shorten_run": 1, "min_run_to_shorten": 4, "window_months": 3}
@@ -66,6 +67,8 @@ class GiveBack:
     leave_avg: float = 0.0
     checks: dict[str, bool] = field(default_factory=dict)
     message: str = ""
+    base_note: str = ""                # 返さない案で段を下げた時の知らせ
+    base_seconds: float = 0.0          # 返さない案に使った秒（全段の合計）
 
 
 def _hard_broken(r: SolveResult) -> int:
@@ -81,9 +84,14 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
     gs = settings(facility)
     work = set(facility.workday_symbols())
     yu = gs["leave"]
-    base = solve_month(facility, staff, rules, month)
+    # 返さない案は段の順で作る（作る時に段を下げた施設や、一言でぶつかるルールを足した施設でも翌々月へ進める。
+    # 敵対レビュー 2026-11-03）。段1で作れる時は、これまでと同じ表になる
+    staged = solve_staged(facility, staff, rules, month)
+    base = staged.result
     if base.status != "ok" or _hard_broken(base):
-        return GiveBack("base_failed", base, None, message="返さない案が作れませんでした")
+        return GiveBack("base_failed", base, None, message=staged.message or "返さない案が作れませんでした",
+                        base_seconds=staged.seconds)
+    note, secs = staged.note or "", staged.seconds
     names = [s.name for s in staff]
     takers = [n for n in names if counts.get(n, 0) > 0]
     others = [n for n in names if n not in takers]
@@ -96,7 +104,7 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
     def stage_rules(stage):
         out = []
         for n in takers:
-            if "leave" in stage and target[n] > leave0[n]:
+            if "leave" in stage and target[n] > leave0[n] and yu in facility.symbols:   # 有給の記号が無い施設では返さない
                 out.append(Rule(id=f"g-leave-{n}", ver=1, name=f"{n}さん 有給を{target[n]}日", kind="count",
                                 flex="fixed", params={"shifts": [yu], "min": target[n], "max": target[n]},
                                 who=[n], when=None, scope="once"))
@@ -124,7 +132,8 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
         m.add(sum(runs) <= _run_windows({n: base.table[n] for n in others}, work))
         m.add(sum(tobi) <= pat0["tobi"])
 
-    gb = GiveBack("cannot", base, None, counts=dict(counts), leave_avg=avg, message="この条件では返せません")
+    gb = GiveBack("cannot", base, None, counts=dict(counts), leave_avg=avg, message="この条件では返せません",
+                  base_note=note, base_seconds=secs)
     if not takers:
         gb.message = "引き受けた人がいません"
         return gb

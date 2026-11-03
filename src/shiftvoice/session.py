@@ -28,6 +28,7 @@ from .store import Store
 
 JST = dt.timezone(dt.timedelta(hours=9))
 ASK_PERIOD = "毎月ですか、今月だけですか"
+READ_FAILED = "読み取りに失敗しました。表もルールも変えていません"
 
 
 @dataclass
@@ -112,7 +113,7 @@ class Session:
         if u is None:
             return Reply("error", uid, "送り直す発言が見つかりません")
         if u.get("items") is not None:
-            return self._propose(u)
+            return self._safe_propose(u)
         return self._read(u)
 
     def _read(self, u: dict) -> Reply:
@@ -142,11 +143,21 @@ class Session:
                          else [{"type": "unclear", "question": b.get("question")}])
         except ReadError as e:
             self.store.update_pending(self.year, self.month, u["id"], status="failed", error=str(e))
-            return Reply("error", u["id"], "読み取りに失敗しました。表もルールも変えていません")
+            return Reply("error", u["id"], READ_FAILED)
         # 一度読んだら残し、AI を呼び直さない（3章 drafts）
         self.store.update_pending(self.year, self.month, u["id"], items=items, status="read")
         u = {**u, "items": items}
-        return self._propose(u)
+        return self._safe_propose(u)
+
+    def _safe_propose(self, u: dict) -> Reply:
+        """読み取りの後で想定外の例外が出ても、画面に「通信が切れた」ように見せない。読み取りの失敗と同じ返事にする
+        （取り込んで作った施設で、有給の記号が無くて落ちた。敵対レビュー 2026-11-03）。"""
+        try:
+            return self._propose(u)
+        except Exception as e:  # noqa: BLE001 想定外の例外だけ。聞き返し（Clarify）は _propose の中で返事になる
+            self.store.update_pending(self.year, self.month, u["id"], status="failed",
+                                      error=f"{type(e).__name__}: {e}")
+            return Reply("error", u["id"], READ_FAILED)
 
     def choose_name(self, uid: str, wrong: str, right: str) -> Reply:
         """名前の聞き返しで名簿から選んだ。文の名前を置き換えてから読む（選ぶ前は何も送っていない）。"""
@@ -163,8 +174,10 @@ class Session:
     def _leave_caps(self) -> dict[str, int]:
         """人ごとの有給の上限（職員と対象月を持つ回数の決まり。13章）。"""
         fac = self.store.facility()
-        lv = next(st.symbol for st in fac.shift_types if st.kind == "leave")
+        lv = next((st.symbol for st in fac.shift_types if st.kind == "leave"), None)
         caps: dict[str, int] = {}
+        if lv is None:   # 有給の記号が無い施設（取り込んで作った施設など）
+            return caps
         for r in self.store.ledger().rules_at(between=self._span()).values():
             if (r.kind == "count" and r.params.get("shifts") == [lv] and "max" in r.params
                     and r.who and len(r.who) == 1 and r.flex == "operational"):
@@ -202,7 +215,7 @@ class Session:
         if scope is None:
             return Reply("ask_period", uid, ASK_PERIOD)
         self.store.update_pending(self.year, self.month, uid, scope=scope)
-        return self._propose({**u, "scope": scope})
+        return self._safe_propose({**u, "scope": scope})
 
     def _apply(self, u: dict, p: Proposal, scope: str) -> Reply:
         m = self.store.month(self.year, self.month)
