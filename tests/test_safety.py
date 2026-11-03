@@ -201,3 +201,17 @@ def test_every_not_name_word_after_hiragana_still_stops(sess):
                 if not unknown and head in masked:
                     leaks.append(before + head + w)
     assert leaks == [], leaks
+
+
+@pytest.mark.parametrize("text,name", [("あかさかちゃん、12日は休み", "あかさか"),
+                                       ("12日はゆうちゃんが休み", "ゆう"),
+                                       ("とおるくん、夜勤は3回まで", "とおる")])
+def test_kana_nickname_with_chan_is_not_sent(sess, text, name):
+    """ひらがなの呼び名に「ちゃん」「くん」が付いた形は、名簿の呼び方で伏せきれなければ送らずに聞き返す。"""
+    _, unknown = Masker(sess.store.staff(), sess.store.facility()).mask(text)
+    assert name in unknown
+
+
+def test_baby_word_is_not_a_nickname(sess):
+    _, unknown = Masker(sess.store.staff(), sess.store.facility()).mask("岡田さん、12日はあかちゃんの健診で休み")
+    assert unknown == []

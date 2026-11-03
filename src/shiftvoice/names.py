@@ -21,6 +21,9 @@ NOT_NAMES = {"皆", "利用者", "看護師", "相談員", "新人"}
 # 家族の言葉（「お子さんの熱で休み」が名簿にない名前「子」で止まった。2026-11-03 作った施設で本物の一言を測った時）
 FAMILY_WORDS = {"子", "孫", "旦那", "主人", "妻", "夫", "嫁", "兄", "姉", "弟", "妹", "祖母", "祖父", "親",
                 "母", "父", "お母", "お父", "家族", "息子", "娘", "奥"}
+# ひらがなに「ちゃん」「くん」が続いても呼び名でない言葉
+KANA_NOT_NAMES = {"あか", "おにい", "おねえ", "にい", "ねえ", "ぼっ", "おじょう", "じょう", "ぼう"}
+PARTICLES_HEAD = set("はがのにをともへでや")
 SAFE_STOP = set("、。,.・ 　（(「」)）!！?？\n")
 _NAMEISH = re.compile(r"[一-龥々ァ-ヶA-Za-z]")
 
@@ -117,6 +120,16 @@ class Masker:
                 if i == 0 or t[i - 1] in SAFE_STOP or t[i - 1].isdigit() or re.search(HONORIFIC + "$", t[:i]):
                     continue
             unknown.append(m)
+        # ひらがなに「ちゃん」「くん」が続く所は呼び名（「あかさかちゃん」「ゆうちゃん」）。名簿の呼び方で伏せきれなかった
+        # 物は、Claude へ送らずに聞き返す（2026-11-03 作った施設で本物の一言を測ると、そのまま送っていた）。
+        # 「さん」は「たくさん」「みなさん」と見分けられないので当てない（README の既知の限界）
+        for mm in re.finditer(r"([ぁ-ゖー]{1,8})(?:ちゃん|くん)", t):
+            run = mm.group(1)
+            j = mm.start(1)
+            while j > 0 and run and run[0] in PARTICLES_HEAD and len(run) > 2:
+                run, j = run[1:], j + 1   # 前の助詞（「はゆうちゃん」の「は」）は名前に入れない
+            if run not in KANA_NOT_NAMES and run not in unknown:
+                unknown.append(run)
         return t, list(self.leftover) + unknown
 
     def suggest(self, unknown: str) -> list[str]:
