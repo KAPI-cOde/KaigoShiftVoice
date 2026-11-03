@@ -114,17 +114,36 @@
   #res-side .detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd; }
   #res-side .adopt { margin-top: 18px; }
   #res-side .done { font-weight: 700; margin-top: 18px; font-size: 15px; }
+  /* 自分の施設で始める */
+  #topbar select { font: inherit; font-size: 12px; border: 1px solid #000; border-radius: 3px; padding: 2px 6px; background: #fff; color: #000; }
+  #vsetup { display: none; max-width: 1440px; margin: 0 auto; padding: 14px 20px 0; }
+  .su-wrap { max-width: 760px; margin: 0 auto; padding-top: 14px; }
+  .su-wrap h1 { font-size: 22px; margin: 6px 0 6px; }
+  .su-wrap label { display: block; font-weight: 700; font-size: 13px; margin: 14px 0 4px; }
+  .su-wrap input[type=text], .su-wrap input[type=number], .su-wrap textarea, .su-wrap select { font: inherit; border: 1px solid #000; border-radius: 3px; padding: 6px 8px; background: #fff; color: #000; }
+  .su-wrap input[type=number] { width: 80px; }
+  .su-wrap textarea { width: 100%; height: 220px; font-size: 12px; white-space: pre; overflow: auto; }
+  .su-wrap .row { display: flex; gap: 10px; align-items: center; }
+  .su-wrap .btns { margin-top: 16px; }
+  .su-wrap button.link { border: 0; background: none; padding: 0; font-size: 12px; text-decoration: underline; cursor: pointer; margin-top: 6px; }
+  .su-wrap label.su-rule { display: flex; gap: 8px; align-items: flex-start; border: 1px solid #bbb; border-radius: 3px; padding: 7px 10px; margin: 0 0 6px; font-weight: 400; font-size: 14px; }
+  .su-wrap label.su-rule input { margin-top: 3px; accent-color: #000; }
+  .su-rule .nm { font-weight: 700; }
+  .su-rule .ev { font-size: 12px; }
+  .su-sym { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  #banner { display: none; border: 1px solid #000; border-radius: 3px; padding: 8px 12px; margin: 0 0 10px; font-weight: 700; }
   footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
 </style>
 </head>
 <body>
 <div id="keybar">Claude の鍵が入っていないので、一言の読み取りは動きません。ターミナルで止めて（Ctrl+C）もう一度起動すると、鍵を聞きます</div>
-<div id="topbar"><span id="distwrap"></span><button type="button" id="to12">12月へ</button></div>
+<div id="topbar"><span id="distwrap"></span><select id="facsel" style="display:none" title="施設を切り替える"></select><button type="button" id="tosetup">自分の施設で始める</button><button type="button" id="to12">12月へ</button></div>
 <main id="v11">
   <section class="left">
+    <div id="banner"></div>
     <h2 id="tabletitle">表</h2>
     <div id="tablewrap"></div>
-    <div class="legend">早＝早番　日＝日勤　遅＝遅番　夜＝夜勤　明＝夜勤明け　公＝公休　研＝研修　有＝有給　／　東・西はユニット　／　黄色＝いま直ったマス</div>
+    <div class="legend" id="legend"></div>
     <div class="said" id="said"></div>
     <div class="reply" id="reply"></div>
     <form id="form" autocomplete="off">
@@ -140,8 +159,9 @@
     <div class="cards" id="cards"></div>
   </section>
 </main>
+<section id="vsetup"><div class="su-wrap" id="susbody"></div></section>
 <section id="v12">
-  <div class="navrow"><span class="small" id="v12sub"></span><button type="button" id="to11">11月の表へ</button></div>
+  <div class="navrow"><span class="small" id="v12sub"></span><button type="button" id="to11">表へ</button></div>
   <div id="v12body"></div>
 </section>
 <footer>勤務の並びや負担の偏りを見えるようにして整えるためのアプリです。医学的な判断や助言は行いません。施設と職員はすべて作り話です。</footer>
@@ -202,6 +222,23 @@ function ruleCells(card) {
   return out;
 }
 
+function unitNames() {
+  var out = [];
+  (S.staff || []).forEach(function (st) { if (out.indexOf(st.unit) < 0) out.push(st.unit); });
+  return out;
+}
+function multiUnit() { return unitNames().length > 1; }
+
+function renderLegend() {
+  var items = (S.shift_names || []).map(function (x) { return [x[0], x[1] === "明け" ? "夜勤明け" : x[1]]; });
+  var leave = items.filter(function (x) { return x[1] === "有給"; });
+  items = items.filter(function (x) { return x[1] !== "有給"; }).concat(leave);
+  var t = items.map(function (x) { return x[0] + "＝" + x[1]; }).join("　");
+  if (multiUnit()) t += "　／　" + unitNames().join("・") + "はユニット";
+  t += "　／　黄色＝いま直ったマス";
+  document.getElementById("legend").textContent = t;
+}
+
 function renderTable() {
   var wrap = document.getElementById("tablewrap");
   wrap.textContent = "";
@@ -232,7 +269,7 @@ function renderTable() {
     if (prevUnit !== null && prevUnit !== st.unit) tr.className = "firstrow";
     prevUnit = st.unit;
     var nm = el("td", "name");
-    nm.appendChild(el("span", "unit", st.unit));
+    if (multiUnit()) nm.appendChild(el("span", "unit", st.unit));
     nm.appendChild(document.createTextNode(st.name));
     (st.changes || []).forEach(function (ch) {
       var mm = parseInt(String(ch.from).split("-")[1], 10);
@@ -321,7 +358,7 @@ function renderCards() {
         if (sim && sim.top2 && sim.top2.length === 2) {  // 画面5の2行（台本 v3 の1分10秒）。矢印でつながない
           var sm = el("div", "detail sim");
           sm.appendChild(el("div", "", "架空の表の累計の試算　" + sim.top2.map(function (t) { return t.name + "さん" + t.count + "回"; }).join("・")));
-          sm.appendChild(el("div", "note", "待機が無い時に穴埋めに入った回数。11月の土日の急な休み" + sim.cases + "件を1件ずつ試算"));
+          sm.appendChild(el("div", "note", "待機が無い時に穴埋めに入った回数。" + S.month + "月の土日の急な休み" + sim.cases + "件を1件ずつ試算"));
           sm.appendChild(el("div", "", "欠勤1件の最初の連絡先は当番1人"));
           b.appendChild(sm);
         }
@@ -486,10 +523,23 @@ function renderKey() {
   document.getElementById("keybar").style.display = S && S.has_key === false ? "block" : "none";
 }
 
+var HINT_DEMO = null;
+function renderHint() {
+  var el = document.getElementById("hint");
+  if (HINT_DEMO === null) HINT_DEMO = el.textContent;
+  var names = (S.staff || []).map(function (s) { return s.name; });
+  // 例の名前は、開いている施設の名簿にある人にする（ほかの施設で知らない名前の例を出さない）
+  el.textContent = (!names.length || names.indexOf("岡田") >= 0) ? HINT_DEMO
+    : HINT_DEMO.replace("岡田さん、15と16は法事で休み", names[0] + "さん、15と16は用事で休み");
+  el.style.display = saidList.length ? "none" : "block";  // 初めの一言までだけ出す
+}
+
 function renderAll() {
-  document.getElementById("hint").style.display = saidList.length ? "none" : "block";  // 初めの一言までだけ出す
+  renderHint();
   renderKey();
   renderDist();
+  renderLegend();
+  renderTopbar();
   renderTable();
   renderCards();
   renderSaid();
@@ -497,6 +547,7 @@ function renderAll() {
 
 // 返事を受けて画面へ。反映した時はマスが光ってから変わる
 function handle(res, isUndo) {
+  document.getElementById("banner").style.display = "none";
   var r = res.reply;
   var changes = (r && (r.kind === "applied" || isUndo) && r.changes) || [];
   if (glowTimer) { clearTimeout(glowTimer); glowTimer = null; }
@@ -651,6 +702,8 @@ function show12(on) {
   document.getElementById("v11").style.display = on ? "none" : "";
   document.getElementById("topbar").style.display = on ? "none" : "";
   document.getElementById("v12").style.display = on ? "block" : "none";
+  document.getElementById("vsetup").style.display = "none";
+  if (on) document.getElementById("to11").textContent = S.month + "月の表へ";
 }
 function get12() { return fetch("/api/next/review").then(function (r) { return r.json(); }); }
 
@@ -880,7 +933,7 @@ function renderResult() {
     if (prevUnit !== null && u !== undefined && prevUnit !== u) tr.className = "firstrow";
     if (u !== undefined) prevUnit = u;
     var nm = el("td", "name");
-    if (u !== undefined) nm.appendChild(el("span", "unit", u));
+    if (u !== undefined && multiUnit()) nm.appendChild(el("span", "unit", u));
     nm.appendChild(document.createTextNode(n));
     tr.appendChild(nm);
     for (var d2 = 1; d2 <= b.days; d2++) {
@@ -944,8 +997,197 @@ function renderResult() {
   box.appendChild(wrap);
 }
 
+// ---- トップバー（月の名前・施設の切り替え）
+function renderTopbar() {
+  document.getElementById("to12").textContent = (S.month % 12 + 1) + "月へ";
+}
+var FACS = [];
+function loadFacilities() {
+  return fetch("/api/facilities").then(function (r) { return r.json(); }).then(function (res) {
+    FACS = res.facilities || [];
+    var sel = document.getElementById("facsel");
+    sel.textContent = "";
+    FACS.forEach(function (f) {
+      var o = el("option", "", f.name || f.id); o.value = f.id; if (f.current) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.style.display = FACS.length > 1 ? "" : "none";
+  });
+}
+// 施設が変わった時、画面に残る前の施設の状態を捨てる
+function resetForFacility(st, bannerText) {
+  S = st; selected = null; newIds = {}; glowCells = {}; shown = {}; ask = null; saidList = []; offerR = null;
+  document.getElementById("reply").textContent = "";
+  var b = document.getElementById("banner");
+  b.textContent = bannerText || "";
+  b.style.display = bannerText ? "block" : "none";
+  document.getElementById("talk").style.display = st.has_voice ? "" : "none";
+  document.getElementById("vsetup").style.display = "none";
+  document.getElementById("v12").style.display = "none";
+  document.getElementById("v11").style.display = "";
+  document.getElementById("topbar").style.display = "";
+  renderAll();
+}
+document.getElementById("facsel").addEventListener("change", function (ev) {
+  var id = ev.target.value;
+  post("facilities/open", { id: id }).then(function (res) {
+    if (res.error) { alert(res.error); return loadFacilities(); }
+    resetForFacility(res.state, "");
+    loadFacilities();
+  }).catch(function () { loadFacilities(); });
+});
+
+// ---- 自分の施設で始める（貼る → 読み取る → 作る）
+var SU = null;
+var SAMPLE_INFO = null;
+function suBox() { return document.getElementById("susbody"); }
+function openSetup() {
+  SU = SU || { step: 1, name: "", year: 2026, month: 11, text: "", pv: null, drop: {}, answers: {}, err: "" };
+  SU.step = SU.pv && SU.step === 2 ? 2 : 1;
+  document.getElementById("v11").style.display = "none";
+  document.getElementById("topbar").style.display = "none";
+  document.getElementById("v12").style.display = "none";
+  document.getElementById("vsetup").style.display = "block";
+  renderSetup();
+}
+function closeSetup() {
+  document.getElementById("vsetup").style.display = "none";
+  document.getElementById("v11").style.display = "";
+  document.getElementById("topbar").style.display = "";
+}
+document.getElementById("tosetup").addEventListener("click", openSetup);
+
+function suField(label, node) {
+  var l = el("label", "", label);
+  var box = el("div", "");
+  box.appendChild(l); box.appendChild(node);
+  return box;
+}
+function renderSetup() {
+  var box = suBox();
+  box.textContent = "";
+  if (SU.step === 1) renderSetup1(box);
+  else if (SU.step === 2) renderSetup2(box);
+  else renderSetup3(box);
+}
+function renderSetup1(box) {
+  box.appendChild(el("h1", "", "いまの勤務表を貼るだけで、来月の表を作ります"));
+  box.appendChild(el("div", "ln", "Excel で名前と日付の入った範囲を選んでコピーし、下の欄に貼ってください。"));
+  box.appendChild(el("div", "ln", "貼った表の月の次の月の表ができます。"));
+  var nm = el("input"); nm.type = "text"; nm.id = "su-name"; nm.value = SU.name; nm.placeholder = "例 こもれびの家";
+  nm.addEventListener("input", function () { SU.name = nm.value; });
+  box.appendChild(suField("施設の名前", nm));
+  var row = el("div", "row");
+  var yy = el("input"); yy.type = "number"; yy.id = "su-year"; yy.value = SU.year;
+  var mm = el("input"); mm.type = "number"; mm.id = "su-month"; mm.value = SU.month; mm.min = 1; mm.max = 12;
+  yy.addEventListener("input", function () { SU.year = yy.value; });
+  mm.addEventListener("input", function () { SU.month = mm.value; });
+  row.appendChild(yy); row.appendChild(el("span", "", "年")); row.appendChild(mm); row.appendChild(el("span", "", "月"));
+  box.appendChild(suField("貼る表の年月", row));
+  var ta = el("textarea"); ta.id = "su-text"; ta.value = SU.text; ta.placeholder = "ここに貼り付けます";
+  ta.addEventListener("input", function () { SU.text = ta.value; });
+  box.appendChild(suField("貼る欄", ta));
+  var sm = el("button", "link", "見本（作り話の施設）を貼ってみる"); sm.type = "button"; sm.id = "su-sample";
+  sm.addEventListener("click", function () {
+    fetch("/api/setup/sample").then(function (r) { return r.json(); }).then(function (x) {
+      SU.name = x.name; SU.year = x.year; SU.month = x.month; SU.text = x.text; SU.pv = null; SU.err = "";
+      renderSetup();
+    });
+  });
+  box.appendChild(sm);
+  var err = el("div", "rv-err", SU.err); err.id = "su-err"; err.style.marginTop = "8px";
+  box.appendChild(err);
+  var btns = el("div", "btns");
+  var go = el("button", "primary big", "読み取る"); go.type = "button"; go.id = "su-read";
+  go.addEventListener("click", function () {
+    go.disabled = true; err.textContent = "";
+    post("setup/preview", { text: SU.text, year: SU.year, month: SU.month }).then(function (res) {
+      if (res.error) { SU.err = res.error; renderSetup(); return; }
+      SU.pv = res; SU.drop = {}; SU.answers = {}; SU.err = ""; SU.step = 2; renderSetup();
+    }).catch(function () { SU.err = "読み取れませんでした。もう一度試してください"; renderSetup(); });
+  });
+  var cancel = el("button", "", "やめる"); cancel.type = "button";
+  cancel.addEventListener("click", closeSetup);
+  btns.appendChild(go); btns.appendChild(cancel);
+  box.appendChild(btns);
+}
+var KIND_CHOICES = [["work", "勤務"], ["rest", "休み"], ["leave", "有給など"], ["ake", "明け"]];
+function renderSetup2(box) {
+  var pv = SU.pv;
+  var nWork = pv.shift_types.filter(function (s) { return s.kind === "work" || s.kind === "ake"; }).length;
+  box.appendChild(el("h1", "", pv.staff.length + "人・勤務" + nWork + "種類が見つかりました"));
+  box.appendChild(el("div", "ln", pv.staff.join("・")));
+  box.appendChild(el("label", "", "見つけたルール（外すと、作る時に入れません）"));
+  pv.rules.forEach(function (r) {
+    var row = el("label", "su-rule");
+    var cb = el("input"); cb.type = "checkbox"; cb.checked = !SU.drop[r.id]; cb.dataset.rule = r.id;
+    cb.addEventListener("change", function () { if (cb.checked) delete SU.drop[r.id]; else SU.drop[r.id] = true; });
+    var tx = el("div", "");
+    tx.appendChild(el("div", "nm", r.name));
+    tx.appendChild(el("div", "ev", r.evidence));
+    row.appendChild(cb); row.appendChild(tx);
+    box.appendChild(row);
+  });
+  if (pv.unknown_symbols.length) {
+    box.appendChild(el("label", "", "知らない記号があります。何か教えてください"));
+    pv.unknown_symbols.forEach(function (sym) {
+      var a = SU.answers[sym] || (SU.answers[sym] = { name: "", kind: "work" });
+      var row = el("div", "su-sym");
+      row.appendChild(el("span", "", "「" + sym + "」は"));
+      var ni = el("input"); ni.type = "text"; ni.placeholder = "名前（例 半休）"; ni.value = a.name;
+      ni.addEventListener("input", function () { a.name = ni.value; });
+      var sel = el("select");
+      KIND_CHOICES.forEach(function (k) { var o = el("option", "", k[1]); o.value = k[0]; if (a.kind === k[0]) o.selected = true; sel.appendChild(o); });
+      sel.addEventListener("change", function () { a.kind = sel.value; });
+      row.appendChild(ni); row.appendChild(sel);
+      box.appendChild(row);
+    });
+  }
+  var small = [];
+  if (pv.blank_as_rest) small.push("空欄 " + pv.blank_as_rest + " マスは公休として読みました");
+  if (pv.skipped) small.push("集計の行 " + pv.skipped + " 行は飛ばしました");
+  if (small.length) { var sm = el("div", "small", small.join("。")); sm.style.marginTop = "10px"; box.appendChild(sm); }
+  var err = el("div", "rv-err", SU.err); err.id = "su-err"; err.style.marginTop = "8px";
+  box.appendChild(err);
+  var btns = el("div", "btns");
+  var go = el("button", "primary big", pv.next_month + "月の表を作る"); go.type = "button"; go.id = "su-create";
+  go.addEventListener("click", startCreate);
+  var back = el("button", "", "戻る"); back.type = "button";
+  back.addEventListener("click", function () { SU.step = 1; SU.err = ""; renderSetup(); });
+  btns.appendChild(go); btns.appendChild(back);
+  box.appendChild(btns);
+}
+function renderSetup3(box) {
+  var w = el("div", "wait");
+  w.appendChild(el("div", "t", "表を作っています（10秒ほど）"));
+  var sec = el("div", "sec", "0秒"); w.appendChild(sec);
+  box.appendChild(w);
+  var t0 = Date.now();
+  waitTimer = setInterval(function () { sec.textContent = Math.floor((Date.now() - t0) / 1000) + "秒"; }, 500);
+}
+function startCreate() {
+  var pv = SU.pv;
+  var answers = {};
+  pv.unknown_symbols.forEach(function (sym) { answers[sym] = SU.answers[sym]; });
+  SU.step = 3; renderSetup();
+  var stop = function () { if (waitTimer) { clearInterval(waitTimer); waitTimer = null; } };
+  post("setup/create", { text: SU.text, year: SU.year, month: SU.month, name: SU.name, answers: answers,
+                         drop_rules: Object.keys(SU.drop) }).then(function (res) {
+    stop();
+    if (res.error) { SU.err = res.error; SU.step = 2; renderSetup(); return; }
+    var nm = res.facility.name || SU.name;
+    var msg = res.existing
+      ? nm + "は、もう作ってあったので、そのまま開きました（" + res.month + "月の表）"
+      : nm + "の" + res.month + "月の表ができました。気づいたことを一言で直せます";
+    SU = null;
+    resetForFacility(res.state, msg);
+    loadFacilities();
+  }).catch(function () { stop(); SU.err = "作れませんでした。もう一度試してください"; SU.step = 2; renderSetup(); });
+}
+
 fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
   S = st;
+  loadFacilities();
   if (st.has_voice) document.getElementById("talk").style.display = "";
   renderAll();
   var pend = st.pending || [];

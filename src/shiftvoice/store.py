@@ -136,7 +136,14 @@ class Store:
     # 待機が無い時の穴埋めの試算（tools/absence_sim.py が作る。前から使っている置き場には無いので、初めのデータも見る）
     def absence_sim(self, year: int, month: int) -> dict | None:
         name = f"absence-sim-{year:04d}-{month:02d}.json"
-        return read_json(self.root / name) or read_json(SEED / name)
+        own = read_json(self.root / name)
+        if own:
+            return own
+        # 初めのデータを見るのは、デモの施設の時だけ（ほかの施設にデモの試算を出さない）
+        fac = read_json(self.root / "facility.json") or {}
+        if fac.get("id") == (read_json(SEED / "facility.json") or {}).get("id"):
+            return read_json(SEED / name)
+        return None
 
     # 撮影・試験用の前提
     def premise(self, year: int, month: int) -> dict | None:

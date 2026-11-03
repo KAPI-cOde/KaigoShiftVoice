@@ -20,10 +20,74 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .nextmonth import next_ym
+from .onboard import (OnboardError, ParseError, Proposal, Pasted, _short_id, create_facility, infer,
+                      parse_paste)
 from .reader import HaikuReader, ReadError, SonnetBuilder
 from .session import Session
+from .store import Store, read_json
+
+SAMPLE_PASTE = Path(__file__).resolve().parents[2] / "data" / "samples" / "komorebi-2026-11.tsv"
+SAMPLE_NAME = "こもれびの家（作り話）"
 
 STATIC = Path(__file__).resolve().parent / "static"
+
+
+def sample_info() -> dict:
+    """見本の貼り付け（作り話の施設B）。"""
+    return {"text": SAMPLE_PASTE.read_text(encoding="utf-8"), "name": SAMPLE_NAME, "year": 2026, "month": 11}
+
+
+def _parse_setup(data: dict) -> tuple[Pasted, Proposal, int, int]:
+    try:
+        year, month = int(data.get("year")), int(data.get("month"))
+    except (TypeError, ValueError):
+        raise ParseError("貼る表の年と月を数字で入れてください")
+    if not (2000 <= year <= 2100 and 1 <= month <= 12):
+        raise ParseError("貼る表の年と月を確かめてください")
+    pasted = parse_paste(str(data.get("text") or ""))
+    return pasted, infer(pasted, year, month), year, month
+
+
+def preview_out(pasted: Pasted, prop: Proposal) -> dict:
+    ny, nm = next_ym(prop.year, prop.month)
+    return {
+        "ok": True, "year": prop.year, "month": prop.month, "next_year": ny, "next_month": nm,
+        "staff": list(prop.table), "days": pasted.days,
+        "shift_types": [{"symbol": s["symbol"], "name": s["name"], "kind": s["kind"]} for s in prop.shift_types],
+        "rules": [{"id": r["id"], "name": r["name"], "evidence": r["meta"]["evidence"]} for r in prop.rules],
+        "unknown_symbols": list(prop.unknown_symbols),
+        "blank_as_rest": pasted.blank_as_rest, "skipped": pasted.skipped,
+    }
+
+
+def st_name(root: Path) -> str:
+    return (read_json(Path(root) / "facility.json") or {}).get("name", "")
+
+
+def list_facilities(current: Path) -> list[dict]:
+    """同じ親フォルダの下で facility.json を持つ置き場の一覧。"""
+    current = Path(current)
+    out = []
+    for d in sorted(current.parent.iterdir()) if current.parent.exists() else []:
+        if d.is_dir() and not d.name.endswith(".making") and (d / "facility.json").exists():
+            out.append({"id": d.name, "name": st_name(d), "current": d == current})
+    return out
+
+
+def _latest_month(root: Path) -> tuple[int, int] | None:
+    """置き場の months/ で、表がある一番新しい月。"""
+    best = None
+    for f in (Path(root) / "months").glob("????-??.json"):
+        d = read_json(f) or {}
+        if d.get("table") is None:
+            continue
+        try:
+            ym = (int(f.name[:4]), int(f.name[5:7]))
+        except ValueError:
+            continue
+        best = max(best, ym) if best else ym
+    return best
 
 
 class NoKeyReader:
@@ -46,7 +110,19 @@ def load_dotenv(path: Path) -> None:
         os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
+class Box:
+    """今開いている施設の入れ物。施設を切り替える時は lock の中で session と voice を差し替える。"""
+
+    def __init__(self, session: Session, voice=None):
+        self.session = session
+        self.voice = voice
+        self.orig_root = Path(session.store.root)     # 起動した時の置き場（声の入口はここの名簿に合わせてある）
+        self.orig_voice = voice
+
+
 def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=None):
+    box = Box(session, voice)
+
     class H(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):  # 発言や鍵を端末に流さない
             pass
@@ -72,12 +148,12 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
             """声（16kHz・モノラルの float32 の並び）を文字にして、文字の一言と同じ流れに入れる。声は外へ送らない。"""
             if not self._local() or not ctype.startswith("application/octet-stream"):
                 return self._json(403, {"error": "手元の画面からだけ送れます"})
-            if voice is None:
+            if box.voice is None:
                 return self._json(200, {"error": "声の入口が使えません。文字で入れてください"})
             import numpy as np
             n = int(self.headers.get("Content-Length") or 0)
             samples = np.frombuffer(self.rfile.read(n), dtype="<f4")
-            text, secs = voice.transcribe(samples)
+            text, secs = box.voice.transcribe(samples)
             if not text:
                 return self._json(200, {"error": "聞き取れませんでした。もう一度話すか、文字で入れてください",
                                         "voice_seconds": secs})
@@ -86,10 +162,82 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                 return self._json(200, {"text": text, "voice_seconds": round(secs, 3)})
             with lock:
                 uid = self.headers.get("X-Answer-Uid")
-                r = session.answer(uid, text) if uid else session.say(text)
-                st = session.state()
+                r = box.session.answer(uid, text) if uid else box.session.say(text)
+                st = box.session.state()
             st["has_key"] = has_key
             self._json(200, {"text": text, "voice_seconds": round(secs, 3), "reply": r.to_dict(), "state": st})
+
+        def _state_out(self) -> dict:
+            st = box.session.state()
+            st["has_key"] = has_key
+            st["has_voice"] = box.voice is not None
+            return st
+
+        def _swap(self, root: Path, year: int, month: int) -> dict:
+            """lock の中で session を差し替える。声の入口は、起動した置き場の名簿に合わせてあるので、その置き場の時だけ残す。"""
+            old = box.session
+            new = Session(Store(root), year, month, old.reader, now=old.now, who=old.who, builder=old.builder)
+            new.open()
+            box.session = new
+            box.voice = box.orig_voice if Path(root) == box.orig_root else None
+            return self._state_out()
+
+        def _setup(self, data: dict) -> None:
+            """自分の施設で始める（貼った表から施設を作る）と、施設の切り替え。"""
+            try:
+                if self.path == "/api/setup/preview":
+                    pasted, prop, year, month = _parse_setup(data)
+                    return self._json(200, preview_out(pasted, prop))
+                if self.path == "/api/setup/create":
+                    pasted, prop, year, month = _parse_setup(data)
+                    drop = {str(x) for x in (data.get("drop_rules") or [])}
+                    prop.rules = [r for r in prop.rules if r["id"] not in drop]
+                    name = str(data.get("name") or "")
+                    ny, nm = next_ym(year, month)
+                    parent = Path(box.session.store.root).parent
+                    if not name.strip():
+                        raise OnboardError("施設の名前を入れてください")
+                    root = parent / _short_id(name.strip())
+                    existing = (root / "facility.json").exists()
+                    notes: list[str] = []
+                    if not existing:
+                        # 作りかけの置き場を残さない。別の名前の場所で作り、表までできた時だけ置き換える
+                        import shutil
+                        tmp = root.with_name(root.name + ".making")
+                        shutil.rmtree(tmp, ignore_errors=True)
+                        try:
+                            c = create_facility(prop, tmp, name=name, next_year=ny, next_month=nm,
+                                                answers=data.get("answers") or {})
+                        except BaseException:
+                            shutil.rmtree(tmp, ignore_errors=True)
+                            raise
+                        notes = c.notes + ([c.stage_note] if c.stage_note else [])
+                        if not c.next_table_made:
+                            shutil.rmtree(tmp, ignore_errors=True)
+                            return self._json(400, {"error": "翌月の表が作れませんでした。" + (c.stage_note or ""), "notes": notes})
+                        tmp.rename(root)
+                    else:
+                        ny, nm = _latest_month(root) or (ny, nm)
+                    with lock:
+                        st = self._swap(root, ny, nm)
+                    return self._json(200, {"ok": True, "existing": existing, "facility": {"id": root.name, "name": st_name(root)},
+                                            "year": ny, "month": nm, "notes": notes, "state": st})
+                if self.path == "/api/facilities/open":
+                    with lock:
+                        hit = [f for f in list_facilities(box.session.store.root) if f["id"] == data.get("id")]
+                        if not hit:
+                            return self._json(400, {"error": "その施設は見つかりません"})
+                        root = Path(box.session.store.root).parent / hit[0]["id"]
+                        ym = _latest_month(root)
+                        if ym is None:
+                            return self._json(400, {"error": "その施設には開ける月の表がありません"})
+                        st = self._swap(root, *ym)
+                    return self._json(200, {"ok": True, "facility": {"id": root.name, "name": st_name(root)}, "state": st})
+                return self._json(400, {"error": "知らない操作です"})
+            except (ParseError, OnboardError) as e:
+                return self._json(400, {"error": str(e)})
+            except RuntimeError as e:
+                return self._json(400, {"error": str(e)})
 
         def do_GET(self):
             if not self._local():
@@ -106,10 +254,15 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     self._json(200, self.server.flow().review())
             elif self.path == "/api/state":
                 with lock:
-                    st = session.state()
+                    st = box.session.state()
                 st["has_key"] = has_key
-                st["has_voice"] = voice is not None
+                st["has_voice"] = box.voice is not None
                 self._json(200, st)
+            elif self.path == "/api/setup/sample":
+                self._json(200, sample_info())
+            elif self.path == "/api/facilities":
+                with lock:
+                    self._json(200, {"facilities": list_facilities(box.session.store.root)})
             else:
                 self._json(404, {"error": "not found"})
 
@@ -124,6 +277,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                 data = json.loads(self.rfile.read(n) or b"{}")
             except json.JSONDecodeError:
                 return self._json(400, {"error": "JSON が読めません"})
+            if self.path.startswith("/api/setup/") or self.path.startswith("/api/facilities/"):
+                return self._setup(data)
             if self.path.startswith("/api/next/"):
                 with lock:
                     fl = self.server.flow()
@@ -131,7 +286,7 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                         if self.path == "/api/next/answer":
                             out = fl.answer(data.get("rule_id", ""), data.get("answer", ""), data.get("new_until"))
                         elif self.path == "/api/next/change":
-                            out = fl.change(data.get("rule_id", ""), data.get("text", ""), session.reader)
+                            out = fl.change(data.get("rule_id", ""), data.get("text", ""), box.session.reader)
                         elif self.path == "/api/next/undo":
                             out = fl.undo(data.get("rule_id", ""))
                         elif self.path == "/api/next/build":
@@ -145,33 +300,34 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                 return self._json(200, out)
             with lock:
                 if self.path == "/api/say" and data.get("text", "").strip():
-                    r = session.say(data["text"])
+                    r = box.session.say(data["text"])
                 elif self.path == "/api/answer":
-                    r = session.answer(data.get("uid", ""), data.get("text", ""))
+                    r = box.session.answer(data.get("uid", ""), data.get("text", ""))
                 elif self.path == "/api/accept":
-                    r = session.accept(data.get("uid", ""))
+                    r = box.session.accept(data.get("uid", ""))
                 elif self.path == "/api/refuse":
-                    r = session.refuse(data.get("uid", ""))
+                    r = box.session.refuse(data.get("uid", ""))
                 elif self.path == "/api/cancel":
-                    r = session.cancel(data.get("uid", ""))
+                    r = box.session.cancel(data.get("uid", ""))
                 elif self.path == "/api/distribute":
-                    session.distribute()
+                    box.session.distribute()
                     from .session import Reply
                     r = Reply("ask", None, "表を配った後の扱いにしました")
                 elif self.path == "/api/undo":
-                    r = session.undo()
+                    r = box.session.undo()
                 elif self.path == "/api/wider":
-                    r = session.wider(data.get("uid", ""))
+                    r = box.session.wider(data.get("uid", ""))
                 elif self.path == "/api/choose_name":
-                    r = session.choose_name(data.get("uid", ""), data.get("wrong", ""), data.get("right", ""))
+                    r = box.session.choose_name(data.get("uid", ""), data.get("wrong", ""), data.get("right", ""))
                 elif self.path == "/api/retry":
-                    r = session.retry(data.get("uid", ""))
+                    r = box.session.retry(data.get("uid", ""))
                 else:
                     return self._json(400, {"error": "知らない操作です"})
-                st = session.state()
+                st = box.session.state()
             st["has_key"] = has_key
             self._json(200, {"reply": r.to_dict(), "state": st})
 
+    H.box = box
     return H
 
 
@@ -196,7 +352,8 @@ def serve(session: Session, *, port: int = 8765, has_key: bool = False, voice=No
         return
     lock.write_text(f"{os.getpid()}\n{url}", encoding="utf-8")   # 実際に開いた番号を書く
     from .nextflow import NextFlow
-    httpd.flow = lambda: NextFlow(session.store, session.year, session.month)
+    box = handler.box
+    httpd.flow = lambda: NextFlow(box.session.store, box.session.year, box.session.month)
     print(f"開きました {url} （止める時は Ctrl+C）", flush=True)
     if open_browser:
         import webbrowser
