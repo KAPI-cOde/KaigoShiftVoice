@@ -81,7 +81,7 @@ def test_redaction_keeps_the_date(sess):
     assert "12日" in masked and "（家族）" in masked
 
 
-@pytest.mark.parametrize("text,name", [("明けはともちゃんと話して", "とも"), ("12日はけいくんで決まり", "けい"), ("ともちゃん、12日休み", "とも"),
+@pytest.mark.parametrize("text,name", [("明けはともちゃんと話して", "とも"), ("12日はけいくんで決まり", "けい"), ("ともちゃん、12日休み", "とも"), ("今日ともちゃんと交代", "とも"), ("東ももちゃんと組む", "もも"),
                                        ("かずやくんと岡田さん、12日休み", "かずや"), ("はるとくんと話して12日休み", "はると"),
                                        ("なおちゃんと岡田さん、12日休み", "なお")])
 def test_name_before_chan_to_is_not_skipped(sess, text, name):

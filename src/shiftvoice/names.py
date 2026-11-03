@@ -25,6 +25,8 @@ FAMILY_WORDS = {"子", "孫", "旦那", "主人", "妻", "夫", "嫁", "兄", "�
 KANA_NOT_NAMES = {"あか", "おにい", "おねえ", "にい", "ねえ", "ぼっ", "おじょう", "じょう", "ぼう",
                   "おばあ", "おじい", "ばあ", "じい", "おかあ", "おとう", "かあ", "とう"}
 PARTICLES_HEAD = set("はがのにをともへでや")
+# 漢字の送り仮名1字＋助詞で、呼び名になりそうにない並び（休み＋を、明け＋は）。ここに無い2字は名前かもしれないので聞き返す
+OKURI_PARTICLE = {"みを", "みは", "みも", "みが", "みに", "けは", "けも", "けを", "けが", "けに"}
 SAFE_STOP = set("、。,.・ 　（(「」)）!！?？\n")
 _NAMEISH = re.compile(r"[一-龥々ァ-ヶA-Za-z]")
 
@@ -137,7 +139,7 @@ class Masker:
             # 前が助詞1字（その前は文の頭・句読点・漢字・カタカナ）か、漢字の送り仮名1字＋助詞（「休みをちゃんと」）の時だけ
             if fixed and run[-1] in PARTICLES_HEAD and (
                     (len(run) == 1 and (before == "" or before in SAFE_STOP or _NAMEISH.fullmatch(before)))
-                    or (len(run) == 2 and before and _NAMEISH.fullmatch(before))):
+                    or (run in OKURI_PARTICLE and before and _NAMEISH.fullmatch(before))):
                 continue
             while j > 0 and run and run[0] in PARTICLES_HEAD and len(run) > 2:
                 run, j = run[1:], j + 1   # 前の助詞（「はゆうちゃん」の「は」）は名前に入れない
