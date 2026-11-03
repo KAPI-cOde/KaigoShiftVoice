@@ -94,3 +94,28 @@ def test_redaction_walks_past_kanji_name(sess):
     """漢字の名前の一部（美よ子さん）も置き換えの外に残さない。止まるのは「12日」の日だけ。"""
     masked, names = Masker(sess.store.staff(), sess.store.facility()).mask("岡田さん、12日は美よ子さんの用事で休み")
     assert "美" not in masked or names
+
+
+def test_holiday_only_coverage_asks(sess):
+    """「祝日は日勤を3人に」は毎日のルールにせず聞き返す。"""
+    T = {"祝日は日勤を3人にして": [{"type": "coverage", "shift": "日", "min": 3, "max": None, "weekdays": None,
+                                  "holidays": True, "strength": "operational", "reason": None}]}
+    sess.reader = _reader(sess, T)
+    sess.open()
+    before = json.dumps(sess.store.month(2026, 11).table)
+    r = sess.say("祝日は日勤を3人にして")
+    assert r.kind == "ask" and "祝日" in r.message
+    assert json.dumps(sess.store.month(2026, 11).table) == before
+
+
+def test_each_unit_coverage_says_so(sess):
+    """2ユニットの施設で、ユニットごとの人数のルールは名前に「ユニットごと」と出る。"""
+    T = {"土日は早番を2人にして": [{"type": "coverage", "shift": "早", "min": 2, "max": None, "weekdays": ["sat", "sun"],
+                                  "holidays": False, "strength": "operational", "reason": None}]}
+    sess.reader = _reader(sess, T)
+    sess.open()
+    r = sess.say("土日は早番を2人にして")
+    if r.kind == "ask_period":
+        r = sess.answer(r.uid, "once")
+    names = [x.name for x in sess.store.ledger().rules_at().values()]
+    assert any("ユニットごと" in n for n in names), (r.kind, r.message, names[-3:])

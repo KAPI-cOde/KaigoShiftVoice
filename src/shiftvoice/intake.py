@@ -359,6 +359,9 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             if raw and len(wds) != len(raw):
                 raise Clarify("曜日が読めませんでした。何曜日か教えてください")
             hol = it.get("holidays") is True
+            if hol and not wds:
+                # 「祝日は日勤を3人に」が曜日の無いルールになり、毎日に効いていた（敵対レビュー 2026-11-03）
+                raise Clarify("祝日だけの人数ですか。土日も入れるなら「土日祝は」と言ってください")
             # 今の同じ勤務の人数のルール（曜日の無いもの）と同じ数え方（記号の組・ユニットごとか）にそろえる
             base = next((r for r in rules or [] if r.kind == "coverage" and not r.params.get("weekdays")
                          and sym in (r.params["shifts"] if isinstance(r.params["shifts"], list)
@@ -379,7 +382,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 if wds:
                     params["weekdays"] = wds
                     params["holidays"] = hol
-                p.rules.append({"name": f"{jp}の{sname}は{n}人" + {"==": "", ">=": "以上", "<=": "まで"}[op],
+                each = "（ユニットごと）" if scope == "each_unit" else ""   # 2ユニットで合計が倍になることを名前で見せる
+                p.rules.append({"name": f"{jp}の{sname}は{n}人" + {"==": "", ">=": "以上", "<=": "まで"}[op] + each,
                                 "kind": "coverage", "flex": _count_strength(it.get("strength"), text, len(real) == 1),
                                 "params": params, "who": None, "when": None})
         elif t == "consecutive_limit":
