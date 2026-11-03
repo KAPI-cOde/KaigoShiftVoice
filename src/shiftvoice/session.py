@@ -736,6 +736,15 @@ class Session:
         return Reply("ask", uid, "やめました。表は変えていません")
 
     # 画面へ渡す
+    def why(self, name: str, day: int) -> dict:
+        """マスを押した時の「なぜこのマスか」（why.py）。表の操作はしない。"""
+        from .why import why_cell
+        m = self.store.month(self.year, self.month)
+        if not m.table or name not in m.table or not 1 <= day <= m.days:
+            return {"error": "そのマスはありません"}
+        rules = month_rules(self.store, self.year, self.month, with_premise=False)
+        return why_cell(rules, self.store.facility(), self.store.staff_on(self.year, self.month), m, m.table, name, day)
+
     def state(self) -> dict:
         m = self.store.month(self.year, self.month)
         led = self.store.ledger()

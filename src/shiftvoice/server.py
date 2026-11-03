@@ -300,6 +300,15 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
             elif self.path == "/api/next/review":
                 with lock:
                     self._json(200, self.server.flow().review())
+            elif self.path.startswith("/api/why?"):
+                from urllib.parse import parse_qs, urlparse
+                q = parse_qs(urlparse(self.path).query)
+                try:
+                    day = int((q.get("day") or ["0"])[0])
+                except ValueError:
+                    day = 0
+                with lock:
+                    self._json(200, box.session.why((q.get("staff") or [""])[0], day))
             elif self.path == "/api/state":
                 with lock:
                     st = box.session.state()

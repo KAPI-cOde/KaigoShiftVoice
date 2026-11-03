@@ -49,6 +49,12 @@
   .grp { font-size: 12px; font-weight: 700; margin: 4px 0 2px; }
   .grpnote { font-size: 12px; margin: 6px 2px; }
   td.name { cursor: pointer; }
+  td.cell { cursor: pointer; }
+  td.cell.picked { outline: 2px solid #000; outline-offset: -2px; }
+  #why { margin: 6px 0; font-size: 13px; }
+  .whyhead { font-weight: 700; margin-bottom: 2px; }
+  .whyfact { font-size: 12px; }
+  .whysub { font-size: 12px; margin-top: 4px; }
   td.name.picked { text-decoration: underline; font-weight: 700; }
   .card .per { white-space: nowrap; font-size: 12px; }
   .card .why { font-size: 12px; margin-top: 2px; }
@@ -156,6 +162,7 @@
     <h2 id="tabletitle">表</h2>
     <div id="tablewrap"></div>
     <div class="legend" id="legend"></div>
+    <div id="why"></div>
     <div class="said" id="said"></div>
     <div class="reply" id="reply"></div>
     <form id="form" autocomplete="off">
@@ -303,6 +310,10 @@ function renderTable() {
       if (wd2 === "sat" || wd2 === "sun" || S.holidays.indexOf(d2) >= 0) td.className += " off";
       td.textContent = shown[key] !== undefined ? shown[key] : (row[d2 - 1] || "");
       if (glowCells[key] || cardGlow[key]) td.className += " glow";
+      if (whyKey === key) td.className += " picked";
+      (function (name, day) {
+        td.addEventListener("click", function () { showWhy(name, day); });
+      })(st.name, d2);
       tr.appendChild(td);
     }
     tb.appendChild(tr);
@@ -347,6 +358,39 @@ function renderCards() {
   if (!list.length) box.appendChild(el("div", "empty", "ルールはまだありません"));
   if (list.length <= GROUP_AT) { list.forEach(function (c) { box.appendChild(makeCard(c)); }); return; }
   renderGrouped(box, list);
+}
+
+// なぜこのマスか（docs/rule-cleanup.md の4）。マスを押すと、縛っているルールを3件まで出す。もう一度押すと閉じる
+var whyKey = null;
+function showWhy(name, day) {
+  var box = document.getElementById("why");
+  var key = name + "|" + day;
+  if (whyKey === key) { whyKey = null; box.textContent = ""; renderTable(); return; }
+  whyKey = key;
+  renderTable();
+  fetch("/api/why?staff=" + encodeURIComponent(name) + "&day=" + day).then(function (r) { return r.json(); }).then(function (w) {
+    box.textContent = "";
+    if (w.error) { box.appendChild(el("div", "q2", w.error)); return; }
+    box.appendChild(el("div", "whyhead", name + "さん " + day + "日は" + w.symbol_name));
+    if (!w.because.length && !w.cannot.length) box.appendChild(el("div", "q2", "このマスをちょうど縛っているルールはありません。ほかの勤務にも動かせます"));
+    if (w.because.length) {
+      box.appendChild(el("div", "whysub", w.symbol_name + "になっているのは"));
+      w.because.forEach(function (x) {
+        var line = el("div", "whyline", x.name);
+        if (x.fact) line.appendChild(el("span", "whyfact", "　" + x.fact));
+        box.appendChild(line);
+      });
+    }
+    if (w.cannot.length) {
+      box.appendChild(el("div", "whysub", "ほかの勤務にできないのは"));
+      w.cannot.forEach(function (x) {
+        var line = el("div", "whyline", x.shift + "にできない　" + x.name);
+        if (x.fact) line.appendChild(el("span", "whyfact", "　" + x.fact));
+        box.appendChild(line);
+      });
+    }
+    if (w.more) box.appendChild(el("div", "q2", "ほかに" + w.more + "件"));
+  });
 }
 
 // ルールが多い時は、何件あっても開いた時の一覧を数行に収める（docs/rule-cleanup.md の3）。
