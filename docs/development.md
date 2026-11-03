@@ -62,7 +62,8 @@
   - 見つけた方法＝前の周の最後の直し（レビューの回数の上限で誰も見ていなかった差分）を、壊す側の役のサブエージェント（Opus）に読ませ、手で作った返事で再現させた
   - 直す前＝「利用者さん」で止まらないように全員向けの側で「さん」を見るのをやめたため、「おかださん、夜勤は月4回まで」で返事が人を省くと「全員 夜勤は月4回まで」が通った。「皆勤の岡田さん」も「皆」を全員の言葉と読んで通った
   - 直した後＝「さん・くん・ちゃん」の前の語が名前でない語（利用者・みな・看護・職員 など）でなければ人が出たとみなす。「皆勤」は全員の言葉から外した。人が読み取れない時の聞き返しは、ルールの時だけ「全員のルールなら『全員』と付けてください」と添え、名前でない語の一覧に無い言い方でも行き止まりにならないようにした。一覧に「たく」「リーダー」を足したら、名簿に無い呼び名（たくくん）や役職付きの呼び方で新しくすり抜けると再レビューで分かったので外した
-  - 確かめた試験＝`tests/test_safety.py::test_person_rule_by_kana_or_kaikin_never_goes_to_everyone`・`test_everyone_rule_with_job_word_is_not_blocked`・`test_nobody_clarify_tells_how_to_say_everyone`・`test_nickname_or_title_rule_never_goes_to_everyone`（どれも直す前の版では落ちることを確かめた）
+  - その後＝言葉の手がかりで人を当てる作りは、呼び方の種類ごとに穴が出続けた（3周で3回）。作者に聞き、回数と連勤のルールは一言に「全員」「みんな」が無いか名前が出ていれば、いつでも聞き返す形にした
+  - 確かめた試験＝`tests/test_safety.py::test_person_rule_by_kana_or_kaikin_never_goes_to_everyone`・`test_everyone_rule_with_job_word_is_not_blocked`・`test_nobody_clarify_tells_how_to_say_everyone`・`test_nickname_or_title_rule_never_goes_to_everyone`・`test_count_and_run_without_person_need_everyone_word`（どれも直す前の版では落ちることを確かめた）
 
 ## 守りのしくみ
 

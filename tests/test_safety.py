@@ -136,3 +136,24 @@ def test_nickname_or_title_rule_never_goes_to_everyone(store, text):
     item = {"type": "count_limit", "shift": "夜", "max": 4} if "夜勤" in text else {"type": "consecutive_limit", "max": 4}
     with pytest.raises(Clarify):
         to_proposal([item], text, store.facility(), store.staff(), store.month(2026, 11))
+
+
+@pytest.mark.parametrize("text,item", [
+    ("おかだ君、夜勤は月4回まで", {"type": "count_limit", "shift": "夜", "max": 4}),
+    ("おかだ、連勤は4日まで", {"type": "consecutive_limit", "max": 4}),
+    ("岡田さん、連勤は4日まで。みんなに伝えて", {"type": "consecutive_limit", "max": 4}),
+])
+def test_count_and_run_without_person_need_everyone_word(store, text, item):
+    """回数と連勤のルールで返事が人を省いた時は、一言に「全員」「みんな」が無いか、名前が出ていれば聞き返す（作者の答え 2026-11-03）。"""
+    from shiftvoice.intake import Clarify, to_proposal
+    with pytest.raises(Clarify):
+        to_proposal([item], text, store.facility(), store.staff(), store.month(2026, 11))
+
+
+@pytest.mark.parametrize("text", ["全員、夜勤は月4回まで", "みんな夜勤は月4回までにして"])
+def test_count_with_everyone_word_goes_to_everyone(store, text):
+    """「全員」「みんな」と言った回数のルールは、全員に効かせる（作者の答え 2026-11-03）。"""
+    from shiftvoice.intake import to_proposal
+    p = to_proposal([{"type": "count_limit", "shift": "夜", "max": 4}], text, store.facility(), store.staff(),
+                    store.month(2026, 11))
+    assert p.rules and not p.rules[0]["who"]

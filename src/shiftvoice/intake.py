@@ -320,7 +320,11 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     cells_nobody = any(not r.get("who") for r in p.rules if r["kind"] == "cell") or any(
         not x.get("who") for x in p.removes)
     rules_nobody = any(not r.get("who") for r in p.rules if r["kind"] not in ("layer", "cell"))
-    if cells_nobody or (said and not re.search(r"全員|みんな|皆(?!勤)", text) and rules_nobody):
+    # 回数と連勤は人ごとに言うことが多いので、人が無い返事は「全員」「みんな」と言い、名前も出ていない時だけ
+    # 全員に効かせる（言葉の手がかりで人を当てる作りは呼び方ごとに穴が出続けたため。作者の答え 2026-11-03）
+    everyone = bool(re.search(r"全員|みんな|皆(?!勤)", text))
+    per_nobody = any(not r.get("who") for r in p.rules if r["kind"] in ("count", "max_run"))
+    if cells_nobody or (per_nobody and (not everyone or said)) or (said and not everyone and rules_nobody):
         raise Clarify("誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください"
                       + ("" if cells_nobody else "（全員のルールなら「全員」と付けてください）"))
     if kind == "cells":
