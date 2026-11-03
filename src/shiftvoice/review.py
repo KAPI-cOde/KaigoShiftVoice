@@ -114,7 +114,9 @@ def answer(store: Store, year: int, month: int, rule_id: str, what: str, *, new_
         revs.append(led.append("change", rule_id=rule_id, rule={"name": cur.name}, op_id=op_id,
                                frm=cur.meta.get("from"), until=prev_end,
                                meta={"kind": "change_close", "at": at})["rev"])
-        n = max([int(r[1:]) for r in led.rules_at() if r[1:].isdigit()] + [100]) + 1
+        # 外した番号も使い回さない（session._next_id と同じ数え方。ひとつ戻すと別の頼みを消していた。敵対レビュー 2026-11-03）
+        ids = {t["rule"]["id"] for t in led.txs if t["op"] == "add" and isinstance(t.get("rule"), dict)} | set(led.rules_at())
+        n = max([int(r[1:]) for r in ids if r[1:].isdigit()] + [100]) + 1
         rd = {k: new_rule[k] for k in ("name", "params", "who", "when", "flex", "kind") if k in new_rule}
         rd.update({"id": f"r{n}", "scope": cur.scope,
                    "meta": {**new_rule.get("meta", {}), "said": said, "at": at, "source": "話した",

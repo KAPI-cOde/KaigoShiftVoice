@@ -130,11 +130,16 @@ def _tidy_leave(items: list[dict], text: str) -> list[dict]:
     - leave_count だけで日数が無く、一言に「20日は」「20日に」のような日付が1つだけある時は、その日の有給にする"""
     if not any(w in text for w in LEAVE_WORDS):
         return items
+    if re.search(r"(有給|有休|年休)(じゃ|では)な", text):
+        return items   # 「有給じゃなくて公休で」は有給にしない
     def staff_key(v):
         return tuple(v) if isinstance(v, list) else (v,)
+    offs = [it for it in items if it.get("type") == "day_off" and it.get("days")]
     out = []
     for it in items:
-        if it.get("type") == "day_off" and it.get("days"):
+        # 有給にするのは、休みの頼みが1つだけの時か、その頼みの理由に有給の言葉がある時だけ
+        # （「青木さん20日休み、石田さんは有給で21日」で青木さんまで有給になっていた。敵対レビュー 2026-11-03）
+        if it in offs and (len(offs) == 1 or any(w in str(it.get("reason") or "") for w in LEAVE_WORDS)):
             it = {**it, "type": "set_cell", "shift": "有"}
         out.append(it)
     dated = {staff_key(it.get("staff")): len(it.get("days") or []) for it in out

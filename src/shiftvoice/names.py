@@ -14,15 +14,16 @@ from dataclasses import dataclass, field
 from .model import Facility, Staff
 
 # 呼び方の後ろに来てよい区切り
-BOUNDARY = r"(?=さん|くん|ちゃん|[、。,.\s　のはがにもとをへやで]|$)"
-HONORIFIC = r"(?:さん|くん|ちゃん|様|氏|君|先生)"
+BOUNDARY = r"(?=さん|さま|くん|ちゃん|[、。,.\s　のはがにもとをへやで]|$)"
+HONORIFIC = r"(?:さん|さま|くん|ちゃん|様|氏|君|先生)"
 # 「〇〇さん」でも人の名前ではない言葉
 NOT_NAMES = {"皆", "利用者", "看護師", "相談員", "新人"}
 # 家族の言葉（「お子さんの熱で休み」が名簿にない名前「子」で止まった。2026-11-03 作った施設で本物の一言を測った時）
 FAMILY_WORDS = {"子", "孫", "旦那", "主人", "妻", "夫", "嫁", "兄", "姉", "弟", "妹", "祖母", "祖父", "親",
                 "母", "父", "お母", "お父", "家族", "息子", "娘", "奥"}
 # ひらがなに「ちゃん」「くん」が続いても呼び名でない言葉
-KANA_NOT_NAMES = {"あか", "おにい", "おねえ", "にい", "ねえ", "ぼっ", "おじょう", "じょう", "ぼう"}
+KANA_NOT_NAMES = {"あか", "おにい", "おねえ", "にい", "ねえ", "ぼっ", "おじょう", "じょう", "ぼう",
+                  "おばあ", "おじい", "ばあ", "じい", "おかあ", "おとう", "かあ", "とう"}
 PARTICLES_HEAD = set("はがのにをともへでや")
 SAFE_STOP = set("、。,.・ 　（(「」)）!！?？\n")
 _NAMEISH = re.compile(r"[一-龥々ァ-ヶA-Za-z]")
@@ -42,8 +43,8 @@ def _redact_not_names(t: str) -> str:
         if i < pos or (i > 0 and _NAMEISH.fullmatch(t[i - 1])):
             continue   # 前が漢字・カタカナなら、もっと長い名前の一部（漢字＋子の名前）。名簿にない名前として下で止める
         j = i
-        while (j > 0 and t[j - 1] not in SAFE_STOP and not t[j - 1].isdigit()
-               and not re.search(HONORIFIC + "$", t[:j])):
+        while (j > 0 and t[j - 1] not in SAFE_STOP and not t[j - 1].isdigit() and not _NAMEISH.fullmatch(t[j - 1])
+               and not re.search(HONORIFIC + "$", t[:j])):   # 漢字（「12日は」の日）でも止める。日付を食わない
             j -= 1
         if j == i:
             continue
@@ -126,6 +127,9 @@ class Masker:
         for mm in re.finditer(r"([ぁ-ゖー]{1,8})(?:ちゃん|くん)", t):
             run = mm.group(1)
             j = mm.start(1)
+            after = t[mm.end():mm.end() + 1]
+            if all(c in PARTICLES_HEAD for c in run) or (after == "と" and run[-1] in PARTICLES_HEAD):
+                continue   # 「明けはちゃんと休み」「シフトをくんで」（呼び名でない）
             while j > 0 and run and run[0] in PARTICLES_HEAD and len(run) > 2:
                 run, j = run[1:], j + 1   # 前の助詞（「はゆうちゃん」の「は」）は名前に入れない
             if run not in KANA_NOT_NAMES and run not in unknown:

@@ -93,7 +93,12 @@ class Session:
                 m.table, m.built_rev = rr.table, led.rev
                 self.store.save_month(m)
         for u in pend:
-            if u["id"] in applied and u.get("status") == "offer":
+            if u["id"] in applied and u.get("status") == "offer" and (u.get("offer") or {}).get("cancel") is not None \
+                    and not (u.get("offer") or {}).get("replace"):
+                # 日付の無い取り消しの確かめは、帳面から外すだけで表は変えない。帳面に入った後で止まったら片付けるだけ
+                # （表を持たない案を _commit_offer に回すと KeyError で月が開けなかった。敵対レビュー 2026-11-03）
+                self.store.resolve_pending(self.year, self.month, u["id"])
+            elif u["id"] in applied and u.get("status") == "offer":
                 # 案を当てる途中で止まった。記録と表を案どおりにそろえる（何度呼んでも同じ）
                 self._commit_offer(u, self.store.ledger(), self.store.month(self.year, self.month))
             elif u["id"] in applied:
