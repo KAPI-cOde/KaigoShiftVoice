@@ -80,12 +80,14 @@ def review_cards(ledger: Ledger, year: int, month: int, quiet: dict[str, int] | 
     add_tx = {t["rule"]["id"]: t for t in ledger.txs if t["op"] == "add"}
     cards: list[Card] = []
     quiet_cards: list[Card] = []
+    once_names: list[str] = []
     unchanged = 0
     once = 0
     for rid, r in all_prev.items():
         until = r.meta.get("until")
         if r.scope == "once":
             once += 1
+            once_names.append(r.name)
             continue
         t = add_tx.get(rid)
         if until and ps <= until < start:
@@ -150,6 +152,7 @@ def review_cards(ledger: Ledger, year: int, month: int, quiet: dict[str, int] | 
     answers = answers_for(ledger, year, month)
     pos = next((i for i, c in enumerate(cards) if c.rule_id not in answers), len(cards))
     return {"cards": cards, "answers": answers, "cursor": pos, "unchanged": unchanged, "once": once,
+            "once_names": once_names,
             "quiet_more": quiet_more}
 
 

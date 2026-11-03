@@ -40,6 +40,7 @@ def main() -> None:
     ap.add_argument("--months", type=int, default=6)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--quiet-months", type=int, default=None, help="見直しに出すまでの月数（既定は施設の設定の3）")
+    ap.add_argument("--no-archive", action="store_true", help="比べ役。候補が出ても片付けず、全部「今月も使う」と答える")
     a = ap.parse_args()
     d = Path(a.dir)
     if d.exists():
@@ -78,7 +79,7 @@ def main() -> None:
         cur = store.ledger().rules_at()
         n_arch = 0
         for c in v["cards"]:
-            if c.reason not in ("quiet", "overlap"):
+            if c.reason not in ("quiet", "overlap") or a.no_archive:
                 answer(store, ny, nm, c.rule_id, "keep", quiet=s, quiet_months=qm, overlap=lap, no_scene=ns)
                 continue
             for rid in [c.rule_id] + c.group:

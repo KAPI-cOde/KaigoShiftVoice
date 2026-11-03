@@ -88,6 +88,7 @@ class NextFlow:
                         f"{self.nm}月の表を作る前に　見直しは済みました",
                 "unchanged": f"変更なし {v['unchanged']}件（見直すのは、期限が来た・先月増えた・片付けの候補だけ）",
                 "once": f"{self.month}月だけの頼み{v['once']}件は、{self.nm}月へ引き継ぎません",
+                "once_names": v["once_names"],
                 "quiet_more": (f"静かなルールはほかに{v['quiet_more']}件あります。一度に見るのは"
                                f"{self._quiet()[2]}件までにして、来月また出します") if v["quiet_more"] else "",
                 "done": v["cursor"] >= n, "summary": summary,

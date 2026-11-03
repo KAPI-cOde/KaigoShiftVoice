@@ -51,6 +51,7 @@
   td.name { cursor: pointer; }
   td.cell { cursor: pointer; }
   .rvbtn { white-space: nowrap; flex-shrink: 0; align-self: center; }
+  button.linkish { border: none; background: none; text-decoration: underline; padding: 0; font-size: 12px; cursor: pointer; }
   td.cell.picked { outline: 2px solid #000; outline-offset: -2px; }
   #why { margin: 6px 0; font-size: 13px; }
   .whyhead { font-weight: 700; margin-bottom: 2px; }
@@ -864,6 +865,7 @@ document.getElementById("form").addEventListener("submit", function (ev) {
 
 // ---- 3幕 ルールの見直し → 引き受けを返す ----
 var R = null;            // /api/next/review の返事
+var onceOpen = false;     // 今月だけの頼みの内訳を開いているか
 var detailOpen = false;  // 札の［詳しく見る］
 var extOpen = false;     // 期間を延ばす欄
 var chOpen = false;      // 変える（話す）欄
@@ -1008,7 +1010,18 @@ function renderReview() {
     wrap.appendChild(go);
   }
   wrap.appendChild(el("div", "rv-err", rvErr));
-  if (R.once) wrap.appendChild(el("div", "small", R.once));
+  if (R.once) {
+    // 何の頼みか分からないと読み手2人が迷った（2026-11-04）。spec 画面8 の［内訳］
+    var on = el("div", "small", R.once + "　");
+    if ((R.once_names || []).length) {
+      var ob = el("button", "linkish", onceOpen ? "内訳をたたむ" : "内訳");
+      ob.type = "button";
+      ob.addEventListener("click", function () { onceOpen = !onceOpen; renderReview(); });
+      on.appendChild(ob);
+    }
+    wrap.appendChild(on);
+    if (onceOpen) (R.once_names || []).forEach(function (n) { wrap.appendChild(el("div", "small", "・" + n)); });
+  }
   if (R.quiet_more) wrap.appendChild(el("div", "small", R.quiet_more));
   box.appendChild(wrap);
 }
