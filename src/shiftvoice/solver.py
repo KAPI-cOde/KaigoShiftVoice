@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from ortools.sat.python import cp_model
 
+from .interval import short_pairs
 from .model import Facility, Month, Rule, Staff
 from .rules import Instance, cell_value, check_table, expand, with_overrides
 
@@ -185,6 +186,22 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
             m.add_max_equality(hi, offs)
             m.add_min_equality(lo, offs)
             penalties.append(w_wk * (hi - lo))
+    w_gap = quality.get("short_rest", 0)
+    if w_gap:
+        # 次の勤務までの間が線（時間）より短い並びを、短いほど重く罰する（夜勤・明け・休みは数えない）
+        pairs = short_pairs(facility.shift_types, quality.get("short_rest_hours", 14))
+        for s in staff:
+            last = cell_value({}, month, s.name, 0)   # 前の月の末日（分かれば）
+            for (a, b), gap in pairs.items():
+                if last == a and (s.name, 1, b) in x:
+                    penalties.append(int(w_gap * gap) * x[(s.name, 1, b)])
+            for d in range(1, D):
+                for (a, b), gap in pairs.items():
+                    va, vb = x.get((s.name, d, a)), x.get((s.name, d + 1, b))
+                    if va is not None and vb is not None:
+                        t = m.new_bool_var("")
+                        m.add(va + vb - 1 <= t)
+                        penalties.append(int(w_gap * gap) * t)
     if hint:
         w_keep = facility.settings.get("keep_weight", 500)
         for s in staff:

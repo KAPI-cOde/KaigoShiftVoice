@@ -61,6 +61,8 @@ HOLIDAYS = {
 }
 # 初めのデータから写す設定（solve の中は下の4つだけ）
 SETTING_KEYS = ("weights", "light_weight", "quality", "keep_weight", "resolve_quality")
+SHORT_REST_WEIGHT = 100   # 2026-11-04 見本の施設Bで測って決めた
+SHORT_REST_HOURS = 14
 SOLVE_KEYS = ("workers", "seed", "max_deterministic_time", "resolve_max_deterministic_time")
 ALWAYS_TYPES = ("公", "有", "研")   # 表に出ていなくても、頼まれた時に置けるよう勤務の種類に必ず入れる物
 LONG_REST_RATIO = 1.5   # 公休がいちばん多い日数のこの倍以上の人は、途中入職・長い休みかもしれない
@@ -125,6 +127,7 @@ class Created:
     seconds: float
     notes: list[str] = field(default_factory=list)
     diffs: list[dict] = field(default_factory=list)   # 貼った月と翌月の表の違い（text＝一文、kind＝種類）
+    short_rest: dict | None = None   # 次の勤務までの間が短い並びの数（line・before・after・month・next_month）
 
 
 # ---------------------------------------------------------------- 読む
@@ -724,6 +727,8 @@ def _settings(year: int, month: int, ny: int, nm: int, notes: list[str]) -> dict
     for k in SETTING_KEYS:
         if k in src:
             out[k] = src[k]
+    # 取り込んだ施設は、次の勤務までの間が短い並び（遅番の翌日の早番など）を最初から避ける。デモの施設には入れない
+    out["quality"] = {**out.get("quality", {}), "short_rest": SHORT_REST_WEIGHT, "short_rest_hours": SHORT_REST_HOURS}
     hol = {k: list(v) for k, v in HOLIDAYS.items()}
     for y, m in ((year, month), (ny, nm)):
         key = f"{y:04d}-{m:02d}"
@@ -820,7 +825,13 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
                          + (f"答えた記号" + "".join(f"『{c}』" for c in culprits) + "を確かめてください" if culprits
                             else "記号の答え（何の勤務か）を確かめてください"))
     diffs: list[dict] = []
+    short_rest = None
     if made:
+        from .interval import count_short
+        line = settings["quality"]["short_rest_hours"]
+        short_rest = {"line": line, "month": proposal.month, "next_month": next_month,
+                      "before": count_short(proposal.table, shift_types, line)[0],
+                      "after": count_short(nxt.table, shift_types, line, nxt.prev_tail)[0]}
         diffs = compare_months(proposal.table, nxt.table, shift_types, proposal.month, next_month,
                                raw=proposal.raw, year=proposal.year, next_year=next_year,
                                holidays=settings["holidays"],
@@ -835,7 +846,7 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
     note = r.note if made else r.message
     return Created(root=root, facility_id=fac["id"], staff_count=len(proposal.staff),
                    rule_count=len(proposal.rules), next_table_made=made, stage_note=note,
-                   seconds=round(r.seconds, 2), notes=notes, diffs=diffs)
+                   seconds=round(r.seconds, 2), notes=notes, diffs=diffs, short_rest=short_rest)
 
 
 # ---------------------------------------------------------------- 貼った月との違い

@@ -161,6 +161,9 @@
   #diffs h3 { font-size: 14px; margin: 0 0 4px; }
   #diffs .df { color: #c0392b; margin: 2px 0; }
   #diffs .same { color: #000; }
+  #diffs .sr { margin: 0 0 6px; }
+  #diffs .sr .df { margin: 0; }
+  #diffs .sr .note { font-size: 12px; color: #555; }
   #diffs .hint2 { margin-top: 4px; font-size: 13px; }
   #banner { display: none; border: 1px solid #000; border-radius: 3px; padding: 8px 12px; margin: 0 0 10px; font-weight: 700; }
   footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
@@ -1359,10 +1362,19 @@ function loadFacilities() {
 }
 // 施設が変わった時、画面に残る前の施設の状態を捨てる
 // 作った後の「前の月と違う所」。違いは赤で1件1行（5件まで）、0件なら黒で1行
-function showDiffs(diffs, fromMonth) {
+function showDiffs(diffs, fromMonth, sr) {
   var box = document.getElementById("diffs");
   box.textContent = "";
   if (!diffs) { box.style.display = "none"; return; }
+  if (sr) {
+    // 次の勤務までの間が短い並びの数。増えた時だけ赤
+    var wrap = el("div", "sr");
+    wrap.appendChild(el("div", sr.after > sr.before ? "df" : "same",
+      "次の勤務までの間が短い並び（" + sr.line + "時間未満。遅番の翌日の早番など）　" +
+      sr.month + "月 " + sr.before + "回 → " + sr.next_month + "月 " + sr.after + "回"));
+    wrap.appendChild(el("div", "note", "勤務の時刻は見本の時刻（早番7時から9時間 など）で数えています"));
+    box.appendChild(wrap);
+  }
   if (!diffs.length) {
     box.appendChild(el("div", "same", fromMonth + "月と同じ形で作りました（1日の人数・夜勤の翌日・人ごとの勤務）"));
   } else {
@@ -1585,7 +1597,7 @@ function startCreate() {
     if (warn.length) msg += "。" + warn.join("。");
     SU = null;
     resetForFacility(res.state, msg);
-    showDiffs(res.diffs, res.from_month);
+    showDiffs(res.diffs, res.from_month, res.short_rest);
     loadFacilities();
   }).catch(function () { stop(); SU.err = "作れませんでした。もう一度試してください"; SU.step = 2; renderSetup(); });
 }

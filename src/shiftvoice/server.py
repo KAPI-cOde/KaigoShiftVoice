@@ -252,6 +252,7 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     root = parent / _short_id(name.strip())
                     existing = (root / "facility.json").exists()
                     notes: list[str] = []
+                    short_rest = None
                     diffs = None   # もう作ってあった施設を開くだけの時は、違いは出さない
                     if not existing:
                         # 作りかけの置き場を残さない。別の名前の場所で作り、表までできた時だけ置き換える
@@ -266,6 +267,7 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                             raise
                         notes = c.notes + ([c.stage_note] if c.stage_note else [])
                         diffs = c.diffs
+                        short_rest = c.short_rest
                         if not c.next_table_made:
                             shutil.rmtree(tmp, ignore_errors=True)
                             return self._json(400, {"error": "翌月の表が作れませんでした。" + (c.stage_note or ""), "notes": notes})
@@ -277,7 +279,7 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     message = (f"『{st_name(root)}』はもう作ってあるので、前に作った施設を開きました。"
                                "今回貼った表は使っていません。新しく作る時は別の名前にしてください") if existing else ""
                     return self._json(200, {"ok": True, "existing": existing, "message": message, "facility": {"id": root.name, "name": st_name(root)},
-                                            "year": ny, "month": nm, "notes": notes, "diffs": diffs,
+                                            "year": ny, "month": nm, "notes": notes, "diffs": diffs, "short_rest": short_rest,
                                             "from_month": month, "state": st})
                 if self.path == "/api/facilities/open":
                     with lock:
