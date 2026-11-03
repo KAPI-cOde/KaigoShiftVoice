@@ -132,3 +132,37 @@ def test_m6b_restore_expired_says_not_effective(nov_done):
     answer(sess.store, 2026, 12, kojima, "archive")
     r = sess.restore(kojima)
     assert "期限（11月29日まで）が過ぎているので、このままでは効きません" in r.summary
+
+
+def _four_added(sess):
+    led = sess.store.ledger()
+    for i in range(4):
+        led.append("add", rule={"id": f"a{i}", "name": f"千葉さん 水曜は早番に入れない{i}", "kind": "weekday", "flex": "wish",
+                                "params": {"weekdays": ["wed"], "not_in": ["早"]}, "who": ["千葉"], "when": None,
+                                "scope": "rule", "meta": {"said": "千葉さん、水曜は早番なしで"}}, op_id=f"t-a{i}", frm="2026-11-01")
+    sess.store.save_ledger(led)
+    copy_next_month(sess.store, 2026, 11)
+
+
+def test_m12_many_added_in_one_card(sess):
+    """先月増えたルールが4件以上なら1枚にまとめ、［全部 今月も使う］で全部に答える。"""
+    _four_added(sess)
+    v = review_cards(sess.store.ledger(), 2026, 12)
+    added = [c for c in v["cards"] if c.reason == "added_last_month"]
+    assert len(added) == 1 and added[0].group == ["a1", "a2", "a3"] and added[0].name == "先月増えたルール 4件"
+    answer(sess.store, 2026, 12, "a0", "keep")
+    v = review_cards(sess.store.ledger(), 2026, 12)
+    assert v["cursor"] == len(v["cards"])                 # 全部答えた
+    from shiftvoice.nextflow import NextFlow
+    out = NextFlow(sess.store, 2026, 11).review()
+    assert out["summary"] == ["先月増えたルール 4件 → 今月も使う"]
+
+
+def test_m12_split_one_by_one(sess):
+    """［1件ずつ見る］なら1件ずつ出し、1件でも1件ずつ答えた後は、まとめない。"""
+    _four_added(sess)
+    v = review_cards(sess.store.ledger(), 2026, 12, split=True)
+    assert len([c for c in v["cards"] if c.reason == "added_last_month"]) == 4
+    answer(sess.store, 2026, 12, "a0", "keep", split=True)
+    v = review_cards(sess.store.ledger(), 2026, 12)        # split を付けずに開き直しても
+    assert len([c for c in v["cards"] if c.reason == "added_last_month"]) == 4

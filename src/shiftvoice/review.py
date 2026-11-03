@@ -49,7 +49,8 @@ class Card:
     partner_name: str | None = None
     no_scene: bool = False            # 当てはまる場面が無かった（作り直さずに静かと数えた）
     loose: bool = False               # 重なりの札で、この札（rule_id）の方がゆるいと分かる時
-    group: list[str] = field(default_factory=list)   # 一緒に片付ける札（同じ人の、当てはまる場面が無い札）
+    group: list[str] = field(default_factory=list)   # 一緒に答える札（同じ人の当てはまる場面が無い札・先月増えた札）
+    group_names: list[str] = field(default_factory=list)
 
 
 def _months_between(a: str, b: str) -> int:
@@ -57,12 +58,14 @@ def _months_between(a: str, b: str) -> int:
     return (int(b[:4]) - int(a[:4])) * 12 + int(b[5:7]) - int(a[5:7])
 
 
+ADDED_GROUP_AT = 4    # 先月増えた札がこの件数以上なら1枚にまとめる（［全部 今月も使う］か［1件ずつ見る］）
 QUIET_PER_MONTH = 5   # 1か月に見直しに出す静かな札の上限（多いと見直しにならない。施設の設定 review.quiet_per_month）
 
 
 def review_cards(ledger: Ledger, year: int, month: int, quiet: dict[str, int] | None = None,
                  quiet_months: int = 3, quiet_per_month: int = QUIET_PER_MONTH,
-                 overlap: dict[str, int] | None = None, no_scene: set[str] | None = None) -> dict:
+                 overlap: dict[str, int] | None = None, no_scene: set[str] | None = None,
+                 split: bool = False, added_group_at: int = ADDED_GROUP_AT) -> dict:
     """対象の月（year, month）の表を作る前の見直し。答えた札も並びに残す（最後の一覧で戻せるように）。
     quiet は札ごとの続けて静かだった月の数（quiet.streaks）。quiet_months 以上なら片付けの候補に出す。"""
     py, pm = _prev(year, month)
@@ -147,6 +150,18 @@ def review_cards(ledger: Ledger, year: int, month: int, quiet: dict[str, int] | 
     cards += quiet_cards[:quiet_per_month]
     quiet_more = sum(2 if c.reason == "overlap" else 1 + len(c.group) for c in quiet_cards[quiet_per_month:])
     unchanged += quiet_more
+    # 先月増えた札が多い月は1枚にまとめる。毎月何件も［今月も使う］を押し続けるだけになる、と読み手が書いた（2026-11-04）。
+    # ［1件ずつ見る］（split）か、まとめた札の中のどれかに1件ずつ答えた後は、まとめない
+    answered = answers_for(ledger, year, month)
+    added = [c for c in cards if c.reason == "added_last_month"]
+    head_grouped = any(answered.get(c.rule_id, {}).get("group") for c in added)
+    one_by_one = any(c.rule_id in answered and not answered[c.rule_id].get("group") for c in added)
+    if len(added) >= added_group_at and (head_grouped or (not split and not one_by_one)):
+        head = added[0]
+        head.group = [c.rule_id for c in added[1:]]
+        head.group_names = [c.name for c in added]
+        head.name = f"先月増えたルール {len(added)}件"
+        cards = [c for c in cards if c.reason != "added_last_month" or c is head]
     order = {"expired": 0, "added_last_month": 1, "quiet": 2, "overlap": 2}
     cards.sort(key=lambda c: (order[c.reason], c.rule_id))
     answers = answers_for(ledger, year, month)
@@ -194,12 +209,12 @@ def answer(store: Store, year: int, month: int, rule_id: str, what: str, *, new_
            new_rule: dict | None = None, said: str | None = None, now: dt.datetime | None = None,
            quiet: dict[str, int] | None = None, quiet_months: int = 3,
            quiet_per_month: int = QUIET_PER_MONTH, overlap: dict[str, int] | None = None,
-           no_scene: set[str] | None = None) -> dict:
+           no_scene: set[str] | None = None, split: bool = False) -> dict:
     """1枚に答える。答えと tx は帳面の1回の保存に入る（途中で止まっても、前か後の完全な状態で開く）。"""
     if what not in ANSWERS:
         raise LedgerError(f"知らない答え {what}")
     led = store.ledger()
-    view = review_cards(led, year, month, quiet, quiet_months, quiet_per_month, overlap, no_scene)
+    view = review_cards(led, year, month, quiet, quiet_months, quiet_per_month, overlap, no_scene, split)
     card = next((c for c in view["cards"] if c.rule_id == rule_id), None)
     if card is None:
         raise LedgerError(f"見直す札ではない {rule_id}")

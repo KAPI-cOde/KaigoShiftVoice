@@ -883,11 +883,12 @@ function show12(on) {
   document.getElementById("vsetup").style.display = "none";
   if (on) document.getElementById("to11").textContent = S.month + "月の表へ";
 }
-function get12() { return fetch("/api/next/review").then(function (r) { return r.json(); }); }
+var splitAdded = false;   // 先月増えたルールを［1件ずつ見る］にしたか
+function get12() { return fetch("/api/next/review" + (splitAdded ? "?split=1" : "")).then(function (r) { return r.json(); }); }
 
 function openReview() {
   show12(true);
-  BR = null; adopted = false; R = null;
+  BR = null; adopted = false; R = null; splitAdded = false;
   renderReview();   // 前の計算が終わるまで待つことがあるので、待つ間は一言出す（白い画面にしない）
   get12().then(function (r) { R = r; detailOpen = false; extOpen = false; chOpen = false; rvErr = ""; renderReview(); });
 }
@@ -905,7 +906,7 @@ function next(path, body) {
 }
 
 function answerCard(c, ans, until) {
-  var body = { rule_id: c.rule_id, answer: ans };
+  var body = { rule_id: c.rule_id, answer: ans, split: splitAdded };
   if (until) body.new_until = until;
   next("answer", body).then(function (res) {
     if (!res) return;
@@ -938,6 +939,7 @@ function renderReview() {
       b.addEventListener("click", function () {
         if (bt[0] === "extend") { extOpen = !extOpen; chOpen = false; renderReview(); return; }
         if (bt[0] === "change") { chOpen = !chOpen; extOpen = false; renderReview(); return; }
+        if (bt[0] === "split") { splitAdded = true; get12().then(function (r) { R = r; renderReview(); }); return; }
         answerCard(c, bt[0]);
       });
       bs.appendChild(b);

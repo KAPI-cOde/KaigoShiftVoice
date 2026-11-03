@@ -298,9 +298,9 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-            elif self.path == "/api/next/review":
+            elif self.path in ("/api/next/review", "/api/next/review?split=1"):
                 with lock:
-                    self._json(200, self.server.flow().review())
+                    self._json(200, self.server.flow().review(split=self.path.endswith("split=1")))
             elif self.path.startswith("/api/why?"):
                 from urllib.parse import parse_qs, urlparse
                 q = parse_qs(urlparse(self.path).query)
@@ -342,7 +342,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     fl = self.server.flow()
                     try:
                         if self.path == "/api/next/answer":
-                            out = fl.answer(data.get("rule_id", ""), data.get("answer", ""), data.get("new_until"))
+                            out = fl.answer(data.get("rule_id", ""), data.get("answer", ""), data.get("new_until"),
+                                            bool(data.get("split")))
                         elif self.path == "/api/next/change":
                             out = fl.change(data.get("rule_id", ""), data.get("text", ""), box.session.reader)
                         elif self.path == "/api/next/undo":

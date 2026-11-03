@@ -47,6 +47,10 @@ def card_lines(c, month: int, prev: int) -> dict:
                           "また要る時は一言で足し直せます"],
                 "buttons": [["archive", f"{1 + len(c.group)}件とも履歴へ片付ける" if c.group else "履歴へ片付ける"],
                             ["keep", "今月も使う"]]}
+    if c.reason == "added_last_month" and c.group:
+        return {"label": "先月増えた", "title": c.name,
+                "lines": ["今月も使いますか", "、".join(c.group_names)],
+                "buttons": [["keep", "全部 今月も使う"], ["split", "1件ずつ見る"]]}
     # 当番（待機など）の中身を話して直すのは、まだ作っていない。［変える］を出さない
     buttons = [["keep", "今月も使う"]] + ([] if c.kind == "layer" else [["change", "変える（話す）"]])
     return {"label": "先月増えた", "title": c.name, "lines": ["今月も使いますか"], "buttons": buttons}
@@ -65,11 +69,11 @@ class NextFlow:
     def _ensure(self):
         copy_next_month(self.store, self.year, self.month)
 
-    def review(self) -> dict:
+    def review(self, split: bool = False) -> dict:
         self._ensure()
         led = self.store.ledger()
         v = review_cards(led, self.ny, self.nm, *self._quiet(), overlap=overlap_streaks(self.store, self.ny, self.nm),
-                         no_scene=no_scene_ids(self.store, self.ny, self.nm))
+                         no_scene=no_scene_ids(self.store, self.ny, self.nm), split=split)
         cards = []
         for c in v["cards"]:
             d = card_lines(c, self.nm, self.month)
@@ -99,12 +103,12 @@ class NextFlow:
         return (streaks(self.store, self.ny, self.nm), quiet_months_setting(self.store),
                 quiet_per_month_setting(self.store))
 
-    def answer(self, rule_id: str, what: str, new_until: str | None = None) -> dict:
+    def answer(self, rule_id: str, what: str, new_until: str | None = None, split: bool = False) -> dict:
         q, qm, qp = self._quiet()
         answer(self.store, self.ny, self.nm, rule_id, what, new_until=new_until, quiet=q, quiet_months=qm,
                quiet_per_month=qp, overlap=overlap_streaks(self.store, self.ny, self.nm),
-               no_scene=no_scene_ids(self.store, self.ny, self.nm))
-        return self.review()
+               no_scene=no_scene_ids(self.store, self.ny, self.nm), split=split)
+        return self.review(split)
 
     def change(self, rule_id: str, text: str, reader) -> dict:
         """［変える（話す）］。先月増えた札を、話した（書いた）一言の中身に置き換える（M8）。
