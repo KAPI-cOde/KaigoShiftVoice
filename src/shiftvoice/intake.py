@@ -116,7 +116,43 @@ def _count_strength(v, text: str, single: bool) -> str:
     return "operational"
 
 
-def _tidy(items: list[dict], month: Month) -> list[dict]:
+LEAVE_WORDS = ("有給", "有休", "年休")
+_LEAVE_DAY = re.compile(r"(?<![0-9月])([0-9]{1,2})日(?:は|に|、|,|で|の)")
+
+
+def _tidy_leave(items: list[dict], text: str) -> list[dict]:
+    """日付を言った有給の一言を、その日の有給のマスにそろえる（本物の Haiku は「職員02さん、有給で20日休み」を
+    休み（day_off）・有給の日数（leave_count）・その両方のどれにも読み、両方だと「頼みが混ざっています」で止まった。
+    2026-11-03、同じ一言で呼ぶたびに読みが変わるのを確かめた）。
+    - 有給の言葉がある一言の day_off（日付あり）は、その日を有給にする set_cell にする
+    - 同じ人の日付つきの頼みがあれば、日数の無い（か同じ日数の）leave_count は写しとして落とす
+    - leave_count だけで日数が無く、一言に「20日は」「20日に」のような日付が1つだけある時は、その日の有給にする"""
+    if not any(w in text for w in LEAVE_WORDS):
+        return items
+    def staff_key(v):
+        return tuple(v) if isinstance(v, list) else (v,)
+    out = []
+    for it in items:
+        if it.get("type") == "day_off" and it.get("days"):
+            it = {**it, "type": "set_cell", "shift": "有"}
+        out.append(it)
+    dated = {staff_key(it.get("staff")): len(it.get("days") or []) for it in out
+             if it.get("type") == "set_cell" and it.get("shift") == "有" and it.get("days")}
+    res = []
+    for it in out:
+        if it.get("type") == "leave_count":
+            k = staff_key(it.get("staff"))
+            if k in dated and it.get("count") in (None, dated[k]):
+                continue
+            days = sorted({int(x) for x in _LEAVE_DAY.findall(text)})
+            if it.get("count") is None and len(days) == 1 and not dated:
+                it = {"type": "set_cell", "staff": it.get("staff"), "days": days, "shift": "有",
+                      "reason": it.get("reason")}
+        res.append(it)
+    return res
+
+
+def _tidy(items: list[dict], month: Month, text: str = "") -> list[dict]:
     """読み取りのぶれを手元で直す。
     - 曜日の頼みと一緒に出た、日付の無い日付の型は落とす（「木曜は早番にしないで」が avoid_cell と weekday_pref の2件になる）
     - move の元の日が無ければ、表でその人のその勤務が1日だけの時に補う（「研修、13日に変わった」）"""
@@ -144,7 +180,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 month: Month, leave_caps: dict[str, int] | None = None) -> Proposal:
     """leave_caps は人ごとの有給の上限（帳面の回数の決まりから。日数のない有給の頼みに使う。13章）。"""
     names = {s.name for s in staff}
-    items = _tidy(items, month)
+    items = _tidy_leave(_tidy(items, month), text)
     real = [it for it in items if it.get("type") != "none"]
     if not real:
         raise Clarify("表を変える頼みが見つかりませんでした。もう一度言ってください")
@@ -231,8 +267,11 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 when = list(range(1, ud + 1))
                 p.until = f"{month.year:04d}-{month.month:02d}-{ud:02d}"
                 label = f"{month.month}月1〜{ud}日の累計"
-            rng = (f"{lo}〜{hi}回" if lo is not None and hi is not None else
-                   f"{hi}回まで" if hi is not None else f"{lo}回以上")
+            # 休みの勤務（公休・有給）は「日」で数える。下限と上限が同じなら1つの数で言う（「公休は月10〜10回」と出ていた）
+            unit = "日" if facility.shift(sym).kind in ("rest", "leave") else "回"
+            rng = (f"{lo}{unit}" if lo is not None and lo == hi else
+                   f"{lo}〜{hi}{unit}" if lo is not None and hi is not None else
+                   f"{hi}{unit}まで" if hi is not None else f"{lo}{unit}以上")
             params = {"shifts": [sym]}
             if lo is not None:
                 params["min"] = lo
