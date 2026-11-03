@@ -96,3 +96,31 @@ def test_m2_keep_then_not_again(nov_done):
     assert late in led.rules_at(between=("2026-12-01", "2026-12-31"))
     jan = review_cards(led, 2027, 1)
     assert late not in [x.rule_id for x in jan["cards"]]
+
+
+def test_m6b_restore_archived(nov_done):
+    """片付けたルールは一覧から戻せる。言った言葉・期間は元のまま、次に表を作る時から効く（spec 画面8・計画 M6b）。"""
+    from shiftvoice.review import restore
+    sess, late, kojima = nov_done
+    answer(sess.store, 2026, 12, late, "keep")
+    led = sess.store.ledger()
+    led.append("remove", rule_id=late, op_id="t-arch", meta={"kind": "archive"})
+    sess.store.save_ledger(led)
+    assert late not in {r.id for r in month_rules(sess.store, 2026, 12)}
+    assert [h["rule_id"] for h in history(sess.store.ledger())] == [late]
+    r = sess.restore(late)
+    assert r.kind == "applied" and "戻しました" in r.summary
+    assert late in {r.id for r in month_rules(sess.store, 2026, 12)}
+    assert history(sess.store.ledger()) == []
+    assert sess.store.ledger().rules_at()[late].meta.get("said")
+    assert sess.restore(late).kind == "ask"          # もう片付けていない
+    assert sess.state()["archived"] == []
+
+
+def test_m6b_undo_answer_after_restore_keeps_rule(nov_done):
+    """見直しで片付けた後に一覧から戻し、さらに見直しの答えを戻しても、また外れない（二重の取り消しを避ける）。"""
+    sess, late, kojima = nov_done
+    answer(sess.store, 2026, 12, kojima, "archive")
+    sess.restore(kojima)
+    undo_answer(sess.store, 2026, 12, kojima)
+    assert kojima in sess.store.ledger().rules_at()

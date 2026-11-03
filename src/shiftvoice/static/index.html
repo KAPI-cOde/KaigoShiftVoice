@@ -50,6 +50,7 @@
   .grpnote { font-size: 12px; margin: 6px 2px; }
   td.name { cursor: pointer; }
   td.cell { cursor: pointer; }
+  .rvbtn { white-space: nowrap; flex-shrink: 0; align-self: center; }
   td.cell.picked { outline: 2px solid #000; outline-offset: -2px; }
   #why { margin: 6px 0; font-size: 13px; }
   .whyhead { font-weight: 700; margin-bottom: 2px; }
@@ -356,8 +357,41 @@ function renderCards() {
   var base = rules.filter(function (c) { return !(c.meta && c.meta.said); });
   var list = said.concat(base);
   if (!list.length) box.appendChild(el("div", "empty", "ルールはまだありません"));
-  if (list.length <= GROUP_AT) { list.forEach(function (c) { box.appendChild(makeCard(c)); }); return; }
-  renderGrouped(box, list);
+  if (list.length <= GROUP_AT) list.forEach(function (c) { box.appendChild(makeCard(c)); });
+  else renderGrouped(box, list);
+  renderArchived(box);
+}
+
+// 片付けたルール（毎月の見直しで履歴へ片付けた物）。開くと1件ずつ［戻す］がある。戻すと次に表を作る時から効く
+var openArchived = false;
+function renderArchived(box) {
+  var a = (S && S.archived) || [];
+  if (!a.length) return;
+  var g = el("button", "card grpbtn" + (openArchived ? " open" : ""));
+  g.type = "button";
+  var gt = el("div", "top");
+  gt.appendChild(el("span", "nm", "片付けたルール " + a.length + "件"));
+  gt.appendChild(el("span", "per", openArchived ? "たたむ" : "開く"));
+  g.appendChild(gt);
+  g.addEventListener("click", function () { openArchived = !openArchived; renderCards(); });
+  box.appendChild(g);
+  if (!openArchived) return;
+  a.slice().reverse().forEach(function (h) {
+    var row = el("div", "card");
+    var top = el("div", "top");
+    top.appendChild(el("span", "nm", h.name || h.rule_id));
+    var b = el("button", "rvbtn", "戻す");
+    b.type = "button";
+    b.addEventListener("click", function () {
+      if (busy) return;
+      setBusy(true);
+      post("restore", { rule_id: h.rule_id }).then(function (res) { setBusy(false); handle(res); }).catch(fail);
+    });
+    top.appendChild(b);
+    row.appendChild(top);
+    box.appendChild(row);
+  });
+  box.appendChild(el("div", "grpnote", "戻したルールは、次に表を作る時から効きます"));
 }
 
 // なぜこのマスか（docs/rule-cleanup.md の4）。マスを押すと、縛っているルールを3件まで出す。もう一度押すと閉じる

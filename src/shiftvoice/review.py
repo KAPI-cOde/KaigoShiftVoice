@@ -261,10 +261,25 @@ def undo_answer(store: Store, year: int, month: int, rule_id: str) -> None:
     a = answers_for(led, year, month).get(rule_id)
     if a is None:
         raise LedgerError("戻す答えがない")
+    cancelled = {t["target_rev"] for t in led.txs if t["op"] == "undo"}
     for rev in a.get("tx", []):
+        if rev in cancelled:
+            continue   # 片付けた後に一覧から戻した札（restore）。二重に取り消すと、また外れてしまう
         led.append("undo", target_rev=rev, op_id=f"undo-review-{rule_id}")
     led.append("undo", target_rev=a["rev"], op_id=f"undo-review-{rule_id}")
     store.save_ledger(led)
+
+
+def restore(store: Store, rule_id: str, at: str) -> str:
+    """片付けた札を戻す（spec 画面8・計画 M6b）。片付けた remove を取り消すので、言った言葉・理由・期間も元のまま。
+    今の月の表は作り直さず、次に表を作る時から効く。戻した札の名前を返す。"""
+    led = store.ledger()
+    hit = next((h for h in reversed(history(led)) if h["rule_id"] == rule_id), None)
+    if hit is None:
+        raise LedgerError("片付けたルールの中に見つかりません")
+    led.append("undo", target_rev=hit["rev"], op_id=f"restore-{rule_id}", meta={"kind": "restore", "at": at})
+    store.save_ledger(led)
+    return hit["name"]
 
 
 def history(ledger: Ledger) -> list[dict]:

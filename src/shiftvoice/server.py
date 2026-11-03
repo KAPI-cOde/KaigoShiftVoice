@@ -8,6 +8,7 @@ API（すべて JSON）
 - GET  /api/next/review · POST /api/next/answer|change|undo|build|adopt  翌月へ（ルールの見直し → 返さない案と返す案 → 採る）
 - POST /api/voice   16kHz float32     声を文字にして一言と同じ流れへ（X-Answer-Uid があれば聞き返しへの返事）
 - POST /api/undo    {}                ひとつ戻す
+- POST /api/restore {"rule_id"}       片付けたルールを戻す（次に表を作る時から効く）
 - POST /api/distribute {}             表を配った（ここから休みの電話は待機の人に頼む直し）
 - POST /api/accept|refuse|cancel {"uid"}  ［了承をもらって直す］［断られた］［やめる］
 鍵は環境変数 ANTHROPIC_API_KEY（.env からも読む）。画面にも記録にも出さない。
@@ -373,6 +374,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     r = Reply("ask", None, "表を配った後の扱いにしました")
                 elif self.path == "/api/undo":
                     r = box.session.undo()
+                elif self.path == "/api/restore":
+                    r = box.session.restore(data.get("rule_id", ""))
                 elif self.path == "/api/wider":
                     r = box.session.wider(data.get("uid", ""))
                 elif self.path == "/api/choose_name":

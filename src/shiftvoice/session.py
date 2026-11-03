@@ -24,6 +24,7 @@ from .giveback import accepted_counts
 from .model import Acceptance
 from .resolve import changed_cells, resolve
 from .rules import same_slot
+from .review import history as _history
 from .standby import ASK_WIDER, assign, duty_days, fix_absence
 from .store import Store
 
@@ -748,6 +749,17 @@ class Session:
         return Reply("ask", uid, "やめました。表は変えていません")
 
     # 画面へ渡す
+    def restore(self, rule_id: str) -> Reply:
+        """片付けたルールを一覧から戻す。今の月の表は変えず、次に表を作る時から効く。"""
+        from .ledger import LedgerError
+        from .review import restore
+        try:
+            name = restore(self.store, rule_id, self.now().isoformat(timespec="seconds"))
+        except LedgerError as e:
+            return Reply("ask", None, str(e))
+        return Reply("applied", None, f"「{name}」を戻しました。次に表を作る時から効きます",
+                     summary=f"「{name}」を戻しました。次に表を作る時から効きます")
+
     def why(self, name: str, day: int) -> dict:
         """マスを押した時の「なぜこのマスか」（why.py）。表の操作はしない。"""
         from .why import why_cell
@@ -773,6 +785,7 @@ class Session:
                        "shadowed_by": _shadowed(r, rules)}
                       for r in rules.values()],
             "pending": self.store.pending(self.year, self.month),
+            "archived": [h for h in _history(self.store.ledger())][-30:],
             "can_undo": bool(m.history),
             "distributed": m.distributed,
             "layers": {k: {"name": v["def"]["name"], "assign": v["assign"], "rule_id": v["rule_id"]}
