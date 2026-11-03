@@ -59,3 +59,20 @@ def test_w4_every_cell_on_seed_is_consistent(sess):
             n += len(w["because"]) + len(w["cannot"])
     assert n > 0
     assert sess.why("いない人", 1) == {"error": "そのマスはありません"}
+
+
+def test_w5_rest_cell_reason_is_lower_bound(sess):
+    """公休の数が下限＝上限の時、公休のマスの理由は下限で言い、ほかの勤務のマスで公休にできない理由は上限で言う。"""
+    m = sess.store.month(2026, 11)
+    hit = lo = hi = 0
+    for name in m.table:
+        for day in range(1, m.days + 1):
+            w = sess.why(name, day)
+            for x in w["because"]:
+                if x["name"] == "公休の数":
+                    hit += 1
+                    lo += "（下限）" in x["fact"]
+            for x in w["cannot"]:
+                if x["name"] == "公休の数":
+                    hi += "（上限）" in x["fact"]
+    assert hit and lo == hit and hi > 0

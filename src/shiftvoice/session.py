@@ -52,14 +52,27 @@ class Reply:
 
 
 def _shadowed(r: Rule, rules: dict) -> str | None:
-    """同じ人・同じ所を決める、もっと厳しい毎月のルールがあれば、その名前（一覧で「厳しい方が効きます」と添える）。
-    千葉さんの月6回まで・月7回までのように2件あると、どちらが効くか分からないと読み手2人が迷った（2026-11-04）。"""
+    """同じ人・同じ所を決めるルールがもう1件あって、こちらが効いていない時、一覧に添える一文。
+    千葉さんの月6回まで・月7回までのように2件あると、どちらが効くか分からないと読み手2人が迷った（2026-11-04）。
+    運用の都合の回数どうしは、新しい方が言った側だけ前のに代わる（rules._replace_same）ので、新しい方が効く。
+    それ以外は両方が守られるので、厳しい方が効く（敵対レビュー 2026-11-04。前は厳しい方が効くと書くだけで、
+    言い直してゆるめた時に逆を言っていた）。"""
     from .review import _stricter
     from .rules import may_cover
+    order = list(rules)
+
+    def replaced(a: Rule, b: Rule) -> bool:   # b が a に代わる（_replace_same と同じ条件）
+        ok = lambda x: x.kind == "count" and not x.when and x.flex == "operational"
+        return ok(a) and ok(b) and order.index(b.id) > order.index(a.id)
     for o in rules.values():
-        if o.id != r.id and o.scope == r.scope and (o.who or None) == (r.who or None) and may_cover(r, o) \
-                and _stricter(o, r) is True:
-            return o.name
+        if o.id == r.id or o.scope != r.scope or (o.who or None) != (r.who or None) or not may_cover(r, o):
+            continue
+        if r.kind == "count" and r.flex == o.flex == "operational" and not r.when and not o.when:
+            if replaced(r, o):
+                return f"後から言った「{o.name}」に置き換わっていて、こちらは効いていません"
+            continue
+        if _stricter(o, r) is True:
+            return f"「{o.name}」もあり、厳しい方が効きます"
     return None
 
 
@@ -757,8 +770,18 @@ class Session:
             name = restore(self.store, rule_id, self.now().isoformat(timespec="seconds"))
         except LedgerError as e:
             return Reply("ask", None, str(e))
-        return Reply("applied", None, f"「{name}」を戻しました。次に表を作る時から効きます",
-                     summary=f"「{name}」を戻しました。次に表を作る時から効きます")
+        # 期限が過ぎたルール（期限が来て片付けた物）は、戻しても効かない。そう言って、続けるなら期間を言ってもらう
+        # （前は「次から効きます」とだけ出して、効かなかった。敵対レビュー 2026-11-04）
+        r = self.store.ledger().rules_at().get(rule_id)
+        until = (r.meta.get("until") if r else None)
+        from .nextmonth import next_ym
+        ny, nm = next_ym(self.year, self.month)
+        if until and until < f"{ny:04d}-{nm:02d}-01":   # 次に作る表（翌月）に1日も効かない
+            msg = (f"「{name}」を戻しました。ただし期限（{int(until[5:7])}月{int(until[8:10])}日まで）が過ぎているので、"
+                   "このままでは効きません。続けるなら、いつまでかを一言で言ってください")
+        else:
+            msg = f"「{name}」を戻しました。次に表を作る時から効きます"
+        return Reply("applied", None, msg, summary=msg)
 
     def why(self, name: str, day: int) -> dict:
         """マスを押した時の「なぜこのマスか」（why.py）。表の操作はしない。"""

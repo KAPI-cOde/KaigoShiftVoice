@@ -79,4 +79,18 @@ def test_d6_list_says_stricter_wins(sess):
                                 "scope": "rule", "meta": {}}, op_id=f"t-{rid}", frm="2026-06-01")
     sess.store.save_ledger(led)
     cards = {c["id"]: c for c in sess.state()["cards"]}
-    assert cards["g2"]["shadowed_by"] == "千葉さん 夜勤は月6回まで" and cards["g1"]["shadowed_by"] is None
+    assert cards["g2"]["shadowed_by"] == "「千葉さん 夜勤は月6回まで」もあり、厳しい方が効きます"
+    assert cards["g1"]["shadowed_by"] is None
+
+
+def test_d7_operational_newer_wins_in_list(sess):
+    """運用の都合の回数どうしは、後から言った方が効く（_replace_same）。ゆるめた言い直しで逆を言わない。"""
+    led = sess.store.ledger()
+    for rid, mx in (("g1", 6), ("g2", 7)):
+        led.append("add", rule={"id": rid, "name": f"千葉さん 夜勤は月{mx}回まで", "kind": "count", "flex": "operational",
+                                "params": {"shifts": ["夜"], "max": mx}, "who": ["千葉"], "when": None,
+                                "scope": "rule", "meta": {}}, op_id=f"t-{rid}", frm="2026-06-01")
+    sess.store.save_ledger(led)
+    cards = {c["id"]: c for c in sess.state()["cards"]}
+    assert cards["g1"]["shadowed_by"] == "後から言った「千葉さん 夜勤は月7回まで」に置き換わっていて、こちらは効いていません"
+    assert cards["g2"]["shadowed_by"] is None

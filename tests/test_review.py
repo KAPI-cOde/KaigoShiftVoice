@@ -124,3 +124,11 @@ def test_m6b_undo_answer_after_restore_keeps_rule(nov_done):
     sess.restore(kojima)
     undo_answer(sess.store, 2026, 12, kojima)
     assert kojima in sess.store.ledger().rules_at()
+
+
+def test_m6b_restore_expired_says_not_effective(nov_done):
+    """期限が来て片付けたルールを戻しても、期限が過ぎていて効かないことを言う（次から効くとは言わない）。"""
+    sess, late, kojima = nov_done
+    answer(sess.store, 2026, 12, kojima, "archive")
+    r = sess.restore(kojima)
+    assert "期限（11月29日まで）が過ぎているので、このままでは効きません" in r.summary

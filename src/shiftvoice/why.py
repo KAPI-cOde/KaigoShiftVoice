@@ -46,8 +46,10 @@ def why_cell(rules: list[Rule], fac: Facility, staff: list[Staff], month: Month,
             block = (not counted) and ((coef > 0 and at_hi) or (coef < 0 and at_lo))
             if r.kind == "count":
                 who = f"{inst.key}さんの" if inst.key != "全体" else ""
-                # 「9日で上限」は、公休にできない理由として逆に読まれた（読み手2人とも。2026-11-04）
-                if at_hi:
+                # 「9日で上限」は、公休にできない理由として逆に読まれた（読み手2人とも。2026-11-04）。
+                # 下限＝上限（公休は9日ちょうど）の時、このマスがその勤務なのは下限のため、ほかにできないのは上限のため。
+                # 役割で言い分ける（上限を先に見て、公休のマスの理由まで「上限」と書いていた。敵対レビュー 2026-11-04）
+                if block or (at_hi and not need):
                     fact = f"{who}{_names(fac, syms)}はもう{v}{_unit(fac, syms)}（上限）"
                 else:
                     fact = f"{who}{_names(fac, syms)}はちょうど{v}{_unit(fac, syms)}（下限）"
