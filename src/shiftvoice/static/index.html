@@ -131,6 +131,11 @@
   .su-rule .nm { font-weight: 700; }
   .su-rule .ev { font-size: 12px; }
   .su-sym { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  #diffs { display: none; margin: 0 0 10px; font-size: 14px; }
+  #diffs h3 { font-size: 14px; margin: 0 0 4px; }
+  #diffs .df { color: #c0392b; margin: 2px 0; }
+  #diffs .same { color: #000; }
+  #diffs .hint2 { margin-top: 4px; font-size: 13px; }
   #banner { display: none; border: 1px solid #000; border-radius: 3px; padding: 8px 12px; margin: 0 0 10px; font-weight: 700; }
   footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
 </style>
@@ -141,6 +146,7 @@
 <main id="v11">
   <section class="left">
     <div id="banner"></div>
+    <div id="diffs"></div>
     <h2 id="tabletitle">表</h2>
     <div id="tablewrap"></div>
     <div class="legend" id="legend"></div>
@@ -548,6 +554,7 @@ function renderAll() {
 // 返事を受けて画面へ。反映した時はマスが光ってから変わる
 function handle(res, isUndo) {
   document.getElementById("banner").style.display = "none";
+  document.getElementById("diffs").style.display = "none";
   var r = res.reply;
   var changes = (r && (r.kind === "applied" || isUndo) && r.changes) || [];
   if (glowTimer) { clearTimeout(glowTimer); glowTimer = null; }
@@ -1015,8 +1022,24 @@ function loadFacilities() {
   });
 }
 // 施設が変わった時、画面に残る前の施設の状態を捨てる
+// 作った後の「前の月と違う所」。違いは赤で1件1行（5件まで）、0件なら黒で1行
+function showDiffs(diffs, fromMonth) {
+  var box = document.getElementById("diffs");
+  box.textContent = "";
+  if (!diffs) { box.style.display = "none"; return; }
+  if (!diffs.length) {
+    box.appendChild(el("div", "same", fromMonth + "月と同じ形で作りました（1日の人数・夜勤の翌日・人ごとの勤務）"));
+  } else {
+    box.appendChild(el("h3", "", fromMonth + "月と違う所"));
+    diffs.slice(0, 5).forEach(function (d) { box.appendChild(el("div", "df", d.text)); });
+    if (diffs.length > 5) box.appendChild(el("div", "df", "ほか" + (diffs.length - 5) + "件"));
+    box.appendChild(el("div", "hint2", "違う所は、下の欄に一言で直せます（例「井上さんは日勤だけ」）"));
+  }
+  box.style.display = "block";
+}
 function resetForFacility(st, bannerText) {
   S = st; selected = null; newIds = {}; glowCells = {}; shown = {}; ask = null; saidList = []; offerR = null;
+  document.getElementById("diffs").style.display = "none";
   document.getElementById("reply").textContent = "";
   var b = document.getElementById("banner");
   b.textContent = bannerText || "";
@@ -1166,7 +1189,8 @@ function renderSetup2(box) {
       sel.addEventListener("change", function () { a.choice = sel.value; refreshPreview(); });
       row.appendChild(sel);
       if (pv.suggestions && pv.suggestions[sym] && a.choice === pv.suggestions[sym]) {
-        row.appendChild(el("span", "small", "（翌日が明けなので、夜勤と思われます）"));
+        row.appendChild(el("span", "small", pv.suggestions[sym] === "same:明"
+          ? "（いつも夜勤の翌日に出ているので、明けと思われます）" : "（翌日が明けなので、夜勤と思われます）"));
       }
       if (a.choice === "new" || a.choice === "night") {
         var ni = el("input"); ni.type = "text"; ni.placeholder = a.choice === "night" ? "名前（例 宿直）" : "名前（例 半休）"; ni.value = a.name;
@@ -1182,6 +1206,7 @@ function renderSetup2(box) {
     box.appendChild(el("label", "", "勤務の記号の読み方"));
     box.appendChild(el("div", "ln", pv.reading.join("、")));
   }
+  if (pv.staff_evidence) { var se = el("div", "small", pv.staff_evidence); se.style.marginTop = "10px"; box.appendChild(se); }
   if (pv.skipped) { var sm = el("div", "small", "集計の行 " + pv.skipped + " 行は飛ばしました"); sm.style.marginTop = "10px"; box.appendChild(sm); }
   var err = el("div", "rv-err", SU.err); err.id = "su-err"; err.style.marginTop = "8px";
   box.appendChild(err);
@@ -1218,10 +1243,11 @@ function startCreate() {
     var msg = res.existing
       ? nm + "は、もう作ってあったので、そのまま開きました（" + res.month + "月の表）"
       : nm + "の" + res.month + "月の表ができました。気づいたことを一言で直せます";
-    var warn = (res.notes || []).filter(function (x) { return x.indexOf("1回も入っていません") >= 0; });
+    var warn = (res.notes || []).filter(function (x) { return x.indexOf("1回も入っていません") >= 0 || x.indexOf("守りきれなかった") >= 0; });
     if (warn.length) msg += "。" + warn.join("。");
     SU = null;
     resetForFacility(res.state, msg);
+    showDiffs(res.diffs, res.from_month);
     loadFacilities();
   }).catch(function () { stop(); SU.err = "作れませんでした。もう一度試してください"; SU.step = 2; renderSetup(); });
 }

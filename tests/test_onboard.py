@@ -96,7 +96,11 @@ def test_infer_勤務の種類と職員(proposal):
     night = next(s for s in proposal.shift_types if s["symbol"] == "夜")
     assert night["next_is_ake"] is True
     assert proposal.units == ["全体"] and proposal.unknown_symbols == []
-    assert len(proposal.staff) == 8 and all(s["can"] == ["早", "日", "遅", "夜"] for s in proposal.staff)
+    # 夜勤以外は、その人が11月に入った勤務だけ（太田さんは遅番に入っていない）
+    assert len(proposal.staff) == 8
+    can = {s["name"]: s["can"] for s in proposal.staff}
+    assert can["赤坂"] == ["早", "日", "遅", "夜"] and can["太田"] == ["早", "日", "夜"]
+    assert "太田さん" in proposal.staff_evidence and "11月に入った勤務だけにしました。変える時は一言で" in proposal.staff_evidence
 
 
 def test_infer_ルールの候補(proposal):
@@ -104,9 +108,10 @@ def test_infer_ルールの候補(proposal):
     assert by["早番の人数"]["flex"] == "fixed" and by["早番の人数"]["params"] == {
         "shifts": ["早"], "scope": "all", "op": "==", "n": 1}
     assert by["遅番の人数"]["params"]["n"] == 1 and by["夜勤の人数"]["flex"] == "fixed"
-    day = by["日勤の人数"]
-    assert day["flex"] == "negotiable" and day["params"]["op"] == ">=" and day["params"]["n"] == 1
-    assert by["公休の数"]["params"] == {"shifts": ["公"], "min": 9, "max": 9} and by["公休の数"]["flex"] == "fixed"
+    lo, hi = by["日勤の人数（下限）"], by["日勤の人数（上限）"]
+    assert lo["flex"] == "fixed" and lo["params"]["op"] == ">=" and lo["params"]["n"] == 1
+    assert hi["flex"] == "negotiable" and hi["params"]["op"] == "<=" and hi["params"]["n"] > 1
+    assert by["公休の数"]["params"] == {"shifts": ["公"], "min": 9, "max": 9} and by["公休の数"]["flex"] == "operational"
     assert by["夜勤の翌日は明け"]["params"] == {"if": ["夜"], "next_in": ["明"]}
     assert by["明けは夜勤の翌日だけ"]["params"] == {"if": ["明"], "prev_in": ["夜"]}
     assert by["明けの翌日は公休"]["params"] == {"if": ["明"], "next_in": ["公"]}
@@ -131,7 +136,7 @@ def test_infer_夜明が9割に満たなければ作らない():
 def test_create_施設を作って12月の表ができる(tmp_path, proposal):
     root = tmp_path / "komorebi"
     c = create_facility(proposal, root, name="こもれびの家", next_year=2026, next_month=12)
-    assert c.root == root and c.staff_count == 8 and c.rule_count == 9
+    assert c.root == root and c.staff_count == 8 and c.rule_count == 10
     assert c.next_table_made and c.seconds >= 0
     for f in ("facility.json", "staff.json", "ledger.json", "months/2026-11.json", "months/2026-12.json"):
         assert (root / f).exists()
@@ -144,7 +149,7 @@ def test_create_施設を作って12月の表ができる(tmp_path, proposal):
     from shiftvoice.onboard import HOLIDAYS
     assert s["holidays"] == HOLIDAYS and s["holidays"]["2027-01"] == [1, 11]   # 翌々月以降も入る
     led = store.ledger()
-    assert led.rev == 9 and led.txs[0]["meta"]["by"] == "作成者"
+    assert led.rev == 10 and led.txs[0]["meta"]["by"] == "作成者"
     nov, dec = store.month(2026, 11), store.month(2026, 12)
     assert nov.table == proposal.table and nov.prev_tail == {}
     assert dec.prev_tail == {k: v[-5:] for k, v in proposal.table.items()}
@@ -205,9 +210,9 @@ def rule_map(pr):
 
 
 def assert_komorebi_rules(pr):
-    """見本と同じ表なので、見つかるルールも見本と同じ9件。"""
+    """見本と同じ表なので、見つかるルールも見本と同じ10件（日勤は下限と上限の2本）。"""
     by = rule_map(pr)
-    assert len(pr.rules) == 9
+    assert len(pr.rules) == 10
     assert by["早番の人数"]["params"] == {"shifts": ["早"], "scope": "all", "op": "==", "n": 1}
     assert by["夜勤の人数"]["params"]["n"] == 1 and by["遅番の人数"]["params"]["n"] == 1
     assert by["公休の数"]["params"] == {"shifts": ["公"], "min": 9, "max": 9}
@@ -337,7 +342,7 @@ def test_貼り付け9_ユニットごとの人数(tmp_path):
     for nm in ("早番の人数", "遅番の人数", "夜勤の人数"):
         assert by[nm]["params"]["scope"] == "each_unit" and by[nm]["params"]["n"] == 1
     assert by["公休の数"]["params"] == {"shifts": ["公"], "min": 9, "max": 9}
-    assert len(pr.rules) == 9
+    assert len(pr.rules) == 10
     c, dec = made_next(tmp_path, pr)
     assert c.next_table_made and len(dec.table) == 16
     assert Store(tmp_path / "f").facility().units == ["東", "西"]
@@ -526,3 +531,128 @@ def test_出口の確かめ_毎日いた勤務が翌月に無ければできた�
                         answers=answers)
     assert not c.next_table_made
     assert "1回も入りませんでした" in c.stage_note
+
+
+# ---------------------------------------------------------------- 3組目の書き方（24〜32）。黙って違う表を作らない
+
+from shiftvoice.onboard import compare_months     # noqa: E402
+
+
+def _ids(pr, drop=()):
+    pr.rules = [r for r in pr.rules if not any(w in r["name"] for w in drop)]
+    return pr
+
+
+def test_早1早2_合わせた人数のルールで毎日の人数が守られる(tmp_path):
+    ans = {"早1": {"same_as": "早"}, "早2": {"name": "早番2", "kind": "work"}}
+    pr = infer(parse_paste(paste(24)), 2026, 11, ans)
+    by = rule_map(pr)
+    pair = by["早番と早番2の人数の合計"]
+    assert pair["params"] == {"shifts": ["早", "早2"], "scope": "all", "op": "==", "n": 2}
+    assert by["早番の人数（上限）"]["params"]["op"] == "<=" and by["早番の人数（上限）"]["flex"] == "negotiable"
+    assert "早番の人数（下限）" not in by       # 早番だけの日は0人の日があるので、下限は付けない
+    c, dec = made_next(tmp_path, pr, ans)
+    assert c.next_table_made and c.diffs == []
+    assert all(sum(1 for r in dec.table.values() if r[d] in ("早", "早2")) == 2 for d in range(31))
+
+
+def test_早1早2_合計のルールが無いと1日の人数の違いが出る(tmp_path):
+    ans = {"早1": {"same_as": "早"}, "早2": {"name": "早番2", "kind": "work"}}
+    pr = _ids(infer(parse_paste(paste(24)), 2026, 11, ans), drop=("合計", "上限"))
+    c, _ = made_next(tmp_path, pr, ans)
+    assert c.next_table_made
+    hit = [d for d in c.diffs if d["kind"] == "count_range"]
+    assert hit and any("早番" in d["text"] and "11月は" in d["text"] and "12月は" in d["text"] for d in hit)
+
+
+def test_遅AB_合わせた人数が守られる(tmp_path):
+    ans = {"遅A": {"same_as": "遅"}, "遅B": {"name": "遅番B", "kind": "work"}}
+    pr = infer(parse_paste(paste(25)), 2026, 11, ans)
+    assert "遅番と遅番Bの人数の合計" in rule_map(pr)
+    c, dec = made_next(tmp_path, pr, ans)
+    assert c.next_table_made and c.diffs == []
+    assert all(sum(1 for r in dec.table.values() if r[d] in ("遅", "遅B")) == 2 for d in range(31))
+
+
+def test_夜N明Aの英字_夜勤の翌日は明けの種類のどれか(tmp_path):
+    ans = {"N": {"name": "夜勤", "kind": "work", "next_is_ake": True}, "A": {"name": "明け", "kind": "ake"}}
+    pr = infer(parse_paste(paste(26)), 2026, 11, ans)
+    assert pr.problems == []
+    assert rule_map(pr)["夜勤の翌日は明け"]["params"] == {"if": ["N"], "next_in": ["A"]}
+    c, dec = made_next(tmp_path, pr, ans)
+    assert c.next_table_made and c.diffs == []
+    for r in dec.table.values():
+        assert all(r[d + 1] == "A" for d in range(30) if r[d] == "N")
+    # 明けの種類で答えた記号が、表に明が既にあれば「明けと同じ」がおすすめ
+    t = paste(11).split("\n")
+    t[2] = t[2].replace("明", "ア")
+    assert infer(parse_paste("\n".join(t)), 2026, 11).suggestions.get("ア") == "same:明"
+
+
+@pytest.mark.parametrize("n,answers,word", [
+    (27, {"E": {"name": "休み", "kind": "rest"}}, "毎日2人いた勤務です。休みでよいか確かめてください"),
+    (27, {"E": {"name": "x", "kind": "ake"}}, "毎日2人いた勤務です"),
+    (27, {"E": {"same_as": "公"}}, "毎日2人いた勤務です"),
+    (28, {"/": {"name": "明け", "kind": "work"}}, "いつも夜勤の翌日に出ています"),
+    (28, {"/": {"same_as": "公"}}, "いつも夜勤の翌日に出ています"),
+    (29, {"N": {"name": "新しい勤務", "kind": "work"}}, "いつも翌日が明けです"),
+    (29, {"N": {"same_as": "公"}}, "いつも翌日が明けです"),
+    (29, {"N": {"same_as": "日"}}, "いつも翌日が明けです"),
+])
+def test_答えが表の並びと合わなければ問題が出て作れない(tmp_path, n, answers, word):
+    pr = infer(parse_paste(paste(n)), 2026, 11, answers)
+    assert pr.problems and any(word in x for x in pr.problems)
+    with pytest.raises(OnboardError):
+        create_facility(pr, tmp_path / "f", name="試験", next_year=2026, next_month=12, answers=answers)
+    assert not (tmp_path / "f").exists()
+
+
+def test_正しい答えは止めない_公休がバツの表と夜勤のN(tmp_path):
+    ans = {"/": {"name": "明け", "kind": "ake"}, "×": {"same_as": "公"}}
+    pr = infer(parse_paste(paste(30)), 2026, 11, ans)
+    assert pr.problems == []
+    c, dec = made_next(tmp_path, pr, ans)
+    assert c.next_table_made and "/" in {x for r in dec.table.values() for x in r}
+    ans2 = {"N": {"name": "夜勤", "kind": "work", "next_is_ake": True}}
+    assert infer(parse_paste(paste(29)), 2026, 11, ans2).problems == []
+
+
+def test_答えの記号が日勤と同じになる早番の取り違えは_黙ったまま残る():
+    """早番をEと書いた表を「日勤と同じ」と答えると、本人にしか分からない取り違えで、アプリは見分けられない。"""
+    pr = infer(parse_paste(paste(27)), 2026, 11, {"E": {"same_as": "日"}})
+    assert pr.problems == []
+
+
+def test_作れない時は外せばできるルールを名指しする(tmp_path):
+    pr = infer(parse_paste(paste(31)), 2026, 11)
+    assert pr.problems == []
+    c = create_facility(pr, tmp_path / "f", name="試験", next_year=2026, next_month=12)
+    assert not c.next_table_made and c.diffs == []
+    assert "外すと作れます" in c.stage_note and "連勤の上限" in c.stage_note and "人数のルール" in c.stage_note
+    assert "ルール" in c.stage_note and "札" not in c.stage_note and "決まり" not in c.stage_note
+
+
+def test_公休が合わない月は段を下げて作り_公休を守りきれなかった人を知らせる(tmp_path):
+    pr = infer(parse_paste(paste(32)), 2026, 11)
+    assert {r["flex"] for r in pr.rules if r["kind"] == "count"} == {"operational"}
+    c, dec = made_next(tmp_path, pr)
+    assert c.next_table_made and "運用の都合を外せる形" in c.stage_note
+    assert "公休の数のルールを守りきれなかった人がいます" in c.notes
+    assert any(d["kind"] == "rest_count" and "公休" in d["text"] and "11月は" in d["text"] for d in c.diffs)
+
+
+def test_違いの一覧_人数の幅_夜勤の翌日_人ごとの勤務_公休():
+    st = [{"symbol": "早", "name": "早番", "kind": "work"}, {"symbol": "日", "name": "日勤", "kind": "work"},
+          {"symbol": "夜", "name": "夜勤", "kind": "work", "next_is_ake": True},
+          {"symbol": "明", "name": "明け", "kind": "ake"}, {"symbol": "公", "name": "公休", "kind": "rest"}]
+    cur = {"井上": ["日", "夜", "明", "公", "日"], "赤坂": ["早", "夜", "明", "公", "早"]}
+    nxt = {"井上": ["早", "夜", "公", "公", "日"], "赤坂": ["早", "夜", "明", "公", "公"]}
+    out = compare_months(cur, nxt, st, 11, 12)
+    kinds = [d["kind"] for d in out]
+    assert kinds == ["count_range", "ake_rate", "person_shifts", "rest_count"]
+    text = "\n".join(d["text"] for d in out)
+    assert "井上さん　11月は日勤・夜勤だけ → 12月は早番にも" in text
+    assert "夜勤の次の日が明け　11月は100% → 12月は50%" in text
+    assert "井上さんほか1人の公休　11月は1日 → 12月は2日" in text
+    same = compare_months(cur, cur, st, 11, 12)
+    assert same == []

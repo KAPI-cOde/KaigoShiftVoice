@@ -72,6 +72,7 @@ def preview_out(pasted: Pasted, prop: Proposal) -> dict:
         "reading": _reading(pasted, prop), "units": list(prop.units),
         "blank_as_rest": pasted.blank_as_rest, "skipped": pasted.skipped,
         "problems": list(prop.problems), "suggestions": dict(prop.suggestions),
+        "staff_evidence": prop.staff_evidence,
     }
 
 
@@ -216,6 +217,7 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     root = parent / _short_id(name.strip())
                     existing = (root / "facility.json").exists()
                     notes: list[str] = []
+                    diffs = None   # もう作ってあった施設を開くだけの時は、違いは出さない
                     if not existing:
                         # 作りかけの置き場を残さない。別の名前の場所で作り、表までできた時だけ置き換える
                         import shutil
@@ -228,6 +230,7 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                             shutil.rmtree(tmp, ignore_errors=True)
                             raise
                         notes = c.notes + ([c.stage_note] if c.stage_note else [])
+                        diffs = c.diffs
                         if not c.next_table_made:
                             shutil.rmtree(tmp, ignore_errors=True)
                             return self._json(400, {"error": "翌月の表が作れませんでした。" + (c.stage_note or ""), "notes": notes})
@@ -237,7 +240,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     with lock:
                         st = self._swap(root, ny, nm)
                     return self._json(200, {"ok": True, "existing": existing, "facility": {"id": root.name, "name": st_name(root)},
-                                            "year": ny, "month": nm, "notes": notes, "state": st})
+                                            "year": ny, "month": nm, "notes": notes, "diffs": diffs,
+                                            "from_month": month, "state": st})
                 if self.path == "/api/facilities/open":
                     with lock:
                         hit = [f for f in list_facilities(box.session.store.root) if f["id"] == data.get("id")]
