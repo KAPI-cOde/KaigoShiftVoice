@@ -17,10 +17,12 @@ from .model import Facility, Staff
 BOUNDARY = r"(?=さん|くん|ちゃん|[、。,.\s　のはがにもとをへやで]|$)"
 HONORIFIC = r"(?:さん|くん|ちゃん|様|氏|君|先生)"
 # 「〇〇さん」でも人の名前ではない言葉
-NOT_NAMES = {"皆", "母", "父", "お母", "お父", "家族", "利用者", "看護師", "相談員", "新人", "息子", "娘", "奥",
-             # 家族の言葉（「お子さんの熱で休み」が名簿にない名前「子」で止まった。2026-11-03 作った施設で本物の一言を測った時）。
-             # 名前の一部にもなる語は足さない（失敗の一覧14）。どれも「〇〇さん」の〇〇が丸ごとこの語の時だけ当たる
-             "子", "孫", "旦那", "主人", "妻", "夫", "嫁", "兄", "姉", "弟", "妹", "祖母", "祖父", "親"}
+NOT_NAMES = {"皆", "母", "父", "お母", "お父", "家族", "利用者", "看護師", "相談員", "新人", "息子", "娘", "奥"}
+# 家族の言葉（「お子さんの熱で休み」が名簿にない名前「子」で止まった。2026-11-03 作った施設で本物の一言を測った時）。
+# 前が「お」「ご」か、文の頭・区切りの時だけ名前でないとみなす。「よし子さん」「はな子さん」のように前にひらがなが
+# 続く時は名前の一部なので、今どおり名簿にない名前として止める（伏せずに送らないため。自動のセキュリティレビューの指摘）
+FAMILY_WORDS = {"子", "孫", "旦那", "主人", "妻", "夫", "嫁", "兄", "姉", "弟", "妹", "祖母", "祖父", "親"}
+FAMILY_BEFORE = set("おご、。,.・ 　のとがはもへに（(「")
 
 
 @dataclass
@@ -75,8 +77,19 @@ class Masker:
             if need_boundary and alias in t and alias not in self.leftover:
                 self.leftover[alias] = name
         t = t.replace("ゼロ", "0")
-        unknown = [m for m in re.findall(r"([一-龥々ァ-ヶA-Za-z]{1,6})" + HONORIFIC, t)
-                   if not re.fullmatch(r"職員\d{0,2}", m) and m not in NOT_NAMES]
+        unknown = []
+        for mm in re.finditer(r"([一-龥々ァ-ヶA-Za-z]{1,6})" + HONORIFIC, t):
+            m = mm.group(1)
+            if re.fullmatch(r"職員\d{0,2}", m) or m in NOT_NAMES:
+                continue
+            i = mm.start(1)
+            prev = t[i - 1] if i > 0 else ""
+            prev2 = t[i - 2] if i > 1 else ""
+            if prev and prev in "おご" and re.fullmatch(r"[ぁ-ゖ]", prev2 or "x") and prev2 not in "はがのにをともへでや":
+                prev = "あ"   # 「なお子さん」「まご孫さん」の「お」「ご」は名前の一部（前が助詞でないひらがな）
+            if m in FAMILY_WORDS and (prev == "" or prev in FAMILY_BEFORE):
+                continue
+            unknown.append(m)
         return t, list(self.leftover) + unknown
 
     def suggest(self, unknown: str) -> list[str]:

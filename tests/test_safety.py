@@ -173,3 +173,10 @@ def test_unknown_person_still_stops_next_to_family_word(sess):
     m = Masker(sess.store.staff(), sess.store.facility())
     _, unknown = m.mask("森田さん、12日はお子さんの熱で休み")
     assert unknown == ["森田"]
+
+
+@pytest.mark.parametrize("text", ["よし子さん、12日は休み", "岡田さんとはな子さん、12日は休み", "まご孫さん、12日は休み", "なお子さん、12日は休み", "旦那さんのなお子さん、12日休み"])
+def test_hiragana_name_ending_in_family_word_still_stops(sess, text):
+    """ひらがなに家族の言葉が続く名前（よし子さん）は名前の一部。名簿にない名前として止め、伏せずに送らない。"""
+    _, unknown = Masker(sess.store.staff(), sess.store.facility()).mask(text)
+    assert unknown, text
