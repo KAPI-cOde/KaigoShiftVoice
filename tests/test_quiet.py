@@ -208,3 +208,18 @@ def test_q14_rule_stats_for_list(built_dir, tmp_path):
         _fake(s.store, ym, {"g1": "quiet", "r012": "quiet"})
     rs = s.state()["rule_stats"]
     assert rs["total"] == 13 and rs["candidates"] == 2 and rs["per_month"] == 5 and rs["added"] == 0
+
+
+def test_q15_overlap_summary_says_which(st):
+    """見直しの最後の一覧で、重なりの札はどちらを片付けたかを書く。"""
+    _add(st, "g1", "千葉さん 夜勤は月6回まで", "count", {"shifts": ["夜"], "max": 6}, ["千葉"], flex="fixed")
+    _add(st, "g2", "千葉さん 夜勤は月7回まで", "count", {"shifts": ["夜"], "max": 7}, ["千葉"], flex="fixed")
+    from shiftvoice.build import build_original
+    m = st.month(2026, 11)
+    m.table = build_original(st, 2026, 11, with_premise=False).result.table
+    st.save_month(m)
+    for ym in ("2026-09", "2026-10", "2026-11"):
+        _fake(st, ym, {"g1": "overlap", "g2": "overlap"})
+    flow = NextFlow(st, 2026, 11)
+    out = flow.answer("g2", "archive")
+    assert "千葉さん 夜勤は月7回まで → 片付けた（千葉さん 夜勤は月6回までは残す）" in out["summary"]

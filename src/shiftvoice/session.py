@@ -784,18 +784,22 @@ class Session:
         return Reply("applied", None, msg, summary=msg)
 
     def _rule_stats(self, rules: dict) -> dict:
-        """一覧の上に出す、ルールの量と増え方と片付けの候補の数（docs/rule-cleanup.md の3）。"""
+        """一覧の上に出す、ルールの量と増え方と、次の見直しでまだ答えていない片付けの候補の数（docs/rule-cleanup.md の3）。
+        数え方は見直しの札と同じ（［今月も使う］と答えた札は数えない）。"""
         from .nextmonth import next_ym
-        from .quiet import overlap_streaks, quiet_months_setting, quiet_per_month_setting, streaks
+        from .quiet import (no_scene_ids, overlap_streaks, quiet_months_setting, quiet_per_month_setting,
+                            streaks)
+        from .review import review_cards
         mine = [r for r in rules.values() if r.scope == "rule"]
         start = self._span()[0]
         ny, nm = next_ym(self.year, self.month)
-        qm = quiet_months_setting(self.store)
-        ids = {r.id for r in mine}
-        cand = {k for k, n in streaks(self.store, ny, nm).items() if n >= qm and k in ids}
-        cand |= {k for k, n in overlap_streaks(self.store, ny, nm).items() if n >= qm and k in ids}
+        qp = quiet_per_month_setting(self.store)
+        v = review_cards(self.store.ledger(), ny, nm, streaks(self.store, ny, nm), quiet_months_setting(self.store), qp,
+                         overlap_streaks(self.store, ny, nm), no_scene_ids(self.store, ny, nm))
+        cand = sum((2 if c.reason == "overlap" else 1 + len(c.group)) for c in v["cards"]
+                   if c.reason in ("quiet", "overlap") and c.rule_id not in v["answers"]) + v["quiet_more"]
         return {"total": len(mine), "added": sum(1 for r in mine if r.meta.get("said") and r.meta.get("from") == start),
-                "candidates": len(cand), "per_month": quiet_per_month_setting(self.store)}
+                "candidates": cand, "per_month": qp}
 
     def why(self, name: str, day: int) -> dict:
         """マスを押した時の「なぜこのマスか」（why.py）。表の操作はしない。"""

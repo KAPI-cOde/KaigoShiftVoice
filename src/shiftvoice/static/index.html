@@ -902,6 +902,8 @@ document.getElementById("to12").addEventListener("click", openReview);
 document.getElementById("to11").addEventListener("click", function () {
   if (waitTimer) return;
   show12(false);
+  // 見直しで片付けた・戻したルールを、右の一覧（片付けたルール・件数）にすぐ映す
+  fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) { S = st; renderAll(); });
 });
 
 function next(path, body) {

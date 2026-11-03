@@ -84,8 +84,13 @@ class NextFlow:
         def word(c):
             a = v["answers"][c["rule_id"]]
             return ANSWER_WORDS[c["answer"]] + (f"（{a['new_name']}）" if a.get("new_name") else "")
-        summary = [f"{c['title']} → {'両方使う' if c['reason'] == 'overlap' and c['answer'] == 'keep' else word(c)}"
-                   for c in cards if c["answer"]]
+        def line(c):
+            if c["reason"] == "overlap":   # どちらを片付けたかを書く（「AとB → 片付けた」では分からない）
+                a, b = c["title"].split("\u3000と\u3000")
+                return {"keep": f"{c['title']} → 両方使う", "archive": f"{a} → 片付けた（{b}は残す）",
+                        "archive_partner": f"{b} → 片付けた（{a}は残す）"}[c["answer"]]
+            return f"{c['title']} → {word(c)}"
+        summary = [line(c) for c in cards if c["answer"]]
         return {"month": self.nm, "cards": cards, "cursor": v["cursor"], "total": n,
                 "head": f"{self.nm}月の表を作る前に　見直すルール {n}件中{min(v['cursor'] + 1, n)}件目"
                         f"（残り{max(n - v['cursor'] - 1, 0)}件）" if v["cursor"] < n else
