@@ -747,10 +747,13 @@ function renderReplyBody(r) {
     });
     box.appendChild(bs);
     box.appendChild(el("div", "q2", "毎月＝来月からもずっと続くルール。今月だけ＝この月の表にだけ効き、来月には引き継ぎません"));
+    // 問いの間に答えでない一言が来た。問いとボタンは残し、その下に「先に上の質問に答えてください」（打った文は入力欄に残る）
+    if (r.extra && r.extra.answer_first) box.appendChild(el("div", "warning", r.message));
     return;
   }
   if (r.kind === "ask_replace") {  // 同じ所を決める前からのルールがある。積もらせないために聞く
-    box.appendChild(el("div", "q", r.message || "置き換えますか、別に足しますか"));
+    var first = r.extra && r.extra.answer_first;
+    box.appendChild(el("div", "q", (first ? r.extra.question : r.message) || "置き換えますか、別に足しますか"));
     var rp = el("div", "btns");
     [["置き換える", "replace"], ["別に足す", "add"]].forEach(function (p) {
       var b = el("button", "", p[0]);
@@ -760,6 +763,7 @@ function renderReplyBody(r) {
     });
     box.appendChild(rp);
     box.appendChild(el("div", "q2", "置き換える＝前のルールを外して、いま言ったルールだけにします。前のルールは［ひとつ戻す］で戻せます。別に足す＝前のルールも残して、両方を守ります"));
+    if (first) box.appendChild(el("div", "warning", r.message));
     return;
   }
   if (r.kind === "error") {
@@ -912,12 +916,15 @@ function fail(e) {
   renderReply({ kind: "failed_solve", message: "うまくつながりませんでした。もう一度試してください" });
 }
 
-function sendAnswer(text) {
+function sendAnswer(text, inp) {
   if (busy || !ask) return;
   setBusy(true);
   post("answer", { uid: ask.uid, text: text }).then(function (res) {
     setBusy(false);
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
+    // 打った文が答えとして使われた時だけ入力欄を消す。答えでない一言は残す（ボタンの時は入力欄に触らない）
+    var r = res.reply;
+    if (inp && r && !(r.extra && r.extra.answer_first) && r.kind !== "error" && inp.value.trim() === text) inp.value = "";
     handle(res);
   }).catch(fail);
 }
@@ -986,8 +993,12 @@ function stopTalk() {
     .then(function (x) { return x.json(); }).then(function (res) {
       setBusy(false);
       if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
-      saidList.push(res.text);
-      renderSaid();
+      if (res.reply && res.reply.extra && res.reply.extra.answer_first) {
+        document.getElementById("input").value = res.text;   // 答えでない一言は捨てずに入力欄へ（答えた後に［伝える］で送れる）
+      } else {
+        saidList.push(res.text);
+        renderSaid();
+      }
       handle(res);
     }).catch(fail);
 }
@@ -1001,8 +1012,8 @@ document.getElementById("form").addEventListener("submit", function (ev) {
   var inp = document.getElementById("input");
   var text = inp.value.trim();
   if (!text || busy) return;
+  if (ask) { sendAnswer(text, inp); return; }   // 聞き返しの間は、答えとして使われた時だけ入力欄を消す
   inp.value = "";
-  if (ask) { sendAnswer(text); return; }
   saidList.push(text);
   renderSaid();
   setBusy(true);

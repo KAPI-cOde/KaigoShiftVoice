@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import re
 import datetime as dt
 from dataclasses import dataclass, field
 
@@ -31,6 +32,30 @@ from .store import Store
 JST = dt.timezone(dt.timedelta(hours=9))
 ASK_PERIOD = "毎月ですか、今月だけですか"
 READ_FAILED = "読み取りに失敗しました。表もルールも変えていません"
+ANSWER_FIRST = "先に上の質問に答えてください（毎月／今月だけ）"
+ANSWER_FIRST_REPLACE = "先に上の質問に答えてください（置き換える／別に足す）"
+
+# 聞き返しへの答えそのもの。句読点と空白を除いた全文が「相づち＋答えの言葉1つ＋言い終わり」の時だけ答えにする。
+# 中身の言葉が1字でも残る一言は答えにしない。前は文の中の「毎月」を拾い、「連勤は4日までにしよう。毎月」を
+# 前の問いの答えに使って連勤のルールを黙って消し、答えでない一言は黙って捨てていた（2026-11-04 本物の Claude で再現）。
+# 言い方を広く拾わない。迷う言い方は答えにせず、先に上の質問に答えてと言う（ボタンで答えられる）
+_NOISE = re.compile(r"[\s、。，．,.!！?？…・「」]")
+_FILLER = r"(?:はい|うん|ええ|えっと|えーと|えー|あ|じゃあ)?"
+_PERIOD_ONLY = re.compile(_FILLER + r"(?:毎月|今月だけ|今月のみ|今回だけ|今回のみ|今月|今回)"
+                          r"(?:で|です|でお願いします|でいい|でいいです|でいいよ|にして|ね|よ){0,2}")
+_REPLACE_ONLY = {"replace": re.compile(_FILLER + r"置き換え(?:る|て|ます)(?:ください|ね|よ)?"),
+                 "add": re.compile(_FILLER + r"別に足(?:す|して|します)(?:ください|ね|よ)?")}
+
+
+def period_answer(text: str) -> str | None:
+    """「毎月ですか、今月だけですか」への答えそのものなら "rule" / "once"、そうでなければ None。"""
+    return read_answer(text) if _PERIOD_ONLY.fullmatch(_NOISE.sub("", text)) else None
+
+
+def replace_answer(text: str) -> str | None:
+    """「置き換えますか、別に足しますか」への答えそのもの（ボタンの名前どおり）なら "replace" / "add"。"""
+    t = _NOISE.sub("", text)
+    return next((k for k, p in _REPLACE_ONLY.items() if p.fullmatch(t)), None)
 
 
 @dataclass
@@ -277,15 +302,27 @@ class Session:
             return Reply("error", uid, "聞き返した発言が見つかりません")
         self._recall(u)
         if u.get("status") == "ask_replace":
-            if text not in ("replace", "add"):
-                return self._stamp(Reply("ask_replace", uid, "置き換えますか、別に足しますか"))
-            self.store.update_pending(self.year, self.month, uid, dup=text)
-            return self._stamp(self._safe_propose({**u, "dup": text}))
-        scope = text if text in ("rule", "once") else read_answer(text)
+            dup = text if text in ("replace", "add") else replace_answer(text)
+            if dup is None:
+                return self._stamp(self._answer_first(u))
+            self.store.update_pending(self.year, self.month, uid, dup=dup)
+            return self._stamp(self._safe_propose({**u, "dup": dup}))
+        scope = text if text in ("rule", "once") else period_answer(text)
         if scope is None:
-            return self._stamp(Reply("ask_period", uid, ASK_PERIOD))
+            return self._stamp(self._answer_first(u))
         self.store.update_pending(self.year, self.month, uid, scope=scope)
         return self._stamp(self._safe_propose({**u, "scope": scope}))
+
+    def _answer_first(self, u: dict) -> Reply:
+        """聞き返しの間に、答えでない一言が来た。表もルールも未反映の発言も変えず、Claude にも送らず、
+        先に上の質問に答えてと言う。問いは残すので、画面はボタンを出したまま、打った文を入力欄に残す（印 answer_first）。"""
+        if u.get("status") == "ask_replace":
+            rules = self.store.ledger().rules_at()
+            names = "」「".join(rules[i].name for i in u.get("dup_old") or [] if i in rules)
+            q = (f"前からのルール「{names}」があります。置き換えますか、別に足しますか" if names
+                 else "置き換えますか、別に足しますか")
+            return Reply("ask_replace", u["id"], ANSWER_FIRST_REPLACE, extra={"answer_first": True, "question": q})
+        return Reply("ask_period", u["id"], ANSWER_FIRST, extra={"answer_first": True})
 
     def _apply(self, u: dict, p: Proposal, scope: str) -> Reply:
         m = self.store.month(self.year, self.month)
