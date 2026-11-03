@@ -93,6 +93,8 @@ def test_作る_もう一度は開くだけ_デモへ戻る(srv):
     # もう一度作ろうとすると、作り直さずに開く
     mtime = (new_root / "ledger.json").stat().st_mtime_ns
     code, again = call(base, "/api/setup/create", paste_body(name="こもれびの家（作り話）", answers={}, drop_rules=[]))
+    assert "もう作ってあるので、前に作った施設を開きました" in again["message"] and "今回貼った表は使っていません" in again["message"]
+    assert "別の名前にしてください" in again["message"] and again["message"].startswith("『こもれびの家（作り話）』")
     assert code == 200 and again["existing"] is True and again["diffs"] is None and (new_root / "ledger.json").stat().st_mtime_ns == mtime
     assert len([c for c in again["state"]["cards"] if c["scope"] == "rule"]) == len(pv["rules"]) - 1
     # 一覧とデモへの切り替え
@@ -177,3 +179,12 @@ def test_作れない貼り付けは外せばできるルールを知らせて�
     code, out = call(base, "/api/setup/create", {"text": text, "year": 2026, "month": 11, "name": "作れない家（作り話）"})
     assert code == 400 and "外すと作れます" in out["error"] and "連勤の上限" in out["error"]
     assert not any(d.name.endswith(".making") for d in demo_root.parent.iterdir())
+
+
+def test_プレビューは途中入職の人の知らせと空欄の名前を返す(srv):
+    base, _, _ = srv
+    from pathlib import Path as P
+    text = (P(__file__).parent / "fixtures" / "pastes" / "33.tsv").read_text(encoding="utf-8")
+    code, pv = call(base, "/api/setup/preview", paste_body(text=text))
+    assert code == 200 and len(pv["rest_notes"]) == 1 and pv["rest_notes"][0].startswith("木下さん 公休")
+    assert any(r.startswith("空欄") and "木下さん" in r for r in pv["reading"])

@@ -42,7 +42,7 @@ ROLE_WORDS = {"介護", "看護", "看護師", "介護福祉士", "パート", "
 # 名前の欄に書かれていても人ではない行（1人2行の表の下の行）
 NOTE_WORDS = {"備考", "時間", "メモ", "勤務時間"}
 # ユニットの値が入る左の列の見出し
-UNIT_HEADS = {"ユニット", "棟", "フロア", "ユニット名"}
+UNIT_HEADS = {"ユニット", "棟", "フロア", "ユニット名", "所属", "部署", "階", "グループ", "チーム"}
 # 集計の行とみなす名前の言葉
 SUMMARY_WORDS = ("計", "合計", "人数")
 # 雛形に無い勤務の名前で、行の名前に使われたら集計の行とみなす言葉
@@ -62,6 +62,8 @@ HOLIDAYS = {
 # 初めのデータから写す設定（solve の中は下の4つだけ）
 SETTING_KEYS = ("weights", "light_weight", "quality", "keep_weight", "resolve_quality")
 SOLVE_KEYS = ("workers", "seed", "max_deterministic_time", "resolve_max_deterministic_time")
+ALWAYS_TYPES = ("公", "有", "研")   # 表に出ていなくても、頼まれた時に置けるよう勤務の種類に必ず入れる物
+LONG_REST_RATIO = 1.5   # 公休がいちばん多い日数のこの倍以上の人は、途中入職・長い休みかもしれない
 RATE_LINE = 0.9   # 夜明公の決まりを候補にする割合
 SERIAL_RANGE = (40000, 60000)   # Excel の日付の通し番号（1900年式）の範囲
 
@@ -89,6 +91,7 @@ class Pasted:
     aliases: dict[str, str] = field(default_factory=dict)   # 別名で置き換えた記号 → 置き換え先
     unit_of: dict[str, str] = field(default_factory=dict)   # 名前 → ユニット
     unit_list: list[str] = field(default_factory=list)      # ユニットの順
+    blank_by: dict[str, int] = field(default_factory=dict)  # 名前 → 空欄を公にした数
 
 
 @dataclass
@@ -106,6 +109,9 @@ class Proposal:
     suggestions: dict[str, str] = field(default_factory=dict)   # 知らない記号 → おすすめの選び方（same:夜 / night / same:明）
     raw: dict[str, list[str]] | None = None                 # 貼ったままの表（答えで置き換える前）
     staff_evidence: str = ""                                # 人ごとの入れる勤務を貼った月に入った物だけにした根拠
+    long_rest: dict[str, int] = field(default_factory=dict)  # 公休が最頻値の1.5倍以上の人 → 公休の日数
+    rest_mode: int = 0                                      # 公休のいちばん多い日数
+    rest_notes: list[str] = field(default_factory=list)     # 途中入職・長い休みの人の知らせ（一文ずつ）
 
 
 @dataclass
@@ -327,6 +333,7 @@ def parse_paste(text: str) -> Pasted:
     cur_unit: str | None = None
     col_unit: str | None = None   # 左のユニット列の値（空のセルは上と同じ）
     blank = 0
+    blank_by: dict[str, int] = {}
     unknown: list[str] = []
     for it in items:
         if it[0] == "unit":
@@ -347,6 +354,7 @@ def parse_paste(text: str) -> Pasted:
         for c in cells[:n]:
             if not c:
                 blank += 1
+                blank_by[name] = blank_by.get(name, 0) + 1
                 row.append("公")
                 continue
             sym = ALIASES.get(c, c)
@@ -364,7 +372,7 @@ def parse_paste(text: str) -> Pasted:
             unit_list.append(u)
     return Pasted(table=table, days=n, skipped=skipped, blank_as_rest=blank,
                   unknown_symbols=unknown, had_header=header is not None,
-                  aliases=aliases, unit_of=unit_of, unit_list=unit_list)
+                  aliases=aliases, unit_of=unit_of, unit_list=unit_list, blank_by=blank_by)
 
 
 # ---------------------------------------------------------------- 雛形
@@ -419,11 +427,14 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     days = calendar.monthrange(year, month)[1]
     if pasted.days != days:
         raise ParseError(f"{month}月は{days}日までですが、貼った表は{pasted.days}日分あります。月を確かめてください")
-    answers = answers or {}
+    answers = dict(answers or {})
     # 知らない記号の答えのうち「既存の勤務と同じ」は、先に表の中で置き換えてから見つける
+    # 「休み」の答えは公休と同じ（公休の数・連勤・明けの次の日の数え方にそのまま入る）
     same: dict[str, str] = {}
     for sym in pasted.unknown_symbols:
         a = answers.get(sym)
+        if isinstance(a, dict) and a.get("kind") == "rest" and not a.get("same_as"):
+            a = answers[sym] = {"same_as": "公"}
         if isinstance(a, dict) and a.get("same_as"):
             if a["same_as"] not in _template_symbols():
                 raise OnboardError(f"記号「{sym}」を同じにする先「{a['same_as']}」は、知らない勤務です")
@@ -455,7 +466,7 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     # 勤務の種類。表に出た記号と公だけ。答えのある知らない記号も入れる
     shift_types = []
     for s in _template():
-        if s["symbol"] not in used and s["symbol"] != "公":
+        if s["symbol"] not in used and s["symbol"] not in ALWAYS_TYPES:
             continue
         s = dict(s)
         if s["symbol"] == "夜":
@@ -539,8 +550,11 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     note = ""
     if calendar.monthrange(ny, nmo)[1] != days:
         note = (f"。{nmo}月は{calendar.monthrange(ny, nmo)[1]}日あるので、公休を{mode}日のままでよいか確かめてください"
-                f"（変える時は、作った後に「公休は月{mode + 1}日」のように一言で）")
+                f"（変える時は、作った後に「全員、公休は月{mode + 1}日」のように一言で）")
     outliers = {nm: v for nm, v in rests.items() if v != mode}
+    long_rest = {nm: v for nm, v in rests.items() if mode > 0 and v > mode and v >= mode * LONG_REST_RATIO}
+    rest_notes = [f"{nm}さん 公休{v}日（ほかの人は{mode}日）。月の途中から入った人や長く休んだ人なら、"
+                  f"作った後に一言で直してください（例「{nm}さん、公休は{mode}日」）" for nm, v in long_rest.items()]
     add("公休の数", "count", "operational", {"shifts": ["公"], "min": mode, "max": mode},
         f"公休は{len(rests)}人中{hit}人が{mode}日" + note,
         who=[nm for nm, v in rests.items() if v == mode] if outliers else None)
@@ -601,7 +615,8 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
 
     return Proposal(year=year, month=month, table=table, shift_types=shift_types, units=units,
                     staff=staff, rules=rules, unknown_symbols=unknown, same_as=same,
-                    problems=problems, suggestions=suggestions, raw=pasted.table, staff_evidence=staff_evidence)
+                    problems=problems, suggestions=suggestions, raw=pasted.table, staff_evidence=staff_evidence,
+                    long_rest=long_rest, rest_mode=mode, rest_notes=rest_notes)
 
 
 def _answer_problems(pasted: Pasted, same: dict[str, str], answers: dict, month: int) -> list[str]:
@@ -640,7 +655,9 @@ def _answer_problems(pasted: Pasted, same: dict[str, str], answers: dict, month:
             flagged = True
         # 休みの種類で答えたのに、毎日同じ人数いた記号（公休は日によって人数が変わるので当たらない）
         per_day = [sum(1 for row in raw.values() if row[d] == sym) for d in range(n)]
-        if (not flagged and not after_night and r in ("rest", "leave", "ake")
+        users = [row for row in raw.values() if sym in row]
+        sole_leave = len(users) == 1 and all(c == sym for c in users[0])   # 1人だけが1か月ずっと（長期の病休など）
+        if (not flagged and not sole_leave and not after_night and r in ("rest", "leave", "ake")
                 and min(per_day) == max(per_day) > 0 and not (sym not in same and r in ("rest", "leave") and before_ake)):
             out.append(f"『{sym}』は{month}月に毎日{per_day[0]}人いた勤務です。休みでよいか確かめてください")
     return out
@@ -783,9 +800,6 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
                 if n_days and days_seen * 2 >= n_days:
                     missing_daily.append(f"{st['name']}（{st['symbol']}）")
                     missing_syms.append(st["symbol"])
-                else:
-                    notes.append(f"{st['name']}（{st['symbol']}）が{next_month}月の表に1回も入っていません。"
-                                 "何の勤務かの答えを確かめてください")
         if missing_daily:
             # 出口の確かめ。貼った月に毎日のようにいた勤務が翌月に1回も無い表は、どの答え方から来たかに関わらず
             # 「できた」と言わない（入口の確かめをすり抜けた黙って違う表を、ここで必ず止める）
@@ -798,7 +812,10 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
                             else "記号の答え（何の勤務か）を確かめてください"))
     diffs: list[dict] = []
     if made:
-        diffs = compare_months(proposal.table, nxt.table, shift_types, proposal.month, next_month)
+        diffs = compare_months(proposal.table, nxt.table, shift_types, proposal.month, next_month,
+                               raw=proposal.raw, year=proposal.year, next_year=next_year,
+                               holidays=settings["holidays"],
+                               unit_of={st["name"]: st.get("unit", "") for st in proposal.staff})
         gone = _rest_misses(proposal.rules, nxt.table)
         if gone:
             notes.append("公休の数のルールを守りきれなかった人がいます")
@@ -866,9 +883,17 @@ def _unsolved_message(store: Store, year: int, month: int, spent: float) -> str:
             "貼った表の月と、勤務の記号の答えを確かめてください")
 
 
+def _label(who: list[str]) -> str:
+    return f"{who[0]}さん" if len(who) == 1 else f"{who[0]}さんほか{len(who) - 1}人"
+
+
 def compare_months(cur: dict[str, list[str]], nxt: dict[str, list[str]], shift_types: list[dict],
-                   month: int, next_month: int) -> list[dict]:
-    """貼った月と翌月の表を並べて、違う所を一覧にする。違いは作るのを止めない。"""
+                   month: int, next_month: int, *, raw: dict[str, list[str]] | None = None,
+                   year: int | None = None, next_year: int | None = None,
+                   holidays: dict[str, list[int]] | None = None,
+                   unit_of: dict[str, str] | None = None) -> list[dict]:
+    """貼った月と翌月の表を並べて、違う所を一覧にする。違いは作るのを止めない。
+    raw は答えで置き換える前の貼った表（曜日の形だけ、これと比べる）。year・next_year があれば曜日の形も見る。"""
     names = {s["symbol"]: s["name"] for s in shift_types}
     kind = {s["symbol"]: s["kind"] for s in shift_types}
     daily = [s["symbol"] for s in shift_types if s["kind"] == "work" and not s.get("on_request_only")]
@@ -876,9 +901,10 @@ def compare_months(cur: dict[str, list[str]], nxt: dict[str, list[str]], shift_t
     night = [s["symbol"] for s in shift_types if s["kind"] == "work" and s.get("next_is_ake")]
     out: list[dict] = []
 
-    def per_day(t, sym):
+    def per_day(t, sym, members=None):
         days = len(next(iter(t.values())))
-        return [sum(1 for row in t.values() if row[d] == sym) for d in range(days)]
+        return [sum(1 for nm, row in t.items() if row[d] == sym and (members is None or nm in members))
+                for d in range(days)]
 
     def span(lo, hi, every):
         return f"毎日{lo}人" if lo == hi and every else (f"{lo}人" if lo == hi else f"{lo}〜{hi}人")
@@ -891,6 +917,45 @@ def compare_months(cur: dict[str, list[str]], nxt: dict[str, list[str]], shift_t
             out.append({"kind": "count_range",
                         "text": f"{names[sym]}　{month}月は{span(lo, hi, True)} → {next_month}月は{span(nlo, nhi, False)}"})
 
+    # a2. ユニットごとの、1日の人数の幅（ユニットが2つ以上の時）
+    units = list(dict.fromkeys((unit_of or {}).get(nm, "") for nm in cur))
+    if unit_of and len(units) >= 2:
+        for sym in daily:
+            for u in units:
+                mem = {nm for nm in cur if unit_of.get(nm, "") == u}
+                c, x = per_day(cur, sym, mem), per_day(nxt, sym, mem)
+                lo, hi, nlo, nhi = min(c), max(c), min(x), max(x)
+                if nlo < lo or nhi > hi:
+                    out.append({"kind": "unit_count_range",
+                                "text": f"{names[sym]}（{u}）　{month}月は{span(lo, hi, True)} → {next_month}月は{span(nlo, nhi, False)}"})
+
+    # a3. 曜日の形。ふだんの勤務ごとの、平日と土日祝の平均人数（答えで置き換える前の表と比べる）
+    if year is not None and next_year is not None:
+        base = raw if raw is not None else cur
+
+        def off_days(y, m, n):
+            hol = set((holidays or {}).get(f"{y:04d}-{m:02d}", []))
+            return [calendar.weekday(y, m, d + 1) >= 5 or (d + 1) in hol for d in range(n)]
+
+        def shape(t, sym, y, m):
+            c = per_day(t, sym)
+            off = off_days(y, m, len(c))
+            wd = [v for v, o in zip(c, off) if not o]
+            we = [v for v, o in zip(c, off) if o]
+            return (sum(wd) / len(wd) if wd else 0.0, sum(we) / len(we) if we else 0.0)
+
+        for sym in daily:
+            if not any(sym in row for row in base.values()):
+                continue   # 貼った月に無い記号（答えで同じにした先など）は、形を比べられない
+            cw, ce = shape(base, sym, year, month)
+            nw, ne = shape(nxt, sym, next_year, next_month)
+            gap_c, gap_n = cw - ce, nw - ne
+            swapped = gap_c * gap_n < 0 and max(abs(gap_c), abs(gap_n)) >= 0.2
+            if abs(gap_n - gap_c) >= 0.5 or swapped:
+                out.append({"kind": "weekday_shape",
+                            "text": f"{names[sym]}　{month}月は平日{cw:.1f}人・土日{ce:.1f}人 → "
+                                    f"{next_month}月は平日{nw:.1f}人・土日{ne:.1f}人"})
+
     # b. 夜勤の翌日が明けの割合
     def rate(t, sym):
         pairs = [row[d + 1] for row in t.values() for d in range(len(row) - 1) if row[d] == sym]
@@ -901,6 +966,17 @@ def compare_months(cur: dict[str, list[str]], nxt: dict[str, list[str]], shift_t
         if a is not None and b is not None and b < a - 1e-9:
             out.append({"kind": "ake_rate",
                         "text": f"{names[sym]}の次の日が明け　{month}月は{round(a * 100)}% → {next_month}月は{round(b * 100)}%"})
+
+    # b2. 人ごとの夜勤の回数（2回以上違う人。同じ変わり方の人はまとめる）
+    if night:
+        moved_n: dict[tuple[int, int], list[str]] = {}
+        for nm, row in cur.items():
+            if nm in nxt:
+                a, b = sum(1 for c in row if c in night), sum(1 for c in nxt[nm] if c in night)
+                if abs(a - b) >= 2:
+                    moved_n.setdefault((a, b), []).append(nm)
+        for (a, b), who in moved_n.items():
+            out.append({"kind": "night_count", "text": f"{_label(who)}の夜勤　{month}月は{a}回 → {next_month}月は{b}回"})
 
     # c. 人ごとの、入った勤務の種類
     def works(row):
@@ -916,12 +992,39 @@ def compare_months(cur: dict[str, list[str]], nxt: dict[str, list[str]], shift_t
             out.append({"kind": "person_shifts",
                         "text": f"{nm}さん　{month}月は{was} → {next_month}月は{'・'.join(names[s] for s in new)}にも"})
 
+    # c2. 土日休み固定の人（貼った月に土日がすべて休みだった人が、翌月は土日に勤務する）
+    if year is not None and next_year is not None:
+        def weekend_idx(y, m, n):
+            return [d for d in range(n) if calendar.weekday(y, m, d + 1) >= 5]
+
+        moved_w: dict[int, list[str]] = {}
+        wc = weekend_idx(year, month, len(next(iter(cur.values()))))
+        wn = weekend_idx(next_year, next_month, len(next(iter(nxt.values()))))
+        for nm, row in cur.items():
+            if nm not in nxt or not wc or not all(kind.get(row[d]) in ("rest", "leave") for d in wc):
+                continue
+            k = sum(1 for d in wn if kind.get(nxt[nm][d]) in ("work", "ake"))
+            if k:
+                moved_w.setdefault(k, []).append(nm)
+        for k, who in moved_w.items():
+            out.append({"kind": "weekend_fixed",
+                        "text": f"{_label(who)}　{month}月は土日がすべて休み → {next_month}月は土日に{k}日勤務"})
+
+    # c3. 消えた勤務（貼った月に出たのに、翌月に1回も無い。頼まれた時だけの勤務も）
+    for s in shift_types:
+        sym = s["symbol"]
+        if s["kind"] == "rest":
+            continue
+        used = sum(row.count(sym) for row in cur.values())
+        if used and not any(sym in row for row in nxt.values()):
+            out.append({"kind": "gone_shift",
+                        "text": f"{names[sym]}（{sym}）　{month}月は{used}回 → {next_month}月は1回も入っていません"})
+
     # d. 人ごとの公休の数（同じ変わり方の人はまとめる）
     moved: dict[tuple[int, int], list[str]] = {}
     for nm, row in cur.items():
         if nm in nxt and row.count("公") != nxt[nm].count("公"):
             moved.setdefault((row.count("公"), nxt[nm].count("公")), []).append(nm)
     for (a, b), who in moved.items():
-        label = f"{who[0]}さん" if len(who) == 1 else f"{who[0]}さんほか{len(who) - 1}人"
-        out.append({"kind": "rest_count", "text": f"{label}の公休　{month}月は{a}日 → {next_month}月は{b}日"})
+        out.append({"kind": "rest_count", "text": f"{_label(who)}の公休　{month}月は{a}日 → {next_month}月は{b}日"})
     return out

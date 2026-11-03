@@ -56,7 +56,8 @@ def _reading(pasted: Pasted, prop: Proposal) -> list[str]:
     out = [f"{raw}→{names.get(sym, sym)}" for raw, sym in pasted.aliases.items()]
     out += [f"{raw}→{names.get(sym, sym)}" for raw, sym in prop.same_as.items()]
     if pasted.blank_as_rest:
-        out.append(f"空欄{pasted.blank_as_rest}マス→公休")
+        who = [f"{nm}さん{pasted.blank_by[nm]}マス" for nm in prop.long_rest if pasted.blank_by.get(nm)]
+        out.append(f"空欄{pasted.blank_as_rest}マス→公休" + (f"（多いのは{'・'.join(who)}）" if who else ""))
     return out
 
 
@@ -65,14 +66,15 @@ def preview_out(pasted: Pasted, prop: Proposal) -> dict:
     return {
         "ok": True, "year": prop.year, "month": prop.month, "next_year": ny, "next_month": nm,
         "staff": list(prop.table), "days": pasted.days,
-        "shift_types": [{"symbol": s["symbol"], "name": s["name"], "kind": s["kind"]} for s in prop.shift_types],
+        "shift_types": [{"symbol": s["symbol"], "name": s["name"], "kind": s["kind"],
+                         "on_request_only": bool(s.get("on_request_only"))} for s in prop.shift_types],
         "rules": [{"id": r["id"], "name": r["name"], "evidence": r["meta"]["evidence"]} for r in prop.rules],
         "unknown_symbols": list(pasted.unknown_symbols),
         "same_choices": [{"symbol": t["symbol"], "name": t["name"]} for t in _template()],
         "reading": _reading(pasted, prop), "units": list(prop.units),
         "blank_as_rest": pasted.blank_as_rest, "skipped": pasted.skipped,
         "problems": list(prop.problems), "suggestions": dict(prop.suggestions),
-        "staff_evidence": prop.staff_evidence,
+        "staff_evidence": prop.staff_evidence, "rest_notes": list(prop.rest_notes),
     }
 
 
@@ -239,7 +241,9 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                         ny, nm = _latest_month(root) or (ny, nm)
                     with lock:
                         st = self._swap(root, ny, nm)
-                    return self._json(200, {"ok": True, "existing": existing, "facility": {"id": root.name, "name": st_name(root)},
+                    message = (f"『{st_name(root)}』はもう作ってあるので、前に作った施設を開きました。"
+                               "今回貼った表は使っていません。新しく作る時は別の名前にしてください") if existing else ""
+                    return self._json(200, {"ok": True, "existing": existing, "message": message, "facility": {"id": root.name, "name": st_name(root)},
                                             "year": ny, "month": nm, "notes": notes, "diffs": diffs,
                                             "from_month": month, "state": st})
                 if self.path == "/api/facilities/open":

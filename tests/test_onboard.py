@@ -92,7 +92,7 @@ def test_parse_こわれた貼り付けは一文で言う():
 
 
 def test_infer_勤務の種類と職員(proposal):
-    assert [s["symbol"] for s in proposal.shift_types] == ["早", "日", "遅", "夜", "明", "公"]
+    assert [s["symbol"] for s in proposal.shift_types] == ["早", "日", "遅", "夜", "明", "公", "有", "研"]   # 有と研は表に無くても入る
     night = next(s for s in proposal.shift_types if s["symbol"] == "夜")
     assert night["next_is_ake"] is True
     assert proposal.units == ["全体"] and proposal.unknown_symbols == []
@@ -552,7 +552,7 @@ def test_早1早2_合わせた人数のルールで毎日の人数が守られ�
     assert by["早番の人数（上限）"]["params"]["op"] == "<=" and by["早番の人数（上限）"]["flex"] == "negotiable"
     assert "早番の人数（下限）" not in by       # 早番だけの日は0人の日があるので、下限は付けない
     c, dec = made_next(tmp_path, pr, ans)
-    assert c.next_table_made and c.diffs == []
+    assert c.next_table_made and not [d for d in c.diffs if d["kind"] in ("count_range", "unit_count_range", "ake_rate")]
     assert all(sum(1 for r in dec.table.values() if r[d] in ("早", "早2")) == 2 for d in range(31))
 
 
@@ -570,7 +570,7 @@ def test_遅AB_合わせた人数が守られる(tmp_path):
     pr = infer(parse_paste(paste(25)), 2026, 11, ans)
     assert "遅番と遅番Bの人数の合計" in rule_map(pr)
     c, dec = made_next(tmp_path, pr, ans)
-    assert c.next_table_made and c.diffs == []
+    assert c.next_table_made and not [d for d in c.diffs if d["kind"] in ("count_range", "unit_count_range", "ake_rate")]
     assert all(sum(1 for r in dec.table.values() if r[d] in ("遅", "遅B")) == 2 for d in range(31))
 
 
@@ -580,7 +580,7 @@ def test_夜N明Aの英字_夜勤の翌日は明けの種類のどれか(tmp_pat
     assert pr.problems == []
     assert rule_map(pr)["夜勤の翌日は明け"]["params"] == {"if": ["N"], "next_in": ["A"]}
     c, dec = made_next(tmp_path, pr, ans)
-    assert c.next_table_made and c.diffs == []
+    assert c.next_table_made and not [d for d in c.diffs if d["kind"] in ("count_range", "unit_count_range", "ake_rate")]
     for r in dec.table.values():
         assert all(r[d + 1] == "A" for d in range(30) if r[d] == "N")
     # 明けの種類で答えた記号が、表に明が既にあれば「明けと同じ」がおすすめ
@@ -656,3 +656,137 @@ def test_違いの一覧_人数の幅_夜勤の翌日_人ごとの勤務_公休(
     assert "井上さんほか1人の公休　11月は1日 → 12月は2日" in text
     same = compare_months(cur, cur, st, 11, 12)
     assert same == []
+
+
+# ---------------------------------------------------------------- 違いの見る項目（曜日の形・夜勤の回数・土日休み固定・消えた勤務・ユニット）と途中入職
+
+import calendar as _cal    # noqa: E402
+
+ST5 = [{"symbol": "日", "name": "日勤", "kind": "work"}, {"symbol": "E", "name": "早番", "kind": "work"},
+       {"symbol": "夜", "name": "夜勤", "kind": "work", "next_is_ake": True},
+       {"symbol": "明", "name": "明け", "kind": "ake"}, {"symbol": "公", "name": "公休", "kind": "rest"},
+       {"symbol": "有", "name": "有給", "kind": "leave", "on_request_only": True},
+       {"symbol": "研", "name": "研修", "kind": "work", "on_request_only": True}]
+
+
+def _month(y, m, who, per_day):
+    """who＝名前の並び。per_day(日にち, 曜日)→その日に日勤をする人の数。ほかの人は公。"""
+    days = _cal.monthrange(y, m)[1]
+    t = {nm: [] for nm in who}
+    for d in range(1, days + 1):
+        k = per_day(d, _cal.weekday(y, m, d))
+        for i, nm in enumerate(who):
+            t[nm].append("日" if i < k else "公")
+    return t
+
+
+WHO4 = ["赤坂", "井上", "内田", "遠藤"]
+
+
+def test_有と研は表に出ていなくても勤務の種類に入り_頼まれた時だけ置く(proposal):
+    types = {s["symbol"]: s for s in proposal.shift_types}
+    assert {"有", "研"} <= set(types)
+    assert types["有"].get("on_request_only") and types["研"].get("on_request_only")
+    assert all("有" not in s["can"] and "研" not in s["can"] for s in proposal.staff)
+
+
+def test_違い_曜日の形が平日と土日で入れ替わると出る_置き換える前の表と比べる():
+    cur = _month(2026, 11, WHO4, lambda d, w: 3 if w < 5 else 1)
+    nxt = _month(2026, 12, WHO4, lambda d, w: 1 if w < 5 else 3)
+    hol = {"2026-11": [3, 23], "2026-12": []}
+    out = compare_months(cur, nxt, ST5, 11, 12, year=2026, next_year=2026, holidays=hol)
+    hit = [d for d in out if d["kind"] == "weekday_shape"]
+    assert len(hit) == 1 and hit[0]["text"].startswith("日勤　11月は平日")
+    assert "→ 12月は平日1.0人・土日3.0人" in hit[0]["text"]
+    same = _month(2026, 12, WHO4, lambda d, w: 3 if w < 5 else 1)
+    assert not [d for d in compare_months(cur, same, ST5, 11, 12, year=2026, next_year=2026, holidays=hol)
+                if d["kind"] == "weekday_shape"]
+    # 早番Eを日勤と同じと答えた取り違え。置き換えた後の表（cur）では形が同じに見えるが、貼ったままの表（raw）では違う
+    raw = {nm: [("E" if c == "日" and _cal.weekday(2026, 11, i + 1) < 5 else c) if nm in WHO4[:2] else c
+                for i, c in enumerate(r)] for nm, r in cur.items()}
+    assert not [d for d in compare_months(cur, same, ST5, 11, 12, year=2026, next_year=2026, holidays=hol)
+                if d["kind"] == "weekday_shape"]
+    flagged = compare_months(cur, same, ST5, 11, 12, raw=raw, year=2026, next_year=2026, holidays=hol)
+    assert any(d["kind"] == "weekday_shape" for d in flagged)
+
+
+def test_違い_人ごとの夜勤の回数は2回以上違う人だけ出る():
+    n11, n12 = 30, 31
+    cur = {"赤坂": ["夜" if d < 10 else "公" for d in range(n11)], "井上": ["夜" if d < 5 else "公" for d in range(n11)]}
+    nxt = {"赤坂": ["夜" if d < 4 else "公" for d in range(n12)], "井上": ["夜" if d < 4 else "公" for d in range(n12)]}
+    out = compare_months(cur, nxt, ST5, 11, 12)
+    nights = [d["text"] for d in out if d["kind"] == "night_count"]
+    assert nights == ["赤坂さんの夜勤　11月は10回 → 12月は4回"]    # 井上さんは5回→4回で1回違いなので出ない
+
+
+def test_違い_土日休み固定の人が翌月に土日に勤務すると出る():
+    wd = lambda y, m: [d for d in range(_cal.monthrange(y, m)[1]) if _cal.weekday(y, m, d + 1) >= 5]
+    cur = {"赤坂": ["公" if d in wd(2026, 11) else "日" for d in range(30)],
+           "井上": ["日"] * 30}
+    nxt = {"赤坂": ["日" if d in wd(2026, 12)[:4] else "公" for d in range(31)], "井上": ["日"] * 31}
+    out = compare_months(cur, nxt, ST5, 11, 12, year=2026, next_year=2026, holidays={})
+    assert "赤坂さん　11月は土日がすべて休み → 12月は土日に4日勤務" in [d["text"] for d in out if d["kind"] == "weekend_fixed"]
+    assert not [d for d in out if d["kind"] == "weekend_fixed" and "井上" in d["text"]]
+
+
+def test_違い_消えた勤務は頼まれた時だけの物も出る_公休は出ない():
+    cur = {"赤坂": ["研", "研", "有"] + ["日"] * 27, "井上": ["公"] * 30}
+    nxt = {"赤坂": ["日"] * 31, "井上": ["公"] * 31}
+    out = compare_months(cur, nxt, ST5, 11, 12)
+    gone = [d["text"] for d in out if d["kind"] == "gone_shift"]
+    assert gone == ["有給（有）　11月は1回 → 12月は1回も入っていません", "研修（研）　11月は2回 → 12月は1回も入っていません"]
+
+
+def test_違い_ユニットごとの人数の幅():
+    who = ["赤坂", "井上", "内田", "遠藤"]
+    unit = {"赤坂": "東", "井上": "東", "内田": "西", "遠藤": "西"}
+    cur = {nm: ["日"] * 30 for nm in who}
+    for nm in ("井上", "遠藤"):
+        cur[nm] = ["公"] * 30
+    nxt = {nm: ["日"] * 31 for nm in who}
+    for nm in ("遠藤",):
+        nxt[nm] = ["公"] * 31
+    nxt["井上"] = ["日"] * 31          # 東が毎日1人 → 毎日2人
+    out = compare_months(cur, nxt, ST5, 11, 12, unit_of=unit)
+    assert "日勤（東）　11月は毎日1人 → 12月は2人" in [d["text"] for d in out if d["kind"] == "unit_count_range"]
+    assert not [d for d in compare_months(cur, nxt, ST5, 11, 12) if d["kind"] == "unit_count_range"]
+
+
+def test_作った後の違い_見本の月では夜勤の回数と曜日の形が出る(tmp_path, proposal):
+    c, _ = made_next(tmp_path, proposal)
+    kinds = {d["kind"] for d in c.diffs}
+    assert c.next_table_made and {"weekday_shape", "night_count"} <= kinds
+    assert all("札" not in d["text"] and "決まり" not in d["text"] for d in c.diffs)
+
+
+def test_途中入職の人は公休の多さを知らせる_空欄の知らせにも名前が付く():
+    p = parse_paste(paste(33))
+    pr = infer(p, 2026, 11)
+    assert pr.long_rest == {"木下": pr.long_rest["木下"]} and pr.long_rest["木下"] >= 14
+    assert len(pr.rest_notes) == 1
+    note = pr.rest_notes[0]
+    assert note.startswith(f"木下さん 公休{pr.long_rest['木下']}日（ほかの人は{pr.rest_mode}日）。月の途中から入った人や長く休んだ人なら")
+    assert f"（例「木下さん、公休は{pr.rest_mode}日」）" in note
+    assert p.blank_by["木下"] >= 14
+    assert infer(parse_paste(paste(0 + 11)), 2026, 11).rest_notes == []     # ふつうの表では出ない
+
+
+def test_長期の病休_1人が1か月ずっとの記号は休みと答えて通り_公休と同じになる(tmp_path):
+    p = parse_paste(paste(34))
+    assert p.unknown_symbols == ["病"]
+    ans = {"病": {"kind": "rest", "name": "休み"}}
+    pr = infer(p, 2026, 11, ans)
+    assert pr.problems == [] and pr.same_as == {"病": "公"} and "病" not in {s["symbol"] for s in pr.shift_types}
+    c, dec = made_next(tmp_path, pr, ans)
+    assert c.next_table_made
+    # 2人以上が毎日いる記号を休みと答えた時は、今までどおり確かめる
+    assert any("毎日" in x for x in infer(parse_paste(paste(27)), 2026, 11, {"E": {"kind": "rest", "name": "休み"}}).problems)
+
+
+@pytest.mark.parametrize("head", ["所属", "部署", "階", "グループ", "チーム", "ユニット"])
+def test_ユニットの列の見出しの言葉と結合セルの引き継ぎ(head):
+    t = paste(35).replace("所属\t氏名", f"{head}\t氏名", 1)
+    p = parse_paste(t)
+    assert p.unit_list == ["東", "西"]
+    assert [n for n, u in p.unit_of.items() if u == "東"] == NAMES8[:4]
+    assert [n for n, u in p.unit_of.items() if u == "西"] == NAMES8[4:]

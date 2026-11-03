@@ -913,6 +913,7 @@ function renderResult() {
   }
   var head = el("div", "");
   head.appendChild(el("div", "res-main", b.main));
+  if (b.note) { var bn = el("div", "rv-err", b.note); bn.style.margin = "4px 0"; head.appendChild(bn); }
   head.appendChild(el("div", "res-sub", b.sub));
   head.appendChild(el("div", "res-line2", b.line2));
   wrap.appendChild(head);
@@ -1144,7 +1145,7 @@ function buildAnswers() {
     if (!a || !a.choice) return;
     if (a.choice.indexOf("same:") === 0) out[sym] = { same_as: a.choice.slice(5) };
     else if (a.choice === "night") out[sym] = { name: (a.name || "").trim() || "夜勤（" + sym + "）", kind: "work", next_is_ake: true };
-    else if (a.choice === "rest") out[sym] = { name: "休み", kind: "rest" };
+    else if (a.choice === "rest") out[sym] = { same_as: "公" };
     else out[sym] = { name: (a.name || "").trim() || sym + "の勤務", kind: "work" };
   });
   return out;
@@ -1157,7 +1158,7 @@ function refreshPreview() {
 }
 function renderSetup2(box) {
   var pv = SU.pv;
-  var nWork = pv.shift_types.filter(function (s) { return s.kind === "work" || s.kind === "ake"; }).length;
+  var nWork = pv.shift_types.filter(function (s) { return (s.kind === "work" || s.kind === "ake") && !s.on_request_only; }).length;
   box.appendChild(el("h1", "", pv.staff.length + "人" + (pv.unknown_symbols.length
     ? "が見つかりました。知らない記号が" + pv.unknown_symbols.length + "つあります"
     : "・勤務" + nWork + "種類が見つかりました")));
@@ -1206,6 +1207,8 @@ function renderSetup2(box) {
     box.appendChild(el("label", "", "勤務の記号の読み方"));
     box.appendChild(el("div", "ln", pv.reading.join("、")));
   }
+  (pv.rest_notes || []).slice(0, 3).forEach(function (t) { var rn = el("div", "rv-err", t); rn.style.marginTop = "10px"; box.appendChild(rn); });
+  if ((pv.rest_notes || []).length > 3) { var rm = el("div", "small", "ほか" + (pv.rest_notes.length - 3) + "人"); rm.style.marginTop = "4px"; box.appendChild(rm); }
   if (pv.staff_evidence) { var se = el("div", "small", pv.staff_evidence); se.style.marginTop = "10px"; box.appendChild(se); }
   if (pv.skipped) { var sm = el("div", "small", "集計の行 " + pv.skipped + " 行は飛ばしました"); sm.style.marginTop = "10px"; box.appendChild(sm); }
   var err = el("div", "rv-err", SU.err); err.id = "su-err"; err.style.marginTop = "8px";
@@ -1241,7 +1244,7 @@ function startCreate() {
     if (res.error) { SU.err = res.error; SU.step = 2; renderSetup(); return; }
     var nm = res.facility.name || SU.name;
     var msg = res.existing
-      ? nm + "は、もう作ってあったので、そのまま開きました（" + res.month + "月の表）"
+      ? (res.message || "『" + nm + "』はもう作ってあるので、前に作った施設を開きました。今回貼った表は使っていません。新しく作る時は別の名前にしてください")
       : nm + "の" + res.month + "月の表ができました。気づいたことを一言で直せます";
     var warn = (res.notes || []).filter(function (x) { return x.indexOf("1回も入っていません") >= 0 || x.indexOf("守りきれなかった") >= 0; });
     if (warn.length) msg += "。" + warn.join("。");
