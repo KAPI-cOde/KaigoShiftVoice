@@ -76,21 +76,22 @@ def test_q5_keep_suppresses_until_streak_again(st):
             if c.reason == "quiet"] == [3]
 
 
-def test_q6_card_lines_and_archive(st):
-    """画面の札は3行で、片付けると12月のルールから外れる。11月の表は変わらない。"""
+def test_q6_cleanup_not_in_monthly_review(st):
+    """片付けの候補は毎月の見直しには出さず、整理の画面に出す。片付けると12月のルールから外れ、11月の表は変わらない。"""
+    import datetime as dt
     from shiftvoice.build import build_original, month_rules
+    from shiftvoice.cleanup import apply, view
     r = build_original(st, 2026, 11, with_premise=False)
     m = st.month(2026, 11)
     m.table = r.result.table
     st.save_month(m)
     for ym in ("2026-09", "2026-10", "2026-11"):
         _fake(st, ym, {"r012": "quiet"})
-    flow = NextFlow(st, 2026, 11)
-    v = flow.review()
-    card = next(c for c in v["cards"] if c["reason"] == "quiet")
-    assert card["label"] == "無くても同じだった" and card["lines"][0].startswith("3か月続けて")
-    assert [b[0] for b in card["buttons"]] == ["archive", "keep"]
-    flow.answer("r012", "archive")
+    assert [c for c in NextFlow(st, 2026, 11).review()["cards"] if c["reason"] == "quiet"] == []
+    v = view(st, 2026, 11)
+    assert [x["id"] for x in v["groups"]["quiet"]] == ["r012"] and v["count"] == 1
+    assert "3か月のあいだ表を作るのに効いていなかった" in v["head"]
+    apply(st, 2026, 11, ["r012"], [], dt.datetime(2026, 11, 20))
     assert "r012" not in {x.id for x in month_rules(st, 2026, 12)}
     assert st.month(2026, 11).table == m.table
 
@@ -207,22 +208,7 @@ def test_q14_rule_stats_for_list(built_dir, tmp_path):
     for ym in ("2026-09", "2026-10", "2026-11"):
         _fake(s.store, ym, {"g1": "quiet", "r012": "quiet"})
     rs = s.state()["rule_stats"]
-    assert rs["total"] == 13 and rs["candidates"] == 2 and rs["per_month"] == 5 and rs["added"] == 0
-
-
-def test_q15_overlap_summary_says_which(st):
-    """見直しの最後の一覧で、重なりの札はどちらを片付けたかを書く。"""
-    _add(st, "g1", "千葉さん 夜勤は月6回まで", "count", {"shifts": ["夜"], "max": 6}, ["千葉"], flex="fixed")
-    _add(st, "g2", "千葉さん 夜勤は月7回まで", "count", {"shifts": ["夜"], "max": 7}, ["千葉"], flex="fixed")
-    from shiftvoice.build import build_original
-    m = st.month(2026, 11)
-    m.table = build_original(st, 2026, 11, with_premise=False).result.table
-    st.save_month(m)
-    for ym in ("2026-09", "2026-10", "2026-11"):
-        _fake(st, ym, {"g1": "overlap", "g2": "overlap"})
-    flow = NextFlow(st, 2026, 11)
-    out = flow.answer("g2", "archive")
-    assert "千葉さん 夜勤は月7回まで → 片付けた（千葉さん 夜勤は月6回までは残す）" in out["summary"]
+    assert rs["total"] == 13 and rs["candidates"] == 2 and rs["added"] == 0
 
 
 def test_q16_no_scene_first_even_with_lower_ids(st):

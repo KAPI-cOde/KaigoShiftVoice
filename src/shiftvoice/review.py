@@ -204,7 +204,7 @@ def _quiet_run(ledger: Ledger, rid: str, ym: str, streak: int) -> int:
             if t["op"] == "review" and t["rev"] not in cancelled
             and (rid in (t["rule_id"], t["review"].get("partner")) or rid in t["review"].get("group", []))
             and t["review"].get("reason") in ("quiet", "overlap", "aged") and t["review"].get("answer") == "keep"
-            and t["review"]["month"] < ym]
+            and (t["review"]["month"] < ym or (t["review"].get("from") == "cleanup" and t["review"]["month"] <= ym))]
     return min(streak, _months_between(max(kept), ym)) if kept else streak
 
 

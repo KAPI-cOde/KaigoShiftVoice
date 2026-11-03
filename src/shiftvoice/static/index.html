@@ -86,6 +86,16 @@
   /* 3幕 ルールの見直し・引き受けを返す */
   #topbar { gap: 10px; align-items: center; }
   #v12 { display: none; max-width: 1440px; margin: 0 auto; padding: 14px 20px 0; }
+  #vclean { display: none; max-width: 860px; margin: 0 auto; padding: 14px 20px 0; }
+  #vclean h1 { font-family: "Hiragino Mincho ProN", serif; font-size: 22px; margin: 6px 0 6px; }
+  .cl-head { margin: 0 0 14px; line-height: 1.7; }
+  .cl-grp { border: 1px solid #bbb; border-radius: 3px; padding: 12px 16px; margin: 10px 0; }
+  .cl-grp h2 { font-size: 16px; margin: 0 0 4px; }
+  .cl-grp .why { font-size: 13px; margin-bottom: 6px; }
+  .cl-row { font-size: 13px; padding: 3px 0; display: flex; gap: 8px; align-items: baseline; }
+  .cl-row .sub { font-size: 12px; color: #444; }
+  .cl-grp .btns { margin-top: 8px; }
+  .cl-done { font-size: 13px; margin: 6px 0; }
   .navrow { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
   .navrow button { font-size: 12px; padding: 2px 10px; }
   #v12 h1 { font-size: 22px; margin: 6px 0 4px; }
@@ -181,6 +191,10 @@
   </section>
 </main>
 <section id="vsetup"><div class="su-wrap" id="susbody"></div></section>
+<section id="vclean">
+  <div class="navrow"><span class="small"></span><button type="button" id="cleanback">表へ</button></div>
+  <div id="cleanbody"></div>
+</section>
 <section id="v12">
   <div class="navrow"><span class="small" id="v12sub"></span><button type="button" id="to11">表へ</button></div>
   <div id="v12body"></div>
@@ -358,12 +372,113 @@ function renderCards() {
   var base = rules.filter(function (c) { return !(c.meta && c.meta.said); });
   var list = said.concat(base);
   if (!list.length) box.appendChild(el("div", "empty", "ルールはまだありません"));
-  if (list.length <= GROUP_AT) list.forEach(function (c) { box.appendChild(makeCard(c)); });
+  if (list.length <= GROUP_AT) { cleanEntry(box); list.forEach(function (c) { box.appendChild(makeCard(c)); }); }
   else renderGrouped(box, list);
   renderArchived(box);
 }
 
-// 片付けたルール（毎月の見直しで履歴へ片付けた物）。開くと1件ずつ［戻す］がある。戻すと次に表を作る時から効く
+// ルールの整理（cleanup.py・docs/rule-cleanup.md の6）。片付けの候補を種類ごとにまとめ、その時に全部決める。
+// 冒頭で、なぜ整理しているかを1文で言う（作者「なんで整理の検討に入っているかが分からない」2026-11-04）
+var CL = null, clMsg = "", clPick = {}, clOpen = {};
+function showClean(on) {
+  document.getElementById("v11").style.display = on ? "none" : "";
+  document.getElementById("topbar").style.display = on ? "none" : "";
+  document.getElementById("vclean").style.display = on ? "block" : "none";
+  document.getElementById("v12").style.display = "none";
+  document.getElementById("vsetup").style.display = "none";
+}
+function openClean() {
+  showClean(true); CL = null; clMsg = ""; clPick = {}; clOpen = {};
+  renderClean();
+  fetch("/api/cleanup").then(function (r) { return r.json(); }).then(function (v) { CL = v; renderClean(); });
+}
+document.getElementById("cleanback").addEventListener("click", function () {
+  showClean(false);
+  fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) { S = st; renderAll(); });
+});
+function cleanSend(archive, keep, done) {
+  if (busy) return;
+  setBusy(true);
+  post("cleanup", { archive: archive, keep: keep }).then(function (v) {
+    setBusy(false);
+    if (v.error) { clMsg = v.error; renderClean(); return; }
+    CL = v; clMsg = done; clPick = {}; renderClean();
+  }).catch(fail);
+}
+function renderClean() {
+  var box = document.getElementById("cleanbody");
+  box.textContent = "";
+  box.appendChild(el("h1", "", "ルールの整理"));
+  if (!CL) { box.appendChild(el("div", "small", "読み込んでいます")); return; }
+  box.appendChild(el("div", "cl-head", CL.head));
+  if (clMsg) box.appendChild(el("div", "cl-done", clMsg));
+  var g = CL.groups, n = 0;
+  function btn(label, cls, fn) { var b = el("button", cls, label); b.type = "button"; b.addEventListener("click", fn); return b; }
+  function group(title, why) { var d = el("div", "cl-grp"); d.appendChild(el("h2", "", title)); if (why) d.appendChild(el("div", "why", why)); box.appendChild(d); n++; return d; }
+  if (g.absent.length) {
+    var ids = [], who = [];
+    g.absent.forEach(function (x) { ids = ids.concat(x.ids); who.push(x.who + "さん"); });
+    var d = group("今の名簿にいない人のルール　" + ids.length + "件（" + g.absent.length + "人）",
+      who.join("・") + "は今の名簿にいないので、" + CL.months + "か月のあいだ、このルールが当てはまる日がありませんでした");
+    g.absent.forEach(function (x) { x.names.forEach(function (nm) { d.appendChild(el("div", "cl-row", nm)); }); });
+    var b = el("div", "btns");
+    b.appendChild(btn(ids.length + "件とも片付ける", "primary", function () { cleanSend(ids, [], ids.length + "件を片付けました"); }));
+    d.appendChild(b);
+  }
+  if (g.overlap.length) {
+    var known = g.overlap.filter(function (x) { return x.known; });
+    var d2 = group("同じことを決めている2件　" + g.overlap.length + "組",
+      "どちらか片方を外しても、表は両方のルールどおりでした。ゆるい方を片付けても、厳しい方で守られます。両方は片付けません");
+    g.overlap.forEach(function (x) {
+      var r = el("div", "cl-row");
+      r.appendChild(el("span", "", (x.known ? "片付ける「" + x.loose_name + "」" : "「" + x.loose_name + "」と「" + x.strict_name + "」")));
+      if (x.known) r.appendChild(el("span", "sub", "残す「" + x.strict_name + "」"));
+      else {
+        r.appendChild(btn("前を片付ける", "", function () { cleanSend([x.loose], [], "「" + x.loose_name + "」を片付けました"); }));
+        r.appendChild(btn("後を片付ける", "", function () { cleanSend([x.strict], [], "「" + x.strict_name + "」を片付けました"); }));
+      }
+      d2.appendChild(r);
+    });
+    var b2 = el("div", "btns");
+    if (known.length) b2.appendChild(btn("ゆるい方" + known.length + "件を片付ける", "primary", function () {
+      cleanSend(known.map(function (x) { return x.loose; }), [], "ゆるい方" + known.length + "件を片付けました");
+    }));
+    b2.appendChild(btn("両方使う", "", function () {
+      var k = []; g.overlap.forEach(function (x) { k.push(x.loose, x.strict); });
+      cleanSend([], k, "両方とも残しました。" + CL.months + "か月は聞きません");
+    }));
+    d2.appendChild(b2);
+  }
+  [["quiet", "無くても表が同じだったルール", "このルールを外して表を作り直しても、" + CL.months + "か月続けて、表はこのルールどおりでした。人の入れ替わりなどで効くことがあるので、要らないと思う物だけ選んでください"],
+   ["aged", "一時的な事情で足したルール", "足した時の理由が、いつか終わる事情でした。事情が終わった物だけ選んでください"]].forEach(function (k) {
+    var list = g[k[0]];
+    if (!list.length) return;
+    var d3 = group(k[1] + "　" + list.length + "件", k[2]);
+    list.forEach(function (x) {
+      var r = el("label", "cl-row");
+      var cb = el("input"); cb.type = "checkbox"; cb.checked = !!clPick[x.id];
+      cb.addEventListener("change", function () { clPick[x.id] = cb.checked; renderClean(); });
+      r.appendChild(cb);
+      r.appendChild(el("span", "", x.name));
+      if (x.reason) r.appendChild(el("span", "sub", "理由「" + x.reason + "」・" + x.months + "か月前"));
+      d3.appendChild(r);
+    });
+    var picked = list.filter(function (x) { return clPick[x.id]; }).map(function (x) { return x.id; });
+    var rest = list.filter(function (x) { return !clPick[x.id]; }).map(function (x) { return x.id; });
+    var b3 = el("div", "btns");
+    var all = picked.length === list.length;
+    b3.appendChild(btn(all ? "選ぶのをやめる" : "全部選ぶ", "", function () {
+      list.forEach(function (x) { clPick[x.id] = !all; }); renderClean();
+    }));
+    b3.appendChild(btn(picked.length ? "選んだ" + picked.length + "件を片付け、ほかは残す" : "全部残す", "primary", function () {
+      cleanSend(picked, rest, (picked.length ? picked.length + "件を片付け、" : "") + rest.length + "件を残しました。残した物は" + CL.months + "か月は聞きません");
+    }));
+    d3.appendChild(b3);
+  });
+  if (!n) box.appendChild(el("div", "small", "いま片付けの候補はありません。片付けたルールは、表の右の一覧の「片付けたルール」から戻せます"));
+}
+
+// 片付けたルール（見直しやルールの整理で履歴へ片付けた物）。開くと1件ずつ［戻す］がある。戻すと次に表を作る時から効く
 var openArchived = false;
 function renderArchived(box) {
   var a = (S && S.archived) || [];
@@ -433,13 +548,24 @@ function showWhy(name, day) {
 var GROUP_AT = 15;
 var openGroup = null;   // "all"（全員のルール）か null
 var person = null;      // 表で押した人の名前
+// 片付けの候補があれば、何件あって、なぜ見るかを一言添えて［整理する］
+function cleanEntry(box) {
+  var rsc = S.rule_stats;
+  if (!rsc || !rsc.candidates) return;
+  var cr = el("div", "grpnote", "片付けの候補 " + rsc.candidates + "件（しばらく表に効いていない・同じことを決めている・一時的な事情のルール）　");
+  var cb2 = el("button", "linkish", "整理する");
+  cb2.type = "button";
+  cb2.addEventListener("click", openClean);
+  cr.appendChild(cb2);
+  box.appendChild(cr);
+}
+
 function renderGrouped(box, list) {
   var rs = S.rule_stats;
   if (rs) {
     box.appendChild(el("div", "grp", "ルール " + rs.total + "件" + (rs.added ? "（今月 +" + rs.added + "件）" : "")));
-    if (rs.candidates) box.appendChild(el("div", "grpnote", "片付けの候補 " + rs.candidates + "件（何か月も、外して作り直しても表が同じだったルール・同じことを決めている2件・一時的な事情で足したルール）。毎月の見直しで" +
-      rs.per_month + "件ずつ聞きます"));
   }
+  cleanEntry(box);
   var start = S.year + "-" + String(S.month).padStart(2, "0") + "-01";
   var fresh = list.filter(function (c) { var m = c.meta || {}; return (m.said && m.from === start) || newIds[c.id]; });
   var rest = list.filter(function (c) { return fresh.indexOf(c) < 0; });
@@ -481,7 +607,7 @@ function renderGrouped(box, list) {
       var gn = {};
       gone.forEach(function (c) { c.who.forEach(function (w) { gn[w] = true; }); });
       box.appendChild(el("div", "grpnote", "うち、今の名簿にいない人（" + Object.keys(gn).join("・") + "さん）のルールが" +
-        gone.length + "件あります。毎月の見直しで片付けの候補に出します"));
+        gone.length + "件あります。3か月続くと、片付けの候補に出します"));
     }
   }
 }

@@ -9,6 +9,7 @@ API（すべて JSON）
 - POST /api/voice   16kHz float32     声を文字にして一言と同じ流れへ（X-Answer-Uid があれば聞き返しへの返事）
 - POST /api/undo    {}                ひとつ戻す
 - POST /api/restore {"rule_id"}       片付けたルールを戻す（次に表を作る時から効く）
+- GET  /api/cleanup · POST /api/cleanup {"archive", "keep"}  ルールの整理（片付けの候補を種類ごとにまとめて決める）
 - POST /api/distribute {}             表を配った（ここから休みの電話は待機の人に頼む直し）
 - POST /api/accept|refuse|cancel {"uid"}  ［了承をもらって直す］［断られた］［やめる］
 鍵は環境変数 ANTHROPIC_API_KEY（.env からも読む）。画面にも記録にも出さない。
@@ -308,6 +309,9 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
             elif self.path in ("/api/next/review", "/api/next/review?split=1"):
                 with lock:
                     self._json(200, self.server.flow().review(split=self.path.endswith("split=1")))
+            elif self.path == "/api/cleanup":
+                with lock:
+                    self._json(200, box.session.cleanup())
             elif self.path.startswith("/api/why?"):
                 from urllib.parse import parse_qs, urlparse
                 q = parse_qs(urlparse(self.path).query)
@@ -383,6 +387,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     r = Reply("ask", None, "表を配った後の扱いにしました")
                 elif self.path == "/api/undo":
                     r = box.session.undo()
+                elif self.path == "/api/cleanup":
+                    return self._json(200, box.session.cleanup_apply(data.get("archive") or [], data.get("keep") or []))
                 elif self.path == "/api/restore":
                     r = box.session.restore(data.get("rule_id", ""))
                 elif self.path == "/api/wider":

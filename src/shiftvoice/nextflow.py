@@ -14,8 +14,6 @@ from .ledger import LedgerError
 from .names import Masker
 from .nextmonth import copy_next_month, next_ym
 from .reader import ReadError
-from .aging import aged, temporary_months_setting
-from .quiet import no_scene_ids, overlap_streaks, quiet_months_setting, quiet_per_month_setting, streaks
 from .review import answer, history, review_cards, undo_answer
 from .store import Store
 
@@ -81,9 +79,8 @@ class NextFlow:
     def review(self, split: bool = False) -> dict:
         self._ensure()
         led = self.store.ledger()
-        v = review_cards(led, self.ny, self.nm, *self._quiet(), overlap=overlap_streaks(self.store, self.ny, self.nm),
-                         no_scene=no_scene_ids(self.store, self.ny, self.nm), split=split,
-                         aged=aged(self.store, self.ny, self.nm), temp_months=temporary_months_setting(self.store))
+        # 片付けの候補は、専用の画面「ルールの整理」（cleanup.py）で全部まとめて決める。見直しには混ぜない（作者 2026-11-04）
+        v = review_cards(led, self.ny, self.nm, split=split)
         cards = []
         for c in v["cards"]:
             d = card_lines(c, self.nm, self.month)
@@ -105,25 +102,15 @@ class NextFlow:
                 "head": f"{self.nm}月の表を作る前に　見直すルール {n}件中{min(v['cursor'] + 1, n)}件目"
                         f"（残り{max(n - v['cursor'] - 1, 0)}件）" if v["cursor"] < n else
                         f"{self.nm}月の表を作る前に　見直しは済みました",
-                "unchanged": f"変更なし {v['unchanged']}件（見直すのは、期限が来た・先月増えた・片付けの候補だけ）",
+                "unchanged": f"変更なし {v['unchanged']}件（今回見直すのは、期限が来たルールと先月増えたルールだけ）",
                 "once": f"{self.month}月だけの頼み{v['once']}件は、{self.nm}月へ引き継ぎません",
                 "once_names": v["once_names"],
-                "quiet_more": (f"静かなルールはほかに{v['quiet_more']}件あります。一度に見るのは"
-                               f"{self._quiet()[2]}件までにして、来月また出します") if v["quiet_more"] else "",
+
                 "done": v["cursor"] >= n, "summary": summary,
                 "history": history(led)}
 
-    def _quiet(self) -> tuple[dict[str, int], int, int]:
-        """静かな月の数（札ごと）と、何か月で見直しに出すか・1か月に何件まで出すか（施設の設定）。"""
-        return (streaks(self.store, self.ny, self.nm), quiet_months_setting(self.store),
-                quiet_per_month_setting(self.store))
-
     def answer(self, rule_id: str, what: str, new_until: str | None = None, split: bool = False) -> dict:
-        q, qm, qp = self._quiet()
-        answer(self.store, self.ny, self.nm, rule_id, what, new_until=new_until, quiet=q, quiet_months=qm,
-               quiet_per_month=qp, overlap=overlap_streaks(self.store, self.ny, self.nm),
-               no_scene=no_scene_ids(self.store, self.ny, self.nm), split=split,
-               aged=aged(self.store, self.ny, self.nm), temp_months=temporary_months_setting(self.store))
+        answer(self.store, self.ny, self.nm, rule_id, what, new_until=new_until, split=split)
         return self.review(split)
 
     def change(self, rule_id: str, text: str, reader, split: bool = False) -> dict:

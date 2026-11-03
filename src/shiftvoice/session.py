@@ -784,24 +784,24 @@ class Session:
         return Reply("applied", None, msg, summary=msg)
 
     def _rule_stats(self, rules: dict) -> dict:
-        """一覧の上に出す、ルールの量と増え方と、次の見直しでまだ答えていない片付けの候補の数（docs/rule-cleanup.md の3）。
-        数え方は見直しの札と同じ（［今月も使う］と答えた札は数えない）。"""
-        from .nextmonth import next_ym
-        from .quiet import (no_scene_ids, overlap_streaks, quiet_months_setting, quiet_per_month_setting,
-                            streaks)
-        from .review import review_cards
+        """一覧の上に出す、ルールの量と増え方と、ルールの整理（cleanup.py）の候補の数。"""
+        from .cleanup import view
         mine = [r for r in rules.values() if r.scope == "rule"]
         start = self._span()[0]
-        ny, nm = next_ym(self.year, self.month)
-        qp = quiet_per_month_setting(self.store)
-        from .aging import aged, temporary_months_setting
-        v = review_cards(self.store.ledger(), ny, nm, streaks(self.store, ny, nm), quiet_months_setting(self.store), qp,
-                         overlap_streaks(self.store, ny, nm), no_scene_ids(self.store, ny, nm),
-                         aged=aged(self.store, ny, nm), temp_months=temporary_months_setting(self.store))
-        cand = sum((2 if c.reason == "overlap" else 1 + len(c.group)) for c in v["cards"]
-                   if c.reason in ("quiet", "overlap", "aged") and c.rule_id not in v["answers"]) + v["quiet_more"]
         return {"total": len(mine), "added": sum(1 for r in mine if r.meta.get("said") and r.meta.get("from") == start),
-                "candidates": cand, "per_month": qp}
+                "candidates": view(self.store, self.year, self.month)["count"]}
+
+    def cleanup(self) -> dict:
+        from .cleanup import view
+        return view(self.store, self.year, self.month)
+
+    def cleanup_apply(self, archive: list[str], keep: list[str]) -> dict:
+        from .cleanup import apply
+        from .ledger import LedgerError
+        try:
+            return apply(self.store, self.year, self.month, list(archive), list(keep), self.now())
+        except LedgerError as e:
+            return {"error": str(e)}
 
     def why(self, name: str, day: int) -> dict:
         """マスを押した時の「なぜこのマスか」（why.py）。表の操作はしない。"""
