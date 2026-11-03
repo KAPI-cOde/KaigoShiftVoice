@@ -121,9 +121,23 @@ class NextFlow:
         dec = self.store.month(self.ny, self.nm)
         gb = build_pair(fac, staff, month_rules(self.store, self.ny, self.nm, with_premise=False), dec, counts)
         out = {"status": gb.status, "message": gb.message, "counts": counts, "checks": gb.checks}
+        if gb.status == "cannot" and not any(v > 0 for v in counts.values()):
+            # 引き受けた人がいない月（取り込んで作ったばかりの施設など）。返す物が無いので、返さない案だけで採れるようにする
+            dec_days = dec.days
+            out.update({"status": "ok", "message": "", "main": f"{self.month}月に引き受けた人はいません。{self.nm}月はふだんの作り方で作りました",
+                        "who": None, "sub": "人数とルールはそのまま", "line2": "", "people": [], "others": {},
+                        "changed": 0, "leave_avg": round(gb.leave_avg, 1), "stage": [],
+                        "seconds": round(gb.base.seconds, 2), "tables": {"base": gb.base.table, "give": gb.base.table},
+                        "days": dec_days, "weekdays": [dec.weekday(d) for d in range(1, dec_days + 1)],
+                        "holidays": dec.holidays, "no_takers": True})
+            m = self.store.month(self.ny, self.nm)
+            m.layers["_plans"] = {"base": gb.base.table, "give": gb.base.table, "rev": self.store.ledger().rev,
+                                  "tail": m.prev_tail, "acc_ids": []}
+            self.store.save_month(m)
+            return out
         if gb.status != "ok":
             return out
-        who = max(gb.people, key=lambda p: (p["accepted"], p["name"] == "小島"))
+        who = max(gb.people, key=lambda p: p["accepted"])  # 同じ回数なら people の並び順（名簿の順）
         parts = []
         if who["leave_after"] > who["leave_before"]:
             parts.append(f"有給 {who['leave_before']}→{who['leave_after']}日")
@@ -167,7 +181,7 @@ class NextFlow:
         cur = self.store.month(self.year, self.month).table
         if plans.get("rev") != self.store.ledger().rev or plans.get("tail") != {n: r[-5:] for n, r in cur.items()}:
             # 案を作った後にルールか前の月の末が変わった。古い案は採らない（Astra の指摘7）
-            return {"error": "案を作った後にルールか11月の表が変わりました。もう一度［12月の表を作る］を押してください"}
+            return {"error": f"案を作った後にルールか{self.month}月の表が変わりました。もう一度［{self.nm}月の表を作る］を押してください"}
         m.table = plans[plan]
         m.built_rev = self.store.ledger().rev
         m.layers["_adopted"] = plan
