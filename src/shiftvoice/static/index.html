@@ -437,7 +437,7 @@ function renderGrouped(box, list) {
   var rs = S.rule_stats;
   if (rs) {
     box.appendChild(el("div", "grp", "ルール " + rs.total + "件" + (rs.added ? "（今月 +" + rs.added + "件）" : "")));
-    if (rs.candidates) box.appendChild(el("div", "grpnote", "片付けの候補 " + rs.candidates + "件。毎月の見直しで" +
+    if (rs.candidates) box.appendChild(el("div", "grpnote", "片付けの候補 " + rs.candidates + "件（何か月も、外して作り直しても表が同じだったルールや、同じことを決めている2件）。毎月の見直しで" +
       rs.per_month + "件ずつ聞きます"));
   }
   var start = S.year + "-" + String(S.month).padStart(2, "0") + "-01";

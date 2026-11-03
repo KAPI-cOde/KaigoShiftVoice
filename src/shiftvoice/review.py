@@ -51,6 +51,7 @@ class Card:
     loose: bool = False               # 重なりの札で、この札（rule_id）の方がゆるいと分かる時
     group: list[str] = field(default_factory=list)   # 一緒に答える札（同じ人の当てはまる場面が無い札・先月増えた札）
     group_names: list[str] = field(default_factory=list)
+    pairs: list[tuple[str, str]] = field(default_factory=list)   # まとめた先月増えた札の中の、同じ所を決める組
 
 
 def _months_between(a: str, b: str) -> int:
@@ -160,6 +161,12 @@ def review_cards(ledger: Ledger, year: int, month: int, quiet: dict[str, int] | 
         head = added[0]
         head.group = [c.rule_id for c in added[1:]]
         head.group_names = [c.name for c in added]
+        # まとめた中に同じ所を決める2件があると、［全部 今月も使う］で気づけない（読み手 2026-11-04）。組を添える
+        for i, x in enumerate(added):
+            for y in added[i + 1:]:
+                rx, ry = all_prev[x.rule_id], all_prev[y.rule_id]
+                if (rx.who or None) == (ry.who or None) and (may_cover(rx, ry) or may_cover(ry, rx)):
+                    head.pairs.append((x.name, y.name))
         head.name = f"先月増えたルール {len(added)}件"
         cards = [c for c in cards if c.reason != "added_last_month" or c is head]
     order = {"expired": 0, "added_last_month": 1, "quiet": 2, "overlap": 2}

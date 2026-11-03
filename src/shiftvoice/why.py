@@ -54,7 +54,9 @@ def why_cell(rules: list[Rule], fac: Facility, staff: list[Staff], month: Month,
                 else:
                     fact = f"{who}{_names(fac, syms)}はちょうど{v}{_unit(fac, syms)}（下限）"
             elif r.kind == "coverage":
-                fact = f"{day}日の{_names(fac, syms)} {v}人"
+                # 「5日の早番 1人」では意味が取れないと読み手が書いた（2026-11-04）。決まった人数に届いていると言う
+                fact = (f"{day}日の{_names(fac, syms)}はもう{v}人（決まった人数）" if block
+                        else f"{day}日の{_names(fac, syms)}はちょうど{v}人（決まった人数）")
             elif r.kind == "cell":
                 fact = "この日の頼み"
             else:

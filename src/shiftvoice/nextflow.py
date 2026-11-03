@@ -48,8 +48,11 @@ def card_lines(c, month: int, prev: int) -> dict:
                 "buttons": [["archive", f"{1 + len(c.group)}件とも履歴へ片付ける" if c.group else "履歴へ片付ける"],
                             ["keep", "今月も使う"]]}
     if c.reason == "added_last_month" and c.group:
-        return {"label": "先月増えた", "title": c.name,
-                "lines": ["今月も使いますか", "、".join(c.group_names)],
+        lines = ["今月も使いますか", "、".join(c.group_names)]
+        if c.pairs:   # 札は2行までしか出ないので、2行目に足す
+            lines[1] += "。" + "。".join(f"このうち「{a}」と「{b}」は同じ所を決めています（1件ずつ見ると、片方を変えられます）"
+                                        for a, b in c.pairs[:2])
+        return {"label": "先月増えた", "title": c.name, "lines": lines,
                 "buttons": [["keep", "全部 今月も使う"], ["split", "1件ずつ見る"]]}
     # 当番（待機など）の中身を話して直すのは、まだ作っていない。［変える］を出さない
     buttons = [["keep", "今月も使う"]] + ([] if c.kind == "layer" else [["change", "変える（話す）"]])

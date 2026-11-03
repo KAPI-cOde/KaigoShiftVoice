@@ -166,3 +166,13 @@ def test_m12_split_one_by_one(sess):
     answer(sess.store, 2026, 12, "a0", "keep", split=True)
     v = review_cards(sess.store.ledger(), 2026, 12)        # split を付けずに開き直しても
     assert len([c for c in v["cards"] if c.reason == "added_last_month"]) == 4
+
+
+def test_m12_group_card_flags_pairs(sess):
+    """まとめた先月増えた札の中に同じ所を決める2件があれば、2行目にそう書く。"""
+    from shiftvoice.nextflow import card_lines
+    _four_added(sess)                       # 千葉さんの水曜の早番が4件（同じ所）
+    v = review_cards(sess.store.ledger(), 2026, 12)
+    head = next(c for c in v["cards"] if c.reason == "added_last_month")
+    assert head.pairs
+    assert "は同じ所を決めています" in card_lines(head, 12, 11)["lines"][1]
