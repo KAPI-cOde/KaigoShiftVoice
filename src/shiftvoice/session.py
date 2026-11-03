@@ -23,6 +23,7 @@ from .reader import ReadError
 from .giveback import accepted_counts
 from .model import Acceptance
 from .resolve import changed_cells, resolve
+from .rules import same_slot
 from .standby import ASK_WIDER, assign, duty_days, fix_absence
 from .store import Store
 
@@ -33,7 +34,7 @@ READ_FAILED = "読み取りに失敗しました。表もルールも変えて�
 
 @dataclass
 class Reply:
-    kind: str                 # applied / ask_period / ask / error / failed_solve
+    kind: str                 # applied / ask_period / ask_replace / ask / error / failed_solve
     uid: str | None = None
     message: str = ""
     changes: list[dict] = field(default_factory=list)
@@ -243,12 +244,18 @@ class Session:
         return self._apply(u, p, scope)
 
     def answer(self, uid: str, text: str) -> Reply:
-        """「毎月ですか、今月だけですか」への返事（話し言葉でも選択肢でも）。"""
-        scope = text if text in ("rule", "once") else read_answer(text)
+        """「毎月ですか、今月だけですか」への返事（話し言葉でも選択肢でも）。
+        「置き換えますか、別に足しますか」への返事（"replace" / "add"）もここで受ける。"""
         u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
         if u is None:
             return Reply("error", uid, "聞き返した発言が見つかりません")
         self._recall(u)
+        if u.get("status") == "ask_replace":
+            if text not in ("replace", "add"):
+                return self._stamp(Reply("ask_replace", uid, "置き換えますか、別に足しますか"))
+            self.store.update_pending(self.year, self.month, uid, dup=text)
+            return self._stamp(self._safe_propose({**u, "dup": text}))
+        scope = text if text in ("rule", "once") else read_answer(text)
         if scope is None:
             return self._stamp(Reply("ask_period", uid, ASK_PERIOD))
         self.store.update_pending(self.year, self.month, uid, scope=scope)
@@ -269,6 +276,14 @@ class Session:
                 and not any(t.get("op_id") == u["id"] for t in led.txs):
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], f"{self.month}月はもう入っています")
+        # 毎月のルールで、同じ所を決める前からのルールがあれば、置き換えるか別に足すかを聞く（ルールを積もらせない）
+        olds = [r for r in cur if scope == "rule" and any(same_slot(rd, r) for rd in p.rules)]
+        if olds and u.get("dup") is None and not any(t.get("op_id") == u["id"] for t in led.txs):
+            self.store.update_pending(self.year, self.month, u["id"], status="ask_replace", scope=scope,
+                                      dup_old=[r.id for r in olds])
+            names = "」「".join(r.name for r in olds)
+            return Reply("ask_replace", u["id"], f"前からのルール「{names}」があります。置き換えますか、別に足しますか",
+                         summary=p.summary, extra={"old": [r.name for r in olds]})
         if not any(t.get("op_id") == u["id"] for t in led.txs):
             n = _next_id(led)
             for rd in p.rules:
@@ -283,6 +298,10 @@ class Session:
                 tx = led.append("add", rule=rd, op_id=u["id"], frm=start, until=until,
                                 meta={"said": u["text"], "who": self.who, "at": at})
                 added.append(Rule.from_dict(tx["rule"]))
+            if u.get("dup") == "replace":
+                for oid in u.get("dup_old", []):
+                    if oid in led.rules_at():
+                        led.append("remove", rule_id=oid, op_id=u["id"], meta={"kind": "replaced", "at": at})
         changes: list[dict] = []
         secs = 0.0
         warning = ""
@@ -331,8 +350,9 @@ class Session:
                     s.changes.append({k: v for k, v in c.items() if k != "staff"} | {"at": at})
             self.store.save_staff(staff)           # 3 職員
         self.store.resolve_pending(self.year, self.month, u["id"])  # 4 未反映の発言
-        return Reply("applied", u["id"], p.summary, changes=changes, rule_ids=[r.id for r in added],
-                     summary=p.summary, seconds=secs, warning=warning)
+        summary = p.summary + ("（前のルールと置き換えました）" if u.get("dup") == "replace" and u.get("dup_old") else "")
+        return Reply("applied", u["id"], summary, changes=changes, rule_ids=[r.id for r in added],
+                     summary=summary, seconds=secs, warning=warning)
 
     def _cancel(self, u: dict, p: Proposal) -> Reply:
         """取り消し。前の頼みの指定を外すだけで、表のマスは動かさない（外した日が公休のままでも誤りではない。13章）。

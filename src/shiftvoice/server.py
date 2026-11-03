@@ -25,6 +25,29 @@ from .onboard import (OnboardError, ParseError, Proposal, Pasted, _short_id, _te
                       parse_paste)
 from .reader import HaikuReader, ReadError, SonnetBuilder
 from .session import Session
+
+_quiet_running: set[str] = set()
+
+
+def start_quiet(store: Store, year: int, month: int) -> None:
+    """配った月の静かなルールを裏で数える（docs/rule-cleanup.md の1）。配った後の表は大きく変わらないので、
+    ここで測った結果を翌月からの見直しに使う。もう測った月・測っている月は流さない。施設の設定 quiet.auto で止められる。"""
+    from .quiet import _path, check_month
+    if not store.facility().settings.get("quiet", {}).get("auto", True):
+        return
+    key = f"{store.root}|{year}-{month}"
+    if key in _quiet_running or _path(store, year, month).exists():
+        return
+    _quiet_running.add(key)
+
+    def run():
+        try:
+            check_month(store, year, month)
+        except Exception as e:   # 測れなくても表の操作は止めない（翌月の見直しに静かな札が出ないだけ）
+            print(f"静かなルールの確かめが止まりました（{year}年{month}月） {e}")
+        finally:
+            _quiet_running.discard(key)
+    threading.Thread(target=run, daemon=True).start()
 from .store import Store, read_json
 
 SAMPLE_PASTE = Path(__file__).resolve().parents[2] / "data" / "samples" / "komorebi-2026-11.tsv"
@@ -336,6 +359,7 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     r = box.session.cancel(data.get("uid", ""))
                 elif self.path == "/api/distribute":
                     box.session.distribute()
+                    start_quiet(box.session.store, box.session.year, box.session.month)
                     from .session import Reply
                     r = Reply("ask", None, "表を配った後の扱いにしました")
                 elif self.path == "/api/undo":

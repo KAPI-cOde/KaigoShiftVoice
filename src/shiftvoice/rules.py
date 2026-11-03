@@ -78,6 +78,43 @@ def _replace_same(rules: list[Rule]) -> list[Rule]:
     return out
 
 
+def _syms_of(v) -> set[str]:
+    return {v} if isinstance(v, str) else set(v or [])
+
+
+def same_slot(new: dict, old: Rule) -> bool:
+    """新しく言った毎月のルール（帳面に入れる前の dict）が、前からある毎月のルールと同じ所を決めているか。
+    同じ所＝同じ種類・同じ相手（同じ人か、どちらも全員）で、数える勤務・曜日・並びが重なる。
+    中身まで同じ物は「もう入っています」で別に止める。ここは言い直しや、似たルールが積もるのを入口で止めるため
+    （docs/rule-cleanup.md の2）。日を決めた頼み（when）と当番は当てない。"""
+    if old.scope != "rule" or new.get("kind") != old.kind or old.kind in ("layer", "cell"):
+        return False
+    if new.get("when") or old.when:
+        return False
+    if sorted(new.get("who") or []) != sorted(old.who or []):
+        return False
+    p, q = new.get("params") or {}, old.params
+    if p == q:
+        return False
+    if old.kind == "count" and new.get("flex") == "operational" and old.flex == "operational":
+        return False   # 運用の都合の回数どうしは、新しい方が言った側だけ前のに代わる（_replace_same）。聞かない
+    k = old.kind
+    if k in ("count", "max_run"):
+        return bool(_syms_of(p.get("shifts")) & _syms_of(q.get("shifts")))
+    if k == "weekday":
+        return (bool(set(p.get("weekdays") or []) & set(q.get("weekdays") or []))
+                and ("in" in p) == ("in" in q)
+                and bool(_syms_of(p.get("in") or p.get("not_in")) & _syms_of(q.get("in") or q.get("not_in"))))
+    if k == "sequence":
+        side = lambda d: next((x for x in ("next_in", "next_not_in", "prev_in") if x in d), None)
+        return (bool(_syms_of(p.get("if")) & _syms_of(q.get("if"))) and side(p) == side(q)
+                and bool(_syms_of(p.get(side(p))) & _syms_of(q.get(side(q)))))
+    if k == "coverage":
+        return (bool(_syms_of(p.get("shifts")) & _syms_of(q.get("shifts")))
+                and p.get("scope") == q.get("scope") and sorted(p.get("weekdays") or []) == sorted(q.get("weekdays") or []))
+    return False
+
+
 def with_overrides(rules: list[Rule]) -> list[Rule]:
     """人を名指しした月の回数のルールは、同じ勤務の全員向け（と、より多くの人をまとめた）回数のルールより優先する。
     （「小川さん、今月は夜勤ゼロで」が「夜勤の回数 3〜5回」とぶつかって守られなかった。2026-11-02）

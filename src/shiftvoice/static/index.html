@@ -46,6 +46,10 @@
   .card.open { border-color: #000; }
   .card .top { display: flex; justify-content: space-between; gap: 8px; }
   .card .nm { font-weight: 700; }
+  .grp { font-size: 12px; font-weight: 700; margin: 4px 0 2px; }
+  .grpnote { font-size: 12px; margin: 6px 2px; }
+  td.name { cursor: pointer; }
+  td.name.picked { text-decoration: underline; font-weight: 700; }
   .card .per { white-space: nowrap; font-size: 12px; }
   .card .why { font-size: 12px; margin-top: 2px; }
   .card .new { font-size: 11px; border: 1px solid #000; border-radius: 3px; padding: 0 5px; margin-left: 6px; font-weight: 700; }
@@ -279,6 +283,10 @@ function renderTable() {
     var nm = el("td", "name");
     if (multiUnit()) nm.appendChild(el("span", "unit", st.unit));
     nm.appendChild(document.createTextNode(st.name));
+    if (person === st.name) nm.className += " picked";
+    (function (name) {
+      nm.addEventListener("click", function () { person = person === name ? null : name; renderTable(); renderCards(); });
+    })(st.name);
     (st.changes || []).forEach(function (ch) {
       var mm = parseInt(String(ch.from).split("-")[1], 10);
       var what = (ch.can_add || []).map(function (s) { return symName(s).replace("番", "番").replace("夜勤", "夜勤"); }).join("・");
@@ -337,7 +345,63 @@ function renderCards() {
   var base = rules.filter(function (c) { return !(c.meta && c.meta.said); });
   var list = said.concat(base);
   if (!list.length) box.appendChild(el("div", "empty", "ルールはまだありません"));
-  list.forEach(function (c) {
+  if (list.length <= GROUP_AT) { list.forEach(function (c) { box.appendChild(makeCard(c)); }); return; }
+  renderGrouped(box, list);
+}
+
+// ルールが多い時は、何件あっても開いた時の一覧を数行に収める（docs/rule-cleanup.md の3）。
+// 今月増えたルールだけ1件ずつ出し、全員のルールと人ごとのルールはたたんで件数だけ。人ごとは表の名前を押して開く
+var GROUP_AT = 15;
+var openGroup = null;   // "all"（全員のルール）か null
+var person = null;      // 表で押した人の名前
+function renderGrouped(box, list) {
+  var start = S.year + "-" + String(S.month).padStart(2, "0") + "-01";
+  var fresh = list.filter(function (c) { var m = c.meta || {}; return (m.said && m.from === start) || newIds[c.id]; });
+  var rest = list.filter(function (c) { return fresh.indexOf(c) < 0; });
+  var everyone = rest.filter(function (c) { return !c.who || !c.who.length; });
+  var named = rest.filter(function (c) { return c.who && c.who.length; });
+  if (fresh.length) {
+    box.appendChild(el("div", "grp", "今月増えたルール " + fresh.length + "件"));
+    fresh.forEach(function (c) { box.appendChild(makeCard(c)); });
+  }
+  var g = el("button", "card grpbtn" + (openGroup === "all" ? " open" : ""));
+  g.type = "button";
+  var gt = el("div", "top");
+  gt.appendChild(el("span", "nm", "全員のルール " + everyone.length + "件"));
+  gt.appendChild(el("span", "per", openGroup === "all" ? "たたむ" : "開く"));
+  g.appendChild(gt);
+  g.addEventListener("click", function () { openGroup = openGroup === "all" ? null : "all"; renderCards(); });
+  box.appendChild(g);
+  if (openGroup === "all") everyone.forEach(function (c) { box.appendChild(makeCard(c)); });
+  if (person) {
+    var mine = named.filter(function (c) { return c.who.indexOf(person) >= 0; });
+    var h = el("button", "card grpbtn open");
+    h.type = "button";
+    var ht = el("div", "top");
+    ht.appendChild(el("span", "nm", person + "さんのルール " + mine.length + "件"));
+    ht.appendChild(el("span", "per", "閉じる"));
+    h.appendChild(ht);
+    h.addEventListener("click", function () { person = null; renderTable(); renderCards(); });
+    box.appendChild(h);
+    mine.forEach(function (c) { box.appendChild(makeCard(c)); });
+  } else {
+    var who = {}, onRoster = {};
+    (S.staff || []).forEach(function (st) { onRoster[st.name] = true; });
+    named.forEach(function (c) { c.who.forEach(function (w) { who[w] = true; }); });
+    box.appendChild(el("div", "grpnote", "人ごとのルール " + named.length + "件（" + Object.keys(who).length +
+      "人）。表の名前を押すと、その人のルールだけ出ます"));
+    // 名簿にいない人のルール（辞めた人の事情が残った形）は、件数だけ別に知らせる
+    var gone = named.filter(function (c) { return c.who.every(function (w) { return !onRoster[w]; }); });
+    if (gone.length) {
+      var gn = {};
+      gone.forEach(function (c) { c.who.forEach(function (w) { gn[w] = true; }); });
+      box.appendChild(el("div", "grpnote", "うち、表にいない人（" + Object.keys(gn).join("・") + "さん）のルールが" +
+        gone.length + "件あります。毎月の見直しで片付けの候補に出します"));
+    }
+  }
+}
+
+function makeCard(c) {
     var m = c.meta || {};
     var b = el("button", "card" + (selected === c.id ? " open" : ""));
     b.type = "button";
@@ -377,8 +441,7 @@ function renderCards() {
       renderTable();
       renderCards();
     });
-    box.appendChild(b);
-  });
+    return b;
 }
 
 function renderSaid() {
@@ -454,6 +517,19 @@ function renderReplyBody(r) {
     });
     box.appendChild(bs);
     box.appendChild(el("div", "q2", "毎月＝来月からもずっと続くルール。今月だけ＝この月の表にだけ効き、来月には引き継ぎません"));
+    return;
+  }
+  if (r.kind === "ask_replace") {  // 同じ所を決める前からのルールがある。積もらせないために聞く
+    box.appendChild(el("div", "q", r.message || "置き換えますか、別に足しますか"));
+    var rp = el("div", "btns");
+    [["置き換える", "replace"], ["別に足す", "add"]].forEach(function (p) {
+      var b = el("button", "", p[0]);
+      b.type = "button";
+      b.addEventListener("click", function () { sendAnswer(p[1]); });
+      rp.appendChild(b);
+    });
+    box.appendChild(rp);
+    box.appendChild(el("div", "q2", "置き換える＝前のルールを外して、いま言ったルールだけにします。前のルールは［ひとつ戻す］で戻せます"));
     return;
   }
   if (r.kind === "error") {
@@ -582,7 +658,7 @@ function handle(res, isUndo) {
   S = res.state;
   offerR = r && (r.kind === "standby_offer" || r.kind === "fix_offer") ? r : null;
   if (offerR) (r.changes || []).forEach(function (c) { glowCells[c.staff + "|" + c.day] = true; });
-  ask = r && r.kind === "ask_period" ? r : null;
+  ask = r && (r.kind === "ask_period" || r.kind === "ask_replace") ? r : null;
   if (r && r.kind === "applied") {
     (r.rule_ids || []).forEach(function (id) { newIds[id] = true; });
   }
@@ -853,6 +929,7 @@ function renderReview() {
   }
   wrap.appendChild(el("div", "rv-err", rvErr));
   if (R.once) wrap.appendChild(el("div", "small", R.once));
+  if (R.quiet_more) wrap.appendChild(el("div", "small", R.quiet_more));
   box.appendChild(wrap);
 }
 
@@ -1275,7 +1352,7 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
   if (st.has_voice) document.getElementById("talk").style.display = "";
   renderAll();
   var pend = st.pending || [];
-  var a = pend.filter(function (p) { return p.status === "ask_period"; })[0];
+  var a = pend.filter(function (p) { return p.status === "ask_period" || p.status === "ask_replace"; })[0];
   var f = pend.filter(function (p) { return p.status === "failed"; })[0];
   var of = pend.filter(function (p) { return p.status === "offer"; })[0];
   if (of && of.offer) {
@@ -1294,7 +1371,9 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
   } else if (a) {
     saidList.push(a.text);
     renderSaid();
-    ask = { uid: a.id, kind: "ask_period", message: "毎月ですか、今月だけですか" };
+    ask = a.status === "ask_replace"
+      ? { uid: a.id, kind: "ask_replace", message: "前からのルールがあります。置き換えますか、別に足しますか" }
+      : { uid: a.id, kind: "ask_period", message: "毎月ですか、今月だけですか" };
     renderReply(ask);
   } else if (f) {
     saidList.push(f.text);
