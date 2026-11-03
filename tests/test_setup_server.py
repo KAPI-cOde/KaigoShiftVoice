@@ -153,3 +153,17 @@ def test_プレビューは答えを当てて読み方を返す(srv):
     assert "希→公休" in pv2["reading"] and "N→夜勤" in pv2["reading"]
     code, bad = call(base, "/api/setup/preview", {"text": text, "year": 2026, "month": 11, "answers": {"A": {"same_as": "ぬ"}}})
     assert code == 400 and "知らない勤務" in bad["error"]
+
+
+def test_問題がある貼り付けは知らせて作らない(srv):
+    base, _, root = srv
+    text = (Path(__file__).resolve().parent / "fixtures" / "pastes" / "14.tsv").read_text(encoding="utf-8")
+    body = {"text": text, "year": 2027, "month": 2, "name": "宿直の家（作り話）"}
+    code, pv = call(base, "/api/setup/preview", body)
+    assert code == 200 and pv["suggestions"] == {"宿": "night"} and len(pv["problems"]) == 1 and "宿" in pv["problems"][0]
+    code, bad = call(base, "/api/setup/create", dict(body, answers={}))
+    assert code == 400 and bad["problems"] and "宿" in bad["error"]
+    code, ok = call(base, "/api/setup/preview", dict(body, answers={"宿": {"name": "宿直", "kind": "work", "next_is_ake": True}}))
+    assert code == 200 and ok["problems"] == [] and any(r["name"] == "宿直の翌日は明け" for r in ok["rules"])
+    code, fl = call(base, "/api/facilities")
+    assert all("宿直" not in f["name"] for f in fl["facilities"])

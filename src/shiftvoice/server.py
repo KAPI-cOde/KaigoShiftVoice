@@ -71,6 +71,7 @@ def preview_out(pasted: Pasted, prop: Proposal) -> dict:
         "same_choices": [{"symbol": t["symbol"], "name": t["name"]} for t in _template()],
         "reading": _reading(pasted, prop), "units": list(prop.units),
         "blank_as_rest": pasted.blank_as_rest, "skipped": pasted.skipped,
+        "problems": list(prop.problems), "suggestions": dict(prop.suggestions),
     }
 
 
@@ -205,6 +206,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     pasted, prop, year, month = _parse_setup(data)
                     drop = {str(x) for x in (data.get("drop_rules") or [])}
                     prop.rules = [r for r in prop.rules if r["id"] not in drop]
+                    if prop.problems:   # このままでは作れない（毎日いた勤務が来月に入らない など）
+                        return self._json(400, {"error": "。".join(prop.problems), "problems": list(prop.problems)})
                     name = str(data.get("name") or "")
                     ny, nm = next_ym(year, month)
                     parent = Path(box.session.store.root).parent

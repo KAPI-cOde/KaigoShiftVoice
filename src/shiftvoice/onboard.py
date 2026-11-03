@@ -11,7 +11,10 @@
 from __future__ import annotations
 
 import calendar
+import csv
+import datetime as dt
 import hashlib
+import io
 import re
 import time
 import unicodedata
@@ -33,7 +36,12 @@ ALIASES = {
 }
 # 名前の列の見出し／職種の言葉（名前の列を選ぶ時に外す）
 NAME_HEADS = {"氏名", "名前", "職員", "職員名"}
-ROLE_WORDS = {"介護", "看護", "介護福祉士", "パート", "常勤", "非常勤", "リーダー"}
+ROLE_WORDS = {"介護", "看護", "看護師", "介護福祉士", "パート", "アルバイト", "常勤", "非常勤", "正職員", "準職員",
+              "契約職員", "リーダー"}
+# 名前の欄に書かれていても人ではない行（1人2行の表の下の行）
+NOTE_WORDS = {"備考", "時間", "メモ", "勤務時間"}
+# ユニットの値が入る左の列の見出し
+UNIT_HEADS = {"ユニット", "棟", "フロア", "ユニット名"}
 # 集計の行とみなす名前の言葉
 SUMMARY_WORDS = ("計", "合計", "人数")
 # 雛形に無い勤務の名前で、行の名前に使われたら集計の行とみなす言葉
@@ -54,6 +62,7 @@ HOLIDAYS = {
 SETTING_KEYS = ("weights", "light_weight", "quality", "keep_weight", "resolve_quality")
 SOLVE_KEYS = ("workers", "seed", "max_deterministic_time", "resolve_max_deterministic_time")
 RATE_LINE = 0.9   # 夜明公の決まりを候補にする割合
+SERIAL_RANGE = (40000, 60000)   # Excel の日付の通し番号（1900年式）の範囲
 
 _WEEKDAY = re.compile(r"^[(（]?[月火水木金土日](?:曜日?)?[)）]?$")
 _DAY = re.compile(r"^(?:\d{4}[/-])?(?:(\d{1,2})[/-])?(\d{1,2})日?(?:[(（][月火水木金土日][)）])?$")
@@ -92,6 +101,8 @@ class Proposal:
     rules: list[dict]
     unknown_symbols: list[str] = field(default_factory=list)
     same_as: dict[str, str] = field(default_factory=dict)   # 答えで「既存の勤務と同じ」にした記号 → 先
+    problems: list[str] = field(default_factory=list)       # このままでは作れない理由（一文ずつ）
+    suggestions: dict[str, str] = field(default_factory=dict)   # 知らない記号 → おすすめの選び方（same:夜 / night）
 
 
 @dataclass
@@ -118,7 +129,9 @@ def _norm(s: str) -> str:
 
 
 def _day_number(label: str) -> int | None:
-    """日の見出し（1・1日・11/1・11月1日・2026-11-01 など）なら日にちの数、違えば None。"""
+    """日の見出し（1・1日・11/1・11月1日・2026-11-01・Excel の通し番号 など）なら日にちの数、違えば None。"""
+    if re.fullmatch(r"\d{5}", label) and SERIAL_RANGE[0] <= int(label) <= SERIAL_RANGE[1]:
+        return (dt.date(1899, 12, 30) + dt.timedelta(days=int(label))).day
     m = _DAY_MD.match(label) or _DAY.match(label)
     if not m:
         return None
@@ -176,6 +189,17 @@ def _clean_name(raw: str) -> str:
     return re.sub(r"\s+", "", name)
 
 
+def _is_role_heading(name: str) -> bool:
+    """名前の列だけの区切り行が職種の見出し（看護・パート・介護職員 など）か。ユニットではない。"""
+    return name in ROLE_WORDS or re.sub(r"(?:職員|スタッフ)$", "", name) in ROLE_WORDS
+
+
+def _cell_text(c: str) -> str:
+    """セルの中の改行は、最初の行だけ読む（「赤坂（改行）リーダー」「早（改行）7:00」）。"""
+    lines = [x for x in c.replace("\r", "\n").split("\n") if x.strip()]
+    return (lines[0] if lines else "").strip().strip('"').strip()
+
+
 def _unit_name(label: str) -> str:
     u = re.sub(r"ユニット$", "", label).strip()
     return u or label
@@ -184,13 +208,16 @@ def _unit_name(label: str) -> str:
 def parse_paste(text: str) -> Pasted:
     text = _nfkc(text)
     delim = "\t" if "\t" in text else ","
-    lines = re.split(r"\r\n|\r|\n", text)
 
-    rows: list[tuple[int, list[str]]] = []   # (行番号, セル)
-    for i, line in enumerate(lines, 1):
-        if not line.strip():
+    rows: list[tuple[int, list[str]]] = []   # (行番号, セル)。引用符の中の改行は行の区切りにしない
+    reader = csv.reader(io.StringIO(text), delimiter=delim)
+    prev_end = 0
+    for cells in reader:
+        first, prev_end = prev_end + 1, reader.line_num
+        cells = [_cell_text(c) for c in cells]
+        if not any(cells):
             continue
-        rows.append((i, [c.strip().strip('"').strip() for c in line.split(delim)]))
+        rows.append((first, cells))
 
     # 見出しの行を探す。見出しより前の行（表題など）は読まない
     header = None
@@ -208,14 +235,15 @@ def parse_paste(text: str) -> Pasted:
     shift_names = set(ALIASES) | set(SHIFT_WORDS) | _template_words()
 
     def is_label(name: str) -> bool:
-        return (not name or any(w in name for w in SUMMARY_WORDS) or name in shift_names or name.isdigit())
+        return (not name or any(w in name for w in SUMMARY_WORDS) or name in shift_names or name in NOTE_WORDS
+                or name.isdigit())
 
     def is_total_row(cells: list[str], name_idx: int) -> bool:
         """名前以外のセルが空でなく、全部が数字の行は集計の行（出勤者数・公休数 など）。"""
         vals = [c for j, c in enumerate(cells) if j != name_idx and c]
         return bool(vals) and all(re.fullmatch(r"\d+(?:\.\d+)?", v) for v in vals)
 
-    # items は ("unit", 名前) か ("staff", 行番号, 名前, 日のセル)
+    # items は ("unit", 名前) か ("staff", 行番号, 名前, 日のセル, 左のユニット列の値)
     items: list[tuple] = []
     skipped = 0
     n_header: int | None = None
@@ -223,12 +251,13 @@ def parse_paste(text: str) -> Pasted:
         (cols, blanks), hcells = header
         n_header = len(cols)
         left = range(cols[0])
+        uc = next((j for j in left if re.sub(r"\s", "", hcells[j]) in UNIT_HEADS), None)   # ユニットの列
         nc = next((j for j in left if re.sub(r"\s", "", hcells[j]) in NAME_HEADS), None)
         if nc is None:
             def score(j: int) -> int:
                 vals = [_clean_name(c[j]) for _, c in body if j < len(c) and not _is_weekday_row(c)]
-                return sum(1 for v in vals if v and not v.isdigit() and v not in ROLE_WORDS)
-            nc = max(left, key=lambda j: (score(j), -j))
+                return sum(1 for v in vals if v and not v.isdigit() and not _is_role_heading(v))
+            nc = max((j for j in left if j != uc), key=lambda j: (score(j), -j))
         for lineno, cells in body:
             if _is_weekday_row(cells):
                 continue
@@ -238,7 +267,8 @@ def parse_paste(text: str) -> Pasted:
                 continue
             days = [cells[c] if c < len(cells) else "" for c in cols]
             if not any(days):
-                items.append(("unit", name))
+                if not _is_role_heading(name):
+                    items.append(("unit", name))
                 continue
             if len(cells) <= cols[-1]:
                 k = sum(1 for c in cols if c < len(cells))
@@ -247,7 +277,8 @@ def parse_paste(text: str) -> Pasted:
             if any(c < len(cells) and cells[c] for c in blanks):
                 raise ParseError(f"{lineno}行目の「{name}」に、日の見出しが空の列の中身があります。"
                                  "その列を外してコピーしてください")
-            items.append(("staff", lineno, name, days))
+            ulabel = _clean_name(cells[uc]) if uc is not None and uc < len(cells) else ""
+            items.append(("staff", lineno, name, days, ulabel))
     else:
         if header:
             n_header = len(header[0][0])
@@ -260,14 +291,17 @@ def parse_paste(text: str) -> Pasted:
                 skipped += 1
                 continue
             rest = cells[k + 1:]
-            items.append(("staff", lineno, name, rest) if any(rest) else ("unit", name))
+            if any(rest):
+                items.append(("staff", lineno, name, rest, ""))
+            elif not _is_role_heading(name):
+                items.append(("unit", name))
         if n_header is None:
             # 全部空の列を取り除く（見出しが無い時の読み方）
             sc = [it[3] for it in items if it[0] == "staff"]
             width = max((len(c) for c in sc), default=0)
             empty = {i for i in range(width) if all(i >= len(c) or not c[i] for c in sc)}
             if empty:
-                items = [it if it[0] == "unit" else (it[0], it[1], it[2], [c for i, c in enumerate(it[3]) if i not in empty])
+                items = [it if it[0] == "unit" else (it[0], it[1], it[2], [c for i, c in enumerate(it[3]) if i not in empty], it[4])
                          for it in items]
 
     staff_rows = [it for it in items if it[0] == "staff"]
@@ -287,13 +321,14 @@ def parse_paste(text: str) -> Pasted:
     unit_list: list[str] = []
     aliases: dict[str, str] = {}
     cur_unit: str | None = None
+    col_unit: str | None = None   # 左のユニット列の値（空のセルは上と同じ）
     blank = 0
     unknown: list[str] = []
     for it in items:
         if it[0] == "unit":
             cur_unit = _unit_name(it[1])
             continue
-        _, lineno, name, cells = it
+        _, lineno, name, cells, ulabel = it
         extra = cells[n:]
         if len(cells) > n and any(extra):
             raise ParseError(f"{lineno}行目の「{name}」は日の数が{len(cells)}日分あり、"
@@ -317,7 +352,9 @@ def parse_paste(text: str) -> Pasted:
                 unknown.append(sym)
             row.append(sym)
         table[name] = row
-        u = cur_unit or "全体"
+        if ulabel:
+            col_unit = _unit_name(ulabel)
+        u = col_unit or cur_unit or "全体"
         unit_of[name] = u
         if u not in unit_list:
             unit_list.append(u)
@@ -348,6 +385,32 @@ def _rule(rid: str, name: str, kind: str, flex: str, params: dict, evidence: str
             "meta": {"how": "貼った表から見つけた", "evidence": evidence}}
 
 
+def _answer_type(sym: str, a, daily: bool) -> dict | None:
+    """知らない記号の答え（名前と種類）から勤務の種類を作る。答えが足りない・おかしければ None。
+    新しい勤務は、貼った月の半分以上の日に出ていればふだんの勤務、それより少なければ頼まれた時だけ置く。"""
+    if not isinstance(a, dict) or a.get("kind") not in ANSWER_KINDS or not str(a.get("name", "")).strip():
+        return None
+    st = {"symbol": sym, "name": str(a["name"]).strip(), "kind": a["kind"]}
+    if a["kind"] == "work":
+        if a.get("next_is_ake"):
+            st["next_is_ake"] = True
+        if not daily:
+            st["on_request_only"] = True
+    elif a["kind"] != "ake":
+        st["on_request_only"] = True
+    return st
+
+
+def _run_ends(table: dict[str, list[str]], sym: str) -> list[str | None]:
+    """記号の連なりの最後の日の、次の日の記号（月末は None）。"""
+    out = []
+    for row in table.values():
+        for d, c in enumerate(row):
+            if c == sym and (d + 1 >= len(row) or row[d + 1] != sym):
+                out.append(row[d + 1] if d + 1 < len(row) else None)
+    return out
+
+
 def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) -> Proposal:
     days = calendar.monthrange(year, month)[1]
     if pasted.days != days:
@@ -365,12 +428,18 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     n = pasted.days
     used = {s for row in table.values() for s in row}
 
-    # 夜の翌日が明の割合（月末の夜は翌日が表の外なので数えない）
-    night_pairs = [(row[d], row[d + 1]) for row in table.values() for d in range(n - 1) if row[d] == "夜"]
-    night_ake = sum(1 for _, nx in night_pairs if nx == "明")
-    ake_follows_night = bool(night_pairs) and night_ake / len(night_pairs) >= RATE_LINE
+    def days_with(sym: str) -> int:
+        return sum(1 for d in range(n) if any(row[d] == sym for row in table.values()))
 
-    # 勤務の種類。表に出た記号と公だけ
+    # 夜の翌日が明の割合（月末の夜は翌日が表の外なので数えない）
+    def after(sym: str) -> tuple[int, int]:
+        pairs = [row[d + 1] for row in table.values() for d in range(n - 1) if row[d] == sym]
+        return len(pairs), sum(1 for nx in pairs if nx == "明")
+
+    night_n, night_ake = after("夜")
+    ake_follows_night = night_n > 0 and night_ake / night_n >= RATE_LINE
+
+    # 勤務の種類。表に出た記号と公だけ。答えのある知らない記号も入れる
     shift_types = []
     for s in _template():
         if s["symbol"] not in used and s["symbol"] != "公":
@@ -379,19 +448,26 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
         if s["symbol"] == "夜":
             s["next_is_ake"] = ake_follows_night
         shift_types.append(s)
+    unknown = [s for s in pasted.unknown_symbols if s not in same]
+    answered: dict[str, dict] = {}
+    for sym in unknown:
+        st = _answer_type(sym, answers.get(sym), days_with(sym) * 2 >= n)
+        if st:
+            answered[sym] = st
+            shift_types.append(st)
     by_sym = {s["symbol"]: ShiftType(**s) for s in shift_types}
     names = {s["symbol"]: s["name"] for s in shift_types}
-    unknown = [s for s in pasted.unknown_symbols if s not in same]
-    # 休みや有給と答えた記号は、連勤の勤務の日に数えない
-    off = {s for s in unknown if isinstance(answers.get(s), dict) and answers[s].get("kind") in ("rest", "leave")}
 
-    # 職員。夜以外のふつうの勤務は全員、夜はその月に夜をした人だけ
+    # 夜勤の記号。夜と、答えで「夜勤（次の日は明け）」にした記号
+    night_syms = [s.symbol for s in by_sym.values()
+                  if s.kind == "work" and (s.symbol == "夜" or (s.next_is_ake and s.symbol in answered))]
+
+    # 職員。夜勤以外のふつうの勤務は全員、夜勤はその月にした人だけ
     ordinary = [s.symbol for s in by_sym.values() if s.kind == "work" and not s.on_request_only]
     staff = []
     for name, row in table.items():
-        can = [s for s in ordinary if s != "夜"]
-        if "夜" in ordinary and "夜" in row:
-            can.append("夜")
+        can = [s for s in ordinary if s not in night_syms]
+        can += [s for s in night_syms if s in ordinary and s in row]
         staff.append({"name": name, "unit": pasted.unit_of.get(name, "全体"), "can": can})
 
     rules: list[dict] = []
@@ -437,15 +513,18 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
         add(f"公休の数（{nm}さん）", "count", "fixed", {"shifts": ["公"], "min": v, "max": v},
             f"{nm}さんの公休は{v}日" + note, who=[nm])
 
-    # 夜→明・明は夜の翌日だけ・明→公
-    if ake_follows_night and "明" in by_sym:
-        add("夜勤の翌日は明け", "sequence", "fixed", {"if": ["夜"], "next_in": ["明"]},
-            f"夜勤の翌日は{len(night_pairs)}回中{night_ake}回が明け")
+    # 夜勤→明・明は夜勤の翌日だけ・明→公
+    if "明" in by_sym:
+        for sym in night_syms:
+            tot, ok = after(sym)
+            if tot and ok / tot >= RATE_LINE:
+                add("夜勤の翌日は明け" if sym == "夜" else f"{names[sym]}の翌日は明け", "sequence", "fixed",
+                    {"if": [sym], "next_in": ["明"]}, f"{names[sym]}の翌日は{tot}回中{ok}回が明け")
     ake_prev = [(row[d - 1], row[d]) for row in table.values() for d in range(1, n) if row[d] == "明"]
-    if "夜" in by_sym and ake_prev:
-        ok = sum(1 for pv, _ in ake_prev if pv == "夜")
+    if night_syms and ake_prev:
+        ok = sum(1 for pv, _ in ake_prev if pv in night_syms)
         if ok / len(ake_prev) >= RATE_LINE:
-            add("明けは夜勤の翌日だけ", "sequence", "fixed", {"if": ["明"], "prev_in": ["夜"]},
+            add("明けは夜勤の翌日だけ", "sequence", "fixed", {"if": ["明"], "prev_in": list(night_syms)},
                 f"明けの前の日は{len(ake_prev)}回中{ok}回が夜勤")
     ake_next = [(row[d], row[d + 1]) for row in table.values() for d in range(n - 1) if row[d] == "明"]
     if ake_next:
@@ -454,11 +533,11 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
             add("明けの翌日は公休", "sequence", "fixed", {"if": ["明"], "next_in": ["公"]},
                 f"明けの翌日は{len(ake_next)}回中{ok}回が公休")
 
-    # 連勤の上限。数え方は ShiftType.counts_as_workday。知らない記号は勤務の日として数える（ゆるい側）
+    # 連勤の上限。数え方は ShiftType.counts_as_workday。答えの無い記号は勤務の日として数える（ゆるい側）
     def works(sym: str) -> bool:
         if sym in by_sym:
             return by_sym[sym].counts_as_workday
-        return sym not in _template_symbols() and sym not in off
+        return sym not in _template_symbols()
 
     best, who = 0, ""
     for name, row in table.items():
@@ -471,8 +550,56 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
         add("連勤の上限", "max_run", "fixed", {"shifts": "work", "max": best},
             f"{month}月でいちばん長い連勤は{best}日（{who}）")
 
+    problems = _problems(table, by_sym, rules, staff, month)
+    suggestions = {}
+    for sym in unknown:
+        tot, ok = after(sym)
+        if tot >= 3 and ok / tot >= RATE_LINE:
+            suggestions[sym] = "same:夜" if "夜" in used else "night"
+
     return Proposal(year=year, month=month, table=table, shift_types=shift_types, units=units,
-                    staff=staff, rules=rules, unknown_symbols=unknown, same_as=same)
+                    staff=staff, rules=rules, unknown_symbols=unknown, same_as=same,
+                    problems=problems, suggestions=suggestions)
+
+
+def _problems(table: dict[str, list[str]], by_sym: dict[str, ShiftType], rules: list[dict],
+              staff: list[dict], month: int) -> list[str]:
+    """黙って違う表になる物を止める。貼った月に毎日いた勤務が来月の表に入らない・夜勤が2種類ある、など。"""
+    n = len(next(iter(table.values())))
+    placed = {s for r in rules if r["kind"] == "coverage" for s in r["params"]["shifts"]}
+    placed |= {s for st in staff for s in st["can"]}
+    out: list[str] = []
+    order = list(dict.fromkeys(c for row in table.values() for c in row))
+    ake_syms = {s.symbol for s in by_sym.values() if s.kind == "ake"} | {"明"}
+
+    def followed_by_ake(sym: str) -> tuple[int, int]:
+        ends = [nx for nx in _run_ends(table, sym) if nx is not None]
+        return len(ends), sum(1 for nx in ends if nx in ake_syms)
+
+    candidates = []
+    for sym in order:
+        st = by_sym.get(sym)
+        if st is not None and st.kind in ("rest", "leave"):
+            # 休みと答えたのに、いつも翌日が明け＝夜勤のはず
+            tot, ok = followed_by_ake(sym) if sym not in _template_symbols() else (0, 0)
+            if tot >= 3 and ok / tot >= RATE_LINE:
+                out.append(f"『{sym}』は休みと答えましたが、いつも翌日が明けです。夜勤ではありませんか。選び直してください")
+            continue
+        if st is not None and st.kind == "ake":
+            continue
+        day_cnt = [sum(1 for row in table.values() if row[d] == sym) for d in range(n)]
+        present = sum(1 for c in day_cnt if c)
+        if present * 2 >= n and sym not in placed:
+            typical = Counter(c for c in day_cnt if c).most_common(1)[0][0]
+            when = "ほぼ毎日" if present / n >= RATE_LINE else "半分以上の日に"
+            out.append(f"『{sym}』は{month}月に{when}{typical}人いましたが、来月の表には入りません。"
+                       "何の勤務か選び直してください")
+        tot, ok = followed_by_ake(sym)
+        if tot >= 3 and ok / tot >= RATE_LINE:
+            candidates.append(sym)
+    if len(candidates) >= 2:
+        out.append("夜勤が2種類ある表（準夜・深夜など）は、まだ読めません。1種類の夜勤にまとめてから貼ってください")
+    return out
 
 
 # ---------------------------------------------------------------- 作る
@@ -509,12 +636,15 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
     if (root / "facility.json").exists():
         raise OnboardError("その場所にはもう施設のデータがあります")
 
-    # 知らない記号の答え。足りなければ作らない
-    missing = [s for s in proposal.unknown_symbols if s not in answers]
+    # 知らない記号の答え。足りなければ作らない（infer が答えから勤務の種類を作った記号は、そのまま使う）
+    shift_types = [dict(s) for s in proposal.shift_types]
+    have = {s["symbol"] for s in shift_types}
+    missing = [s for s in proposal.unknown_symbols if s not in have and s not in answers]
     if missing:
         raise OnboardError("次の記号が何か教えてください。" + "・".join(missing))
-    shift_types = [dict(s) for s in proposal.shift_types]
     for sym in proposal.unknown_symbols:
+        if sym in have:
+            continue
         a = answers[sym]
         if not isinstance(a, dict) or a.get("kind") not in ANSWER_KINDS or not str(a.get("name", "")).strip():
             raise OnboardError(f"記号「{sym}」の答えは、名前と種類（{'・'.join(ANSWER_KINDS)}）が要ります")
@@ -522,6 +652,8 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
         if a["kind"] != "ake":
             st["on_request_only"] = True   # 頼まれた時だけ置く。作る時に勝手に使わない
         shift_types.append(st)
+    if proposal.problems:
+        raise OnboardError("。".join(proposal.problems))
 
     notes: list[str] = []
     t0 = time.perf_counter()
@@ -556,11 +688,26 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
         store.save_month(nxt)
         placed = {c for row in nxt.table.values() for c in row}
         pasted_syms = {c for row in proposal.table.values() for c in row}
+        n_days = len(next(iter(proposal.table.values()))) if proposal.table else 0
+        missing_daily = []
         for st in shift_types:
-            if st["kind"] in ("work", "ake") and st["symbol"] in pasted_syms and st["symbol"] not in placed:
-                notes.append(f"{st['name']}（{st['symbol']}）が{next_month}月の表に1回も入っていません。"
-                             "何の勤務かの答えを確かめてください")
-    else:
+            if (st["kind"] in ("work", "ake") and not st.get("on_request_only")
+                    and st["symbol"] in pasted_syms and st["symbol"] not in placed):
+                days_seen = sum(1 for d in range(n_days)
+                                if any(row[d] == st["symbol"] for row in proposal.table.values()))
+                if n_days and days_seen * 2 >= n_days:
+                    missing_daily.append(f"{st['name']}（{st['symbol']}）")
+                else:
+                    notes.append(f"{st['name']}（{st['symbol']}）が{next_month}月の表に1回も入っていません。"
+                                 "何の勤務かの答えを確かめてください")
+        if missing_daily:
+            # 出口の確かめ。貼った月に毎日のようにいた勤務が翌月に1回も無い表は、どの答え方から来たかに関わらず
+            # 「できた」と言わない（入口の確かめをすり抜けた黙って違う表を、ここで必ず止める）
+            made = False
+            r.note = None
+            r.message = ("・".join(missing_daily) + f"は{proposal.month}月にほぼ毎日いましたが、"
+                         f"{next_month}月の表に1回も入りませんでした。記号の答え（何の勤務か）を確かめてください")
+    if not made:
         notes.append("翌月の表はまだ作れていません")
     note = r.note if made else r.message
     return Created(root=root, facility_id=fac["id"], staff_count=len(proposal.staff),

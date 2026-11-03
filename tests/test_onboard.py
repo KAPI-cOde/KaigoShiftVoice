@@ -292,13 +292,20 @@ def test_同じにする先は雛形の勤務だけ():
         infer(parse_paste(paste(5)), 2026, 11, {"ア": {"same_as": "ぬ"}})
 
 
-def test_夜勤の記号を新しい勤務と答えると翌月に入らないと知らせる(tmp_path):
-    pasted = parse_paste(paste(3))
-    answers = {"A": {"same_as": "早"}, "B": {"same_as": "日"}, "C": {"same_as": "遅"},
-               "N": {"name": "夜勤B", "kind": "work"}}
-    pr = infer(pasted, 2026, 11, answers)
-    c, dec = made_next(tmp_path, pr, answers)
-    assert any("夜勤B（N）が12月の表に1回も入っていません。何の勤務かの答えを確かめてください" == x for x in c.notes)
+def test_新しい勤務と答えた記号は毎日いればふだんの勤務_少なければ頼まれた時だけ(tmp_path):
+    head = "氏名\t" + "\t".join(str(d) for d in range(1, 29))
+    t = head + "\n赤坂\t" + "\t".join(["早", "公", "半", "日"] * 7) + "\n井上\t" + "\t".join(["公", "遅", "半", "夜"] * 7)
+    t += "\n内田\t" + "\t".join(["日", "半", "公", "早"] * 7)
+    many = infer(parse_paste(t), 2027, 2, {"半": {"name": "半日勤", "kind": "work"}})
+    st = {s["symbol"]: s for s in many.shift_types}
+    assert "on_request_only" not in st["半"]
+    assert all("半" in s["can"] for s in many.staff) and many.problems == []
+    rare = "氏名\t" + "\t".join(str(d) for d in range(1, 29)) + "\n赤坂\t" + "\t".join(["早"] * 24 + ["半"] * 4)
+    rare += "\n井上\t" + "\t".join(["日"] * 28)
+    pr = infer(parse_paste(rare), 2027, 2, {"半": {"name": "半休", "kind": "work"}})
+    assert {s["symbol"]: s for s in pr.shift_types}["半"]["on_request_only"] is True and pr.problems == []
+    c = create_facility(pr, tmp_path / "r", name="試験", next_year=2027, next_month=3, answers={"半": {"name": "半休", "kind": "work"}})
+    assert not any("半休" in x for x in c.notes)   # 頼まれた時だけの勤務は、入っていなくても知らせない
 
 
 def test_貼り付け6_明けは明(tmp_path):
@@ -382,3 +389,140 @@ def test_言葉の一覧に無い集計の行も飛ばす():
              "夜勤者数\t" + "\t".join(["1"] * 30) + "\t5"]
     p = parse_paste("\n".join(lines[:10] + extra))
     assert list(p.table) == NAMES8 and p.skipped >= 3
+
+
+# ---------------------------------------------------------------- 現場の書き方 追加の13通り（11〜23）
+
+BASE = lambda: parse_paste(paste(18)).table      # 見出しが「11月1日」の表（中身は11〜23で共通）
+G4 = {"宿": {"name": "宿直", "kind": "work", "next_is_ake": True}}
+
+
+def test_未見の貼り付け_同じ表が読める():
+    base = BASE()
+    for n in (11, 16, 17, 18, 21, 22, 23):
+        p = parse_paste(paste(n))
+        assert list(p.table) == NAMES8 and p.days == 30 and p.unknown_symbols == [], n
+        assert p.table == base, n
+    assert parse_paste(paste(23)).skipped == 8        # 下の行の「備考」は名前にしない
+    assert parse_paste(paste(21)).table["赤坂"] == base["赤坂"]   # 引用符の中の改行（赤坂 / リーダー）
+
+
+def test_未見の貼り付け_印つきの記号は同じにする答えで同じ表になる():
+    p = parse_paste(paste(12))
+    assert p.unknown_symbols == ["早7", "夜*", "日△"]
+    pr = infer(p, 2026, 11, {"早7": {"same_as": "早"}, "夜*": {"same_as": "夜"}, "日△": {"same_as": "日"}})
+    assert pr.table == BASE() and pr.problems == []
+
+
+def test_未見の貼り付け_半日休みや研修は頼まれた時だけで知らせも出ない(tmp_path):
+    p = parse_paste(paste(13))
+    ans = {"AM休": {"name": "午前休", "kind": "leave"}, "午後休": {"name": "午後休", "kind": "leave"},
+           "半": {"name": "半休", "kind": "leave"}, "年": {"name": "年休", "kind": "leave"},
+           "出張": {"name": "出張", "kind": "work"}, "会議": {"name": "会議", "kind": "work"}}
+    pr = infer(p, 2026, 11, ans)
+    assert pr.problems == []
+    st = {s["symbol"]: s for s in pr.shift_types}
+    assert st["出張"]["on_request_only"] is True and st["会議"]["on_request_only"] is True
+    c, dec = made_next(tmp_path, pr, ans)
+    assert c.next_table_made and not any("出張" in x or "会議" in x or "研修" in x for x in c.notes)
+
+
+def test_宿直_答えが無いと問題が出て作れない(tmp_path):
+    p = parse_paste(paste(14))
+    pr = infer(p, 2027, 2)
+    assert len(pr.problems) == 1 and "『宿』は2月に" in pr.problems[0] and "選び直してください" in pr.problems[0]
+    assert pr.suggestions == {"宿": "night"}      # 翌日がいつも明け。表に夜が無いので「夜勤（次の日は明け）」
+    root = tmp_path / "g"
+    with pytest.raises(OnboardError):
+        create_facility(pr, root, name="試験", next_year=2027, next_month=3, answers={"宿": {"name": "宿", "kind": "work"}})
+    assert not root.exists()
+
+
+def test_宿直_間違った答えは問題が出て作れない(tmp_path):
+    wrong = {"宿": {"name": "休み", "kind": "rest"}}
+    pr = infer(parse_paste(paste(14)), 2027, 2, wrong)
+    assert pr.problems and "宿" in pr.problems[0] and "夜勤ではありませんか" in pr.problems[0]
+    with pytest.raises(OnboardError, match="夜勤ではありませんか"):
+        create_facility(pr, tmp_path / "w", name="試験", next_year=2027, next_month=3, answers=wrong)
+    assert not (tmp_path / "w").exists()
+
+
+def test_宿直_夜勤と答えると夜勤のルールと翌月の夜勤が入る(tmp_path):
+    pr = infer(parse_paste(paste(14)), 2027, 2, G4)
+    assert pr.problems == []
+    by = rule_map(pr)
+    assert by["宿直の翌日は明け"]["params"] == {"if": ["宿"], "next_in": ["明"]}
+    assert by["明けは夜勤の翌日だけ"]["params"]["prev_in"] == ["宿"]
+    assert all(("宿" in s["can"]) == ("宿" in pr.table[s["name"]]) for s in pr.staff)   # 夜勤はその月にした人だけ
+    c = create_facility(pr, tmp_path / "g", name="試験", next_year=2027, next_month=3, answers=G4)
+    nxt = Store(tmp_path / "g").month(2027, 3)
+    cells = {x for r in nxt.table.values() for x in r}
+    assert c.next_table_made and {"宿", "明"} <= cells and c.notes == []
+
+
+def test_宿直_夜勤と同じにしても夜勤のルールと翌月の夜勤が入る(tmp_path):
+    ans = {"宿": {"same_as": "夜"}}
+    pr = infer(parse_paste(paste(14)), 2027, 2, ans)
+    assert pr.problems == [] and "夜勤の翌日は明け" in rule_map(pr)
+    c = create_facility(pr, tmp_path / "g", name="試験", next_year=2027, next_month=3, answers=ans)
+    nxt = Store(tmp_path / "g").month(2027, 3)
+    assert c.next_table_made and {"夜", "明"} <= {x for r in nxt.table.values() for x in r}
+
+
+def test_おすすめは夜があれば夜勤と同じ_無ければ夜勤_ほかの記号は出さない():
+    t = paste(11).split("\n")
+    t[2] = t[2].replace("夜", "宿")          # 赤坂の夜だけ宿にする。表には夜も残る
+    pr = infer(parse_paste("\n".join(t)), 2026, 11)
+    assert pr.suggestions == {"宿": "same:夜"}
+    assert infer(parse_paste(paste(13)), 2026, 11).suggestions == {}
+
+
+def test_夜勤が2種類ある表は読めないと言って作らない(tmp_path):
+    p = parse_paste(paste(20))
+    assert p.unknown_symbols == ["準", "深"]
+    ans = {"準": {"name": "準夜", "kind": "work"}, "深": {"name": "深夜", "kind": "work"}}
+    pr = infer(p, 2026, 11, ans)
+    assert any("夜勤が2種類ある表（準夜・深夜など）は、まだ読めません" in x for x in pr.problems)
+    with pytest.raises(OnboardError, match="まだ読めません"):
+        create_facility(pr, tmp_path / "t", name="試験", next_year=2026, next_month=12, answers=ans)
+    assert not (tmp_path / "t").exists()
+    # ふつうの夜勤の表や、片方を夜に寄せた表は止めない
+    assert infer(parse_paste(paste(18)), 2026, 11).problems == []
+    assert infer(p, 2026, 11, {"準": {"same_as": "夜"}, "深": {"same_as": "夜"}}).problems == []
+
+
+def test_職種の見出し行はユニットにしない_ユニットの列は読む():
+    p = parse_paste(paste(15))
+    assert p.days == 31 and p.unit_list == ["全体"] and len(p.table) == 8
+    assert set(p.unit_of.values()) == {"全体"}
+    p9 = parse_paste(paste(19))
+    assert p9.unit_list == ["さくら", "つばき"] and p9.unit_of["青木"] == "さくら" and p9.unit_of["落合"] == "つばき"
+    assert [s["unit"] for s in infer(p9, 2026, 11).staff][:5] == ["さくら"] * 4 + ["つばき"]
+
+
+def test_日付の見出しはExcelの通し番号でも読める():
+    p = parse_paste(paste(17))
+    assert p.days == 30 and p.had_header and parse_paste(paste(22)).days == 30
+
+
+def test_引用符つきのCSVと中のカンマ():
+    p = parse_paste(paste(16))
+    assert list(p.table) == NAMES8 and p.table == BASE()
+
+
+def test_全部の貼り付けが問題なく通る_3交代と答えの無い記号だけが止まる():
+    assert [x for n in (11, 16, 17, 18, 19, 21, 22, 23) for x in infer(parse_paste(paste(n)), 2026, 11).problems] == []
+    assert infer(parse_paste(paste(15)), 2026, 12).problems == []
+
+
+def test_出口の確かめ_毎日いた勤務が翌月に無ければできたと言わない(tmp_path):
+    """入口の確かめ（problems）をすり抜けた答え方でも、黙って違う表を「できた」と言わない。
+    3交代の表で準夜と深夜を両方「夜勤と同じ」と答えると、夜夜明の並びが作れず翌月に明けが1回も入らない。"""
+    pasted = parse_paste((Path(__file__).parent / "fixtures" / "pastes" / "20.tsv").read_text(encoding="utf-8"))
+    answers = {s: {"same_as": "夜"} for s in pasted.unknown_symbols}
+    pr = infer(pasted, 2026, 11, answers)
+    assert pr.problems == []          # 入口ではすり抜ける
+    c = create_facility(pr, tmp_path / "f", name="三交代の家（作り話）", next_year=2026, next_month=12,
+                        answers=answers)
+    assert not c.next_table_made
+    assert "1回も入りませんでした" in c.stage_note
