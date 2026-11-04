@@ -1,0 +1,20 @@
+name: tests
+
+# 試験を回す。本物の Claude で録った返事（tests/fixtures/）で回るので、Claude の鍵は使わない。
+# 声の試験は、声のモデルと録音が無いので飛ばされる。
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install uv
+      - name: uv run pytest -q
+        run: uv run pytest -q
