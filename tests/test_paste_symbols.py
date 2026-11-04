@@ -129,3 +129,37 @@ def test_対応の無い記号はそのままで先頭の式の守りは戻し�
           "table": {"あ": ["公", "有", "早"]}, "layers": {}}
     rows = [r.split("\t") for r in table_tsv(st, {"公": "-休", "早": "=A"}).splitlines()]
     assert rows[2] == ["あ", "'-休", "有", "'=A"]       # 2字以上の式に見える物は、戻した後でも守る
+
+
+def test_サーバーは戻した記号を応答の頭で知らせる(tmp_path, built_dir):
+    """画面のコピーの知らせ（「記号は、貼った表の書き方に戻しています」）が読む頭。ひだまりには付かない。"""
+    import json
+    import threading
+    import urllib.parse
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from shiftvoice.server import make_handler
+
+    def head(store, y, m):
+        s = Session(store, y, m, RecordedReader.from_file(REPLIES), now=lambda: FIXED_NOW)
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(s, threading.Lock(), True, None))
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{httpd.server_address[1]}/api/table.tsv") as r:
+                return r.headers.get("X-Restored-Symbols"), r.read().decode("utf-8")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    _, store = made(tmp_path, 3, A3)
+    h, body = head(store, 2026, 12)
+    back = json.loads(urllib.parse.unquote(h))
+    assert back == store.facility().settings["paste_symbols"]
+    assert back.get("早") == "A" and back.get("公") == "休"
+    assert "\tA\t" in body or body.count("A") > 0
+
+    root = tmp_path / "hidamari"
+    shutil.copytree(built_dir, root)
+    h2, _ = head(Store(root), 2026, 11)
+    assert h2 is None

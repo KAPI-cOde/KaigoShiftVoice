@@ -1867,12 +1867,30 @@ function showCopyNote(text, tsv) {
     ta.focus(); ta.select();
   }
 }
+// コピーの知らせに足す文。施設の書き方に戻した記号（取り込んだ施設だけ）と、最後に入る係の行（係がある月だけ）
+function copyExtra(restored) {
+  var out = "";
+  if (restored) {
+    try {
+      var m = JSON.parse(decodeURIComponent(restored));
+      var pairs = Object.keys(m).map(function (k) { return k + "→" + (m[k] === "" ? "空欄" : m[k]); });
+      if (pairs.length) out += "。記号は、貼った表の書き方に戻しています（" + pairs.join("、") + "）";
+    } catch (e) { /* 読めない時は書かない */ }
+  }
+  var names = Object.keys((S && S.layers) || {}).map(function (k) { return (S.layers[k] && S.layers[k].name) || "待機当番"; });
+  if (names.length) out += "。" + names.join("・") + "の行も最後に入ります";
+  return out;
+}
 document.getElementById("copytsv").addEventListener("click", function () {
-  fetch("/api/table.tsv").then(function (r) { return r.text(); }).then(function (tsv) {
-    var fallback = function () { showCopyNote("自動でコピーできませんでした。下の文字を選んでコピーし、Excel の表の左上のマスに貼ってください", tsv); };
+  fetch("/api/table.tsv").then(function (r) {
+    var h = r.headers.get("X-Restored-Symbols");
+    return r.text().then(function (t) { return [t, h]; });
+  }).then(function (got) {
+    var tsv = got[0], extra = copyExtra(got[1]);
+    var fallback = function () { showCopyNote("自動でコピーできませんでした。下の文字を選んでコピーし、Excel の表の左上のマスに貼ってください" + extra, tsv); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(tsv).then(function () {
-        showCopyNote("コピーしました。Excel の表の左上のマスに貼ってください。貼るのは記号の文字だけで、色は入りません。待機当番の行も最後に入ります", null);
+        showCopyNote("コピーしました。Excel の表の左上のマスに貼ってください。貼るのは記号の文字だけで、色は入りません" + extra, null);
       }, fallback);
     } else fallback();
   }, function () { showCopyNote("表を取れませんでした。もう一度押してください", null); });
