@@ -181,6 +181,25 @@
   #diffs .sr .note { font-size: 12px; color: #555; }
   #diffs .hint2 { margin-top: 4px; font-size: 13px; }
   #banner { display: none; border: 1px solid #000; border-radius: 3px; padding: 8px 12px; margin: 0 0 10px; font-weight: 700; }
+  .legendrow { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .legendrow .legend { flex: 1; min-width: 0; }
+  .exportlinks { display: flex; gap: 12px; flex-shrink: 0; }
+  .exportlinks button.linkish { font-size: 11px; color: #444; }
+  .exportnote { font-size: 12px; margin-top: 4px; }
+  .exportnote textarea { display: block; width: 100%; height: 120px; margin-top: 4px; font: inherit; font-size: 11px; white-space: pre; border: 1px solid #000; border-radius: 3px; }
+  @media print {
+    @page { size: A4 landscape; margin: 10mm; }
+    html, body { font-size: 11px; }
+    #keybar, #topbar, #banner, #diffs, .right, #accrows, #why, .said, .reply, #form, #hint, .exportlinks, .exportnote, footer, #vsetup, #vclean, #vres { display: none !important; }
+    main { display: block; max-width: none; padding: 0; }
+    h2 { font-size: 16px; }
+    table.grid { font-size: 10px; }
+    .grid .name { width: 110px; }
+    .grid th, .grid td { height: 20px; }
+    .grid td.glow, .grid td.diff { background: none !important; font-weight: 400; }
+    .grid td.off, .grid th.off { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .grid tr { break-inside: avoid; }
+  }
   footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
 </style>
 </head>
@@ -193,7 +212,8 @@
     <div id="diffs"></div>
     <h2 id="tabletitle">表</h2>
     <div id="tablewrap"></div>
-    <div class="legend" id="legend"></div>
+    <div class="legendrow"><div class="legend" id="legend"></div><div class="exportlinks" id="exportlinks"><button type="button" class="linkish" id="copytsv">表をコピー（Excel に貼る）</button><button type="button" class="linkish" id="printtable">印刷</button></div></div>
+    <div id="copynote" class="exportnote"></div>
     <div class="accrows" id="accrows"></div>
     <div id="why"></div>
     <div class="said" id="said"></div>
@@ -1775,6 +1795,30 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
     renderReply({ kind: "error", uid: f.id, message: "読み取れませんでした" });
   }
 });
+
+// 表の持ち出し（2026-11-04）。コピーは /api/table.tsv を取ってクリップボードへ。使えない時は選べる文字の欄を出す
+function showCopyNote(text, tsv) {
+  var box = document.getElementById("copynote");
+  box.textContent = "";
+  box.appendChild(document.createTextNode(text));
+  if (tsv !== null) {
+    var ta = document.createElement("textarea");
+    ta.value = tsv; ta.readOnly = true;
+    box.appendChild(ta);
+    ta.focus(); ta.select();
+  }
+}
+document.getElementById("copytsv").addEventListener("click", function () {
+  fetch("/api/table.tsv").then(function (r) { return r.text(); }).then(function (tsv) {
+    var fallback = function () { showCopyNote("自動でコピーできませんでした。下の文字を選んでコピーし、Excel の表の左上のマスに貼ってください", tsv); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(tsv).then(function () {
+        showCopyNote("コピーしました。Excel の表の左上のマスに貼ってください", null);
+      }, fallback);
+    } else fallback();
+  }, function () { showCopyNote("表を取れませんでした。もう一度押してください", null); });
+});
+document.getElementById("printtable").addEventListener("click", function () { window.print(); });
 </script>
 </body>
 </html>

@@ -2,6 +2,7 @@
 
 API（すべて JSON）
 - GET  /api/state                     表・札・職員・未反映の発言
+- GET  /api/table.tsv                 開いている月の表をタブ区切りで（Excel に貼り戻す・印刷の元）
 - POST /api/say     {"text"}          一言
 - POST /api/answer  {"uid", "text"}   「毎月ですか、今月だけですか」への返事（"rule"/"once" か話し言葉）
 - POST /api/retry   {"uid"}           送り直す
@@ -159,6 +160,35 @@ def load_dotenv(path: Path) -> None:
             continue
         k, v = line.split("=", 1)
         os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+WEEKDAY_JA = {"sun": "日", "mon": "月", "tue": "火", "wed": "水", "thu": "木", "fri": "金", "sat": "土"}
+
+
+def table_tsv(st: dict) -> str:
+    """開いている月の表をタブ区切りにする（Excel の左上のマスに貼れる形）。
+    1行目は日付、2行目は曜日、3行目から「名前＋各日の記号」。ユニットが2つ以上ならユニットの列を名前の前に置く。
+    待機当番などの欄の行は最後に、その日の担当の名前（さんは外す）を入れる。"""
+    def cell(v) -> str:
+        return str(v if v is not None else "").replace("\t", " ").replace("\r", " ").replace("\n", " ")
+
+    staff, days = st["staff"], st["days"]
+    multi = len({s["unit"] for s in staff}) > 1
+    pad = [""] * (2 if multi else 1)
+    rows = [pad + [str(d) for d in range(1, days + 1)],
+            pad + [WEEKDAY_JA.get(w, "") for w in st["weekdays"]]]
+    for s in staff:
+        line = [s["unit"]] if multi else []
+        line.append(s["name"])
+        row = st["table"].get(s["name"]) or []
+        line += [row[d] if d < len(row) else "" for d in range(days)]
+        rows.append(line)
+    for layer in (st.get("layers") or {}).values():
+        line = ([""] if multi else []) + [layer.get("name") or "待機当番"]
+        for d in range(1, days + 1):
+            line.append("・".join(n.removesuffix("さん") for n in (layer.get("assign") or {}).get(str(d), [])))
+        rows.append(line)
+    return "\n".join("\t".join(cell(c) for c in r) for r in rows) + "\n"
 
 
 class Box:
@@ -330,6 +360,15 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                 st["has_key"] = has_key
                 st["has_voice"] = box.voice is not None
                 self._json(200, st)
+            elif self.path == "/api/table.tsv":
+                with lock:
+                    body = table_tsv(box.session.state()).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/tab-separated-values; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif self.path == "/api/setup/sample":
                 self._json(200, sample_info())
             elif self.path == "/api/facilities":
