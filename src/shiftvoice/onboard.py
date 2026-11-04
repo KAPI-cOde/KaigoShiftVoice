@@ -94,6 +94,7 @@ class Pasted:
     unit_of: dict[str, str] = field(default_factory=dict)   # 名前 → ユニット
     unit_list: list[str] = field(default_factory=list)      # ユニットの順
     blank_by: dict[str, int] = field(default_factory=dict)  # 名前 → 空欄を公にした数
+    spelled: dict[str, dict[str, int]] = field(default_factory=dict)   # 読み替えた後の記号 → {貼った書き方（空欄は ""）: 回数}
 
 
 @dataclass
@@ -114,6 +115,7 @@ class Proposal:
     long_rest: dict[str, int] = field(default_factory=dict)  # 公休が最頻値の1.5倍以上の人 → 公休の日数
     rest_mode: int = 0                                      # 公休のいちばん多い日数
     rest_notes: list[str] = field(default_factory=list)     # 途中入職・長い休みの人の知らせ（一文ずつ）
+    paste_symbols: dict[str, str] = field(default_factory=dict)   # アプリの記号 → 貼った表での書き方（同じ物は入れない。空欄は ""）
 
 
 @dataclass
@@ -337,6 +339,7 @@ def parse_paste(text: str) -> Pasted:
     col_unit: str | None = None   # 左のユニット列の値（空のセルは上と同じ）
     blank = 0
     blank_by: dict[str, int] = {}
+    spelled: dict[str, Counter] = {}
     unknown: list[str] = []
     for it in items:
         if it[0] == "unit":
@@ -359,8 +362,10 @@ def parse_paste(text: str) -> Pasted:
                 blank += 1
                 blank_by[name] = blank_by.get(name, 0) + 1
                 row.append("公")
+                spelled.setdefault("公", Counter())[""] += 1
                 continue
             sym = ALIASES.get(c, c)
+            spelled.setdefault(sym, Counter())[c] += 1
             if sym != c:
                 aliases.setdefault(c, sym)
             if sym not in _template_symbols() and sym not in unknown:
@@ -375,7 +380,8 @@ def parse_paste(text: str) -> Pasted:
             unit_list.append(u)
     return Pasted(table=table, days=n, skipped=skipped, blank_as_rest=blank,
                   unknown_symbols=unknown, had_header=header is not None,
-                  aliases=aliases, unit_of=unit_of, unit_list=unit_list, blank_by=blank_by)
+                  aliases=aliases, unit_of=unit_of, unit_list=unit_list, blank_by=blank_by,
+                  spelled={k: dict(v) for k, v in spelled.items()})
 
 
 # ---------------------------------------------------------------- 雛形
@@ -423,6 +429,20 @@ def _run_ends(table: dict[str, list[str]], sym: str) -> list[str | None]:
         for d, c in enumerate(row):
             if c == sym and (d + 1 >= len(row) or row[d + 1] != sym):
                 out.append(row[d + 1] if d + 1 < len(row) else None)
+    return out
+
+
+def _paste_symbols(pasted: Pasted, same: dict[str, str]) -> dict[str, str]:
+    """アプリの記号 → 貼った表での書き方。1つの記号に書き方が2つ以上あれば、いちばん多かった書き方
+    （同数なら、記号そのままの書き方を先に、次に先に出た書き方）。アプリの記号と同じ書き方は入れない。"""
+    merged: dict[str, Counter] = {}
+    for sym, cnt in pasted.spelled.items():
+        merged.setdefault(same.get(sym, sym), Counter()).update(cnt)
+    out: dict[str, str] = {}
+    for sym, cnt in merged.items():
+        best = max(cnt, key=lambda w: (cnt[w], w == sym))
+        if best != sym:
+            out[sym] = best
     return out
 
 
@@ -628,7 +648,8 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     return Proposal(year=year, month=month, table=table, shift_types=shift_types, units=units,
                     staff=staff, rules=rules, unknown_symbols=unknown, same_as=same,
                     problems=problems, suggestions=suggestions, raw=pasted.table, staff_evidence=staff_evidence,
-                    long_rest=long_rest, rest_mode=mode, rest_notes=rest_notes)
+                    long_rest=long_rest, rest_mode=mode, rest_notes=rest_notes,
+                    paste_symbols=_paste_symbols(pasted, same))
 
 
 def _answer_problems(pasted: Pasted, same: dict[str, str], answers: dict, month: int) -> list[str]:
@@ -810,6 +831,8 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
     notes: list[str] = []
     t0 = time.perf_counter()
     settings = _settings(proposal.year, proposal.month, next_year, next_month, notes)
+    if proposal.paste_symbols:
+        settings["paste_symbols"] = dict(proposal.paste_symbols)   # 持ち出す時に、施設の書き方へ戻す
     fac = {"id": _short_id(name), "name": name.strip(), "units": list(proposal.units),
            "shift_types": shift_types, "settings": settings}
     atomic_write_json(root / "facility.json", fac)

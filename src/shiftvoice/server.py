@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -167,10 +168,13 @@ def load_dotenv(path: Path) -> None:
 WEEKDAY_JA = {"sun": "日", "mon": "月", "tue": "火", "wed": "水", "thu": "木", "fri": "金", "sat": "土"}
 
 
-def table_tsv(st: dict) -> str:
+def table_tsv(st: dict, paste_symbols: dict | None = None) -> str:
     """開いている月の表をタブ区切りにする（Excel の左上のマスに貼れる形）。
     1行目は日付、2行目は曜日、3行目から「名前＋各日の記号」。ユニットが2つ以上ならユニットの列を名前の前に置く。
-    待機当番などの欄の行は最後に、その日の担当の名前（さんは外す）を入れる。"""
+    待機当番などの欄の行は最後に、その日の担当の名前（さんは外す）を入れる。
+    paste_symbols（施設の設定。アプリの記号 → 取り込んだ表での書き方）があれば、勤務の記号をその書き方に戻す。
+    無い記号はアプリの記号のまま。"""
+    back = paste_symbols or {}
     def cell(v) -> str:
         t = str(v if v is not None else "").replace("\t", " ").replace("\r", " ").replace("\n", " ")
         # Excel に貼った時に式として動かないよう、＝・＋・－・＠で始まる2字以上の文字は先頭に ' を付ける
@@ -188,7 +192,7 @@ def table_tsv(st: dict) -> str:
         line = [s["unit"]] if multi else []
         line.append(s["name"])
         row = st["table"].get(s["name"]) or []
-        line += [row[d] if d < len(row) else "" for d in range(days)]
+        line += [back.get(row[d], row[d]) if d < len(row) else "" for d in range(days)]
         rows.append(line)
     for layer in (st.get("layers") or {}).values():
         line = ([""] if multi else []) + [layer.get("name") or "待機当番"]
@@ -370,10 +374,13 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                 self._json(200, st)
             elif self.path == "/api/table.tsv":
                 with lock:
-                    body = table_tsv(box.session.state()).encode("utf-8")
+                    back = box.session.store.facility().settings.get("paste_symbols") or {}
+                    body = table_tsv(box.session.state(), back).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/tab-separated-values; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
+                if back:   # 施設の書き方に戻した記号（アプリの記号 → 戻した書き方）。日本語を含むので URL エンコードの JSON
+                    self.send_header("X-Restored-Symbols", urllib.parse.quote(json.dumps(back, ensure_ascii=False)))
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
