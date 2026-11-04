@@ -11,10 +11,10 @@
 | 40秒〜55秒 試験までの夜勤 | 一言を言う。ルールに理由と「29日まで」が残る | `tests/test_utterance.py::test_l1_l7_kojima_until_29` | 一言で直す1幕の8件は、どれも0.4秒以内 |
 | 55秒〜1分10秒 待機当番を言葉で足す | 一言を言い、Claude が組み立てた当番のルールを読み返す | `tests/test_act2.py::test_d1_standby_by_words` | 本物の Claude Sonnet 5.5 で待機当番を組み立てる、10回すべて同じ定義、1回2.2秒前後 |
 | 1分10秒〜1分25秒 採用と試算 | ［採用］で待機の欄ができ、土日に担当者が入る。待機当番のルールに試算の2行が出る | `tests/test_standby.py::test_d2_assign_weekends`、`tests/test_absence_sim.py::test_absence_sim_reproduces`、`tests/test_absence_sim.py::test_absence_sim_in_state` | 待機が無い時、土日の急な休み76件のうち46件で休みの人に電話が要り、小島さん9回・田村さん6回（電話を受けた14人の平均は約3回） |
-| 1分25秒〜1分50秒 休みの電話 | 配った後に休みの電話の一言を言う。待機の小島さんに頼む案（2マス）だけが光り、［了承をもらって直す］ | `tests/test_act2.py::test_d3_d5_accept`、`tests/test_standby.py::test_d3_only_duty_moves` | 本物の Claude Haiku 5.5 で撮影と試験の一言36件を読む、3周108回すべて用意と同じ |
+| 1分25秒〜1分50秒 休みの電話 | 配った後に休みの電話の一言を言う。待機の小島さんに頼む案（4マス。11月1日の2マスと、小島さんの休みを移す10日・青木さんが代わりに入る6日）が光り、「小島さん 公休9日のまま（休みは10日へ移す）」と1行。［了承をもらって直す］ | `tests/test_act2.py::test_d3_d5_accept`、`tests/test_standby.py::test_d3_only_duty_moves` | 本物の Claude Haiku 5.5 で撮影と試験の一言36件を読む、3周108回すべて用意と同じ |
 | 1分50秒〜2分02秒 12月のルールの見直し | 期限が来た試験のルールを［履歴へ片付ける］、ほかの2件は［今月も使う］ | `tests/test_act3.py::test_act3_flow`、`tests/test_review.py::test_m10_expired_never_applies` | （数字の行は使わない） |
 | 2分02秒〜2分30秒 山場（小島さんの12月） | ［12月の表を作る］。小島さんの主表示の1行を見せる | `tests/test_act3.py::test_act3_flow`、`tests/test_act3.py::test_hard_rules_zero_nov_dec` | 引き受けた3人とも有給 0→1日、いちばん長い連勤 5→4日（1人は4→3日） |
-| 2分30秒〜2分45秒 返す案の表 | 返さない案から変わったマスだけが光る。［12月はこれで作る］ | `tests/test_giveback.py::test_b1_both_plans_same_conditions`、`tests/test_act3.py::test_act3_flow` | 返さない案から変わるのは5マス。ほかの人の5日続く勤務の窓 16→16・飛び石 0→0、9秒 |
+| 2分30秒〜2分45秒 返す案の表 | 返さない案から変わったマスだけが光る。［12月はこれで作る］ | `tests/test_giveback.py::test_b1_both_plans_same_conditions`、`tests/test_act3.py::test_act3_flow` | 返さない案から変わるのは18マス（公休移動の後に測り直した。前は5マス）。ほかの人の5日続く勤務の窓 18→17・飛び石 0→0、9秒 |
 | 2分45秒〜3分00秒 締め | 引き受けの記録に戻る（操作なし） | `uv run pytest -q` の全件 | 台本の3幕を本物の Claude で通す、8回とも13件が通る |
 
 ## 気をつけること
