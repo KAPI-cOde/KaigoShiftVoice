@@ -708,17 +708,25 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     # 夜勤以外は、その人が貼った月に入った勤務だけ（1つも入っていない人は全部）
     staff = []
     narrowed = []
+    narrowed_info: dict[str, tuple[list[str], list[str]]] = {}   # 名前 → (入った勤務, 入っていない勤務)
     for name, row in table.items():
         plain = [s for s in ordinary if s not in night_syms]
         mine = [s for s in plain if s in row] or plain
         if len(mine) < len(plain):
             narrowed.append(name)
+            narrowed_info[name] = (mine, [s for s in plain if s not in mine])
         can = mine + [s for s in night_syms if s in ordinary and s in row]
         staff.append({"name": name, "unit": pasted.unit_of.get(name, "全体"), "can": can})
     staff_evidence = ""
     if narrowed:
-        staff_evidence = (f"{narrowed[0]}さん{'たち' if len(narrowed) > 1 else ''}は、{month}月に入った勤務だけにしました。"
-                          "変える時は一言で")
+        # 誰の・どの勤務の話かを名前と勤務で言う（「〇〇さんは、11月に入った勤務だけにしました」だけでは
+        # 何のことか分からない、と受け止めのリーダー役。2026-11-04）
+        n0 = narrowed[0]
+        mine0, miss0 = narrowed_info[n0]
+        nm = lambda s: getattr(by_sym.get(s), "name", s)   # noqa: E731
+        more = f"ほか{len(narrowed) - 1}人も、{month}月に入った勤務の種類だけにしています。" if len(narrowed) > 1 else ""
+        staff_evidence = (f"{n0}さんは{month}月に{'・'.join(nm(s) for s in mine0)}だけだったので、来月もその勤務だけで組みます。"
+                          + more + f"ほかの勤務も入れる時は「{n0}さんは{nm(miss0[0])}も」のように一言で")
 
     rules: list[dict] = []
 
@@ -1243,6 +1251,7 @@ def compare_months(cur: dict[str, list[str]], nxt: dict[str, list[str]], shift_t
                 say = (f"土日の{names[sym]}は{int(ce + 0.5)}人" if ne > ce else
                        f"平日の{names[sym]}は{int(cw + 0.5)}人" if nw > cw else "")
                 out.append({"kind": "weekday_shape", "say": say,
+                            "why": f"平日と土日の{names[sym]}の分け方は、ルールにしていないので、{month}月と変わることがあります",
                             "text": f"{names[sym]}　{month}月は平日{cw:.1f}人・土日{ce:.1f}人 → "
                                     f"{next_month}月は平日{nw:.1f}人・土日{ne:.1f}人"})
 

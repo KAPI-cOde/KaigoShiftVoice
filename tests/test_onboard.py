@@ -100,7 +100,8 @@ def test_infer_勤務の種類と職員(proposal):
     assert len(proposal.staff) == 8
     can = {s["name"]: s["can"] for s in proposal.staff}
     assert can["赤坂"] == ["早", "日", "遅", "夜"] and can["太田"] == ["早", "日", "夜"]
-    assert "太田さん" in proposal.staff_evidence and "11月に入った勤務だけにしました。変える時は一言で" in proposal.staff_evidence
+    assert proposal.staff_evidence.startswith("太田さんは11月に") and "来月もその勤務だけで組みます" in proposal.staff_evidence
+    assert "「太田さんは遅番も」のように一言で" in proposal.staff_evidence
 
 
 def test_infer_ルールの候補(proposal):

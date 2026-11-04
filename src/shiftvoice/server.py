@@ -108,7 +108,7 @@ def _reading(pasted: Pasted, prop: Proposal) -> list[str]:
     out += [f"{raw}→{names.get(sym, sym)}" for raw, sym in prop.same_as.items()]
     if pasted.blank_as_rest:
         who = [f"{nm}さん{pasted.blank_by[nm]}マス" for nm in prop.long_rest if pasted.blank_by.get(nm)]
-        out.append(f"空欄{pasted.blank_as_rest}マス→公休" + (f"（多いのは{'・'.join(who)}）" if who else ""))
+        out.append(f"空欄（{pasted.blank_as_rest}マス）→公休" + (f"（多いのは{'・'.join(who)}）" if who else ""))
     return out
 
 

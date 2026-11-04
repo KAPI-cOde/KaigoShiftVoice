@@ -1570,7 +1570,9 @@ function showDiffs(diffs, fromMonth, sr) {
     if (diffs.length > 5) box.appendChild(el("div", "df", "ほか" + (diffs.length - 5) + "件"));
     // 例は、出した違いを戻す一言（平日と土日の形なら「土日の日勤は1人」など）。無ければ今までの例
     var ex = (diffs.filter(function (d) { return d.say; })[0] || {}).say || "井上さんは日勤だけ";
-    box.appendChild(el("div", "hint2", "ルールにしていない形は、" + fromMonth + "月と変わることがあります。違う所は、下の欄に一言で直せます（例「" + ex + "」）"));
+    // 理由は、出した違いの種類ごとの一文（平日と土日の分け方など）。無ければ今までの一文
+    var why = (diffs.filter(function (d) { return d.why; })[0] || {}).why || ("ルールにしていない形は、" + fromMonth + "月と変わることがあります");
+    box.appendChild(el("div", "hint2", why + "。違う所は、下の欄に一言で直せます（例「" + ex + "」）"));
   }
   box.style.display = "block";
 }
@@ -1703,7 +1705,7 @@ function renderSetup2(box) {
     ? "が見つかりました。知らない記号が" + pv.unknown_symbols.length + "つあります"
     : "・勤務" + nWork + "種類が見つかりました")));
   box.appendChild(el("div", "ln", pv.staff.join("・")));
-  box.appendChild(el("label", "", "見つけたルール（外すと、作る時に入れません）"));
+  box.appendChild(el("label", "", "見つけたルール（貼った月の並びから見つけた物です。外すと、作る時に入れません。あとで一言で足せます）"));
   pv.rules.forEach(function (r) {
     var row = el("label", "su-rule");
     var cb = el("input"); cb.type = "checkbox"; cb.checked = !SU.drop[r.name]; cb.dataset.rule = r.id;
@@ -1744,14 +1746,17 @@ function renderSetup2(box) {
     });
   }
   if (pv.symbol_lines && pv.symbol_lines.length) {
-    box.appendChild(el("label", "", "シフト記号表から読み取った記号（違うときは下で選び直せます）"));
+    box.appendChild(el("label", "", "シフト記号表から読み取った記号（違うときは上の欄で選び直せます）"));
     pv.symbol_lines.forEach(function (t) { var sl = el("div", "ln su-symline", t); box.appendChild(sl); });
   }
   var timedTypes = pv.shift_types.filter(function (s) { return s.timed; });
   if (timedTypes.length) {
     SU.times = SU.times || {};
     box.appendChild(el("label", "", "勤務の時刻（遅番の次の日の早番のような、次の勤務までの間が短い並びを避けるために使います）"));
-    box.appendChild(el("div", "small", "見本の時刻が入っています。施設の時刻に直してください。分からなければ、そのままで大丈夫です。夜勤と明けは、夜勤の後の休みのルールで扱うので聞きません"));
+    box.appendChild(el("div", "small", ((pv.symbol_lines || []).length
+      ? "シフト記号表の時刻を入れました。違えば直してください。"
+      : "見本の時刻が入っています。施設の時刻に直してください。分からなければ、そのままで大丈夫です。")
+      + "夜勤と明けは、夜勤の後の休みのルールで扱うので聞きません"));
     timedTypes.forEach(function (s) {
       var t = SU.times[s.symbol] || (SU.times[s.symbol] = { start: String(s.start || ""), hours: String(s.hours || "") });
       var row = el("div", "su-time");
@@ -1770,13 +1775,13 @@ function renderSetup2(box) {
   var probs = pv.problems || [];
   probs.forEach(function (t) { var pr = el("div", "rv-err su-problem", t); pr.style.margin = "6px 0"; box.appendChild(pr); });
   if (pv.reading && pv.reading.length) {
-    box.appendChild(el("label", "", "勤務の記号の読み方"));
+    box.appendChild(el("label", "", "貼った表の記号を、こう読みました"));
     box.appendChild(el("div", "ln", pv.reading.join("、")));
   }
   (pv.rest_notes || []).slice(0, 3).forEach(function (t) { var rn = el("div", "rv-err", t); rn.style.marginTop = "10px"; box.appendChild(rn); });
   if ((pv.rest_notes || []).length > 3) { var rm = el("div", "small", "ほか" + (pv.rest_notes.length - 3) + "人"); rm.style.marginTop = "4px"; box.appendChild(rm); }
   if (pv.staff_evidence) { var se = el("div", "small", pv.staff_evidence); se.style.marginTop = "10px"; box.appendChild(se); }
-  if (pv.skipped) { var sm = el("div", "small", "集計の行 " + pv.skipped + " 行は飛ばしました"); sm.style.marginTop = "10px"; box.appendChild(sm); }
+  if (pv.skipped) { var sm = el("div", "small", "合計などの集計の行を" + pv.skipped + "行、人ではないので読まずに飛ばしました"); sm.style.marginTop = "10px"; box.appendChild(sm); }
   var err = el("div", "rv-err", SU.err); err.id = "su-err"; err.style.marginTop = "8px";
   box.appendChild(err);
   var btns = el("div", "btns");

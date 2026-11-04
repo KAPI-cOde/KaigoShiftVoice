@@ -29,6 +29,7 @@ def test_違う所の例は違いを戻す一言(tmp_path):
     shape = [d for d in c.diffs if d["kind"] == "weekday_shape"]
     assert shape, c.diffs
     assert shape[0]["say"] == "土日の日勤は1人"   # 貼った11月は土日の日勤が毎回1人。12月は2.0人に増えた
+    assert shape[0]["why"] == "平日と土日の日勤の分け方は、ルールにしていないので、11月と変わることがあります"
     html = (ROOT / "src" / "shiftvoice" / "static" / "index.html").read_text(encoding="utf-8")
     assert "ルールにしていない形は、" in html and "d.say" in html
 
