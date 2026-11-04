@@ -196,7 +196,7 @@ class NextFlow:
         out.update({
             "main": f"{who['name']}さん　{self.month}月に{who['accepted']}回引き受け → {self.nm}月は" + "・".join(parts),
             "who": who["name"],
-            "sub": "ほかの人の有給と連勤は増やさない。人数とルールはそのまま",
+            "sub": "ほかの人の有給と、連勤の合計は増やさない。人数とルールはそのまま",
             "line2": f"引き受けた{len(gb.people)}人に、" + {("leave", "run"): "有給を1日と短い連勤", ("leave",): "有給を1日",
                                                           ("run",): "短い連勤"}[tuple(gb.stage)]
                      + f"。返さない案から変わるのは{changed}マス",
