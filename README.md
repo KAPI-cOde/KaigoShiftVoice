@@ -91,6 +91,7 @@
 | 名前を外へ出さない | Claude へ送る前に名簿の名前を「職員01」に伏せ、返事で戻す（Claude の機能ではなくアプリの側の守り） | 職員の実名を送らずに読み取りを使うため | `src/shiftvoice/names.py`、`tests/test_utterance.py::test_r9_no_names_sent` |
 | 開発の設計と検収 | Claude Code（メインの Claude が設計・検収、Sonnet・Haiku のサブエージェントに画面と CI の点検を任せる） | 判断を1か所に集め、量の多い作業だけを任せるため | `docs/development.md`、`.github/workflows/p1.yml`、`tools/check_public.py` |
 | 差分の見落としを減らす | Claude Code のサブエージェントに、役を分けて差分を読ませる（壊す側・使う人・個人情報） | 書いた側と同じ目で確かめると、同じ見落としが残るため | `docs/goal-progress.md`、`docs/development.md`（敵対レビューの使い方） |
+| 使う人の目で確かめる | Claude Code のサブエージェントに、使う人の役（介護主任・ユニットのリーダー・介護を知らない審査員）で画面の写真を読ませ、まっさらな取得から README どおりに動かさせる | 作った本人は狙いを知っているので、迷う所に気づけないため | `docs/development.md`（はじめて見る人の目と、審査員の目で回したこと） |
 
 開発は Claude Code を中心に進めました。メインの Claude が設計と検収を受け持ち、画面は Sonnet のサブエージェントが作って見えないブラウザで撮って確かめ、CI の点検は Haiku のサブエージェントが作りました。区切りごとに別の系統のモデルに敵対レビューをさせ、指摘には起きやすさと影響の点を付けて、線を超えた物だけを直しています。コミットの前には手元のフックが実在の名前と鍵の形を止めます。詳しくは [docs/development.md](docs/development.md)（役割の分け方・敵対レビューで直した物・試行錯誤で変えたこと）にまとめました。
 
@@ -238,6 +239,8 @@ SHIFTVOICE_LIVE=1 uv run pytest -q tests/test_t1_act1.py tests/test_act2.py test
 ## 作り方について
 
 アイデアと仕様は期間の前に考え、このリポジトリのコードはハッカソンの期間中（2026-11-02 から）にすべて新しく書きました。
+
+Claude Code の使い方（役割の分け方、敵対レビュー、はじめて見る人の役に画面を読ませて直したこと、詰まった所と直し方）は [docs/development.md](docs/development.md) にあります。
 
 ## 使っている外の部品
 
