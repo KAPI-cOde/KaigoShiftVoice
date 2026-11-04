@@ -26,8 +26,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .nextmonth import next_ym
-from .onboard import (OnboardError, ParseError, Proposal, Pasted, _short_id, _template, create_facility, infer, timed_kind,
-                      parse_paste)
+from .onboard import (OnboardError, ParseError, Proposal, Pasted, SymbolPlan, _short_id, _template, create_facility, infer,
+                      parse_paste, plan_symbols, timed_kind)
 from .reader import HaikuReader, ReadError, SonnetBuilder
 from .session import Session
 
@@ -73,6 +73,12 @@ def sample_info() -> dict:
     return {"text": SAMPLE_PASTE.read_text(encoding="utf-8"), "name": SAMPLE_NAME, "year": 2026, "month": 11}
 
 
+def _symbol_plan(data: dict, pasted: Pasted) -> SymbolPlan | None:
+    """シフト記号表（任意の2つ目の欄）の文字があれば、記号と時刻を読んで仮の答えを作る。"""
+    text = str(data.get("symbols") or "").strip()
+    return plan_symbols(pasted, text) if text else None
+
+
 def _parse_setup(data: dict) -> tuple[Pasted, Proposal, int, int]:
     try:
         year, month = int(data.get("year")), int(data.get("month"))
@@ -82,7 +88,17 @@ def _parse_setup(data: dict) -> tuple[Pasted, Proposal, int, int]:
         raise ParseError("貼る表の年と月を確かめてください")
     pasted = parse_paste(str(data.get("text") or ""))
     answers = data.get("answers")
-    return pasted, infer(pasted, year, month, answers if isinstance(answers, dict) else None), year, month
+    prop = infer(pasted, year, month, answers if isinstance(answers, dict) else None)
+    plan = _symbol_plan(data, pasted)
+    if plan:
+        # 記号表から読んだおすすめ（画面が先に入れる）と、勤務の時刻の初めの値。ほかの見つけ方のおすすめより先にする
+        prop.suggestions.update(plan.suggestions)
+        prop.symbol_plan = plan
+        for st in prop.shift_types:
+            t = plan.times.get(st["symbol"])
+            if t and timed_kind(st):
+                st["start"], st["hours"] = t["start"], t["hours"]
+    return pasted, prop, year, month
 
 
 def _reading(pasted: Pasted, prop: Proposal) -> list[str]:
@@ -112,6 +128,8 @@ def preview_out(pasted: Pasted, prop: Proposal) -> dict:
         "blank_as_rest": pasted.blank_as_rest, "skipped": pasted.skipped,
         "problems": list(prop.problems), "suggestions": dict(prop.suggestions),
         "staff_evidence": prop.staff_evidence, "rest_notes": list(prop.rest_notes),
+        "symbol_lines": list(prop.symbol_plan.lines) if prop.symbol_plan else [],
+        "symbol_guessed": sorted(prop.symbol_plan.suggestions) if prop.symbol_plan else [],
     }
 
 

@@ -1602,7 +1602,7 @@ var SU = null;
 var SAMPLE_INFO = null;
 function suBox() { return document.getElementById("susbody"); }
 function openSetup() {
-  SU = SU || { step: 1, name: "", year: 2026, month: 11, text: "", pv: null, drop: {}, answers: {}, err: "" };
+  SU = SU || { step: 1, name: "", year: 2026, month: 11, text: "", symbols: "", pv: null, drop: {}, answers: {}, err: "" };
   SU.step = SU.pv && SU.step === 2 ? 2 : 1;
   document.getElementById("v11").style.display = "none";
   document.getElementById("topbar").style.display = "none";
@@ -1647,6 +1647,10 @@ function renderSetup1(box) {
   var ta = el("textarea"); ta.id = "su-text"; ta.value = SU.text; ta.placeholder = "ここに貼り付けます";
   ta.addEventListener("input", function () { SU.text = ta.value; });
   box.appendChild(suField("貼る欄", ta));
+  var ts = el("textarea"); ts.id = "su-symbols"; ts.value = SU.symbols || ""; ts.style.height = "90px";
+  ts.placeholder = "厚生労働省の勤務形態一覧表なら、様式の別のシート（シフト記号表）をここに貼ります";
+  ts.addEventListener("input", function () { SU.symbols = ts.value; });
+  box.appendChild(suField("シフト記号表（様式の別のシート）を貼ると、記号と時刻を読み取ります（なくても大丈夫です）", ts));
   var sm = el("button", "link", "見本（架空の施設）を貼ってみる"); sm.type = "button"; sm.id = "su-sample";
   sm.addEventListener("click", function () {
     fetch("/api/setup/sample").then(function (r) { return r.json(); }).then(function (x) {
@@ -1661,7 +1665,7 @@ function renderSetup1(box) {
   var go = el("button", "primary big", "読み取る"); go.type = "button"; go.id = "su-read";
   go.addEventListener("click", function () {
     go.disabled = true; err.textContent = "";
-    post("setup/preview", { text: SU.text, year: SU.year, month: SU.month }).then(function (res) {
+    post("setup/preview", { text: SU.text, symbols: SU.symbols || "", year: SU.year, month: SU.month }).then(function (res) {
       if (res.error) { SU.err = res.error; renderSetup(); return; }
       SU.pv = res; SU.drop = {}; SU.answers = {}; SU.times = {}; SU.err = ""; SU.step = 2;
       var sg = res.suggestions || {};
@@ -1687,7 +1691,7 @@ function buildAnswers() {
   return out;
 }
 function refreshPreview() {
-  post("setup/preview", { text: SU.text, year: SU.year, month: SU.month, answers: buildAnswers() }).then(function (res) {
+  post("setup/preview", { text: SU.text, symbols: SU.symbols || "", year: SU.year, month: SU.month, answers: buildAnswers() }).then(function (res) {
     if (res.error) { SU.err = res.error; renderSetup(); return; }
     SU.pv = res; SU.err = ""; renderSetup();
   }).catch(function () { SU.err = "読み取れませんでした。もう一度試してください"; renderSetup(); });
@@ -1725,7 +1729,9 @@ function renderSetup2(box) {
       sel.value = a.choice;
       sel.addEventListener("change", function () { a.choice = sel.value; refreshPreview(); });
       row.appendChild(sel);
-      if (pv.suggestions && pv.suggestions[sym] && a.choice === pv.suggestions[sym]) {
+      if ((pv.symbol_guessed || []).indexOf(sym) >= 0 && pv.suggestions && a.choice === pv.suggestions[sym]) {
+        row.appendChild(el("span", "small", "（記号表の時刻から読み取りました。違えば選び直せます）"));
+      } else if (pv.suggestions && pv.suggestions[sym] && a.choice === pv.suggestions[sym]) {
         row.appendChild(el("span", "small", pv.suggestions[sym] === "same:明"
           ? "（いつも夜勤の翌日に出ているので、明けと思われます）" : "（翌日が明けなので、夜勤と思われます）"));
       }
@@ -1736,6 +1742,10 @@ function renderSetup2(box) {
       }
       box.appendChild(row);
     });
+  }
+  if (pv.symbol_lines && pv.symbol_lines.length) {
+    box.appendChild(el("label", "", "シフト記号表から読み取った記号（違うときは下で選び直せます）"));
+    pv.symbol_lines.forEach(function (t) { var sl = el("div", "ln su-symline", t); box.appendChild(sl); });
   }
   var timedTypes = pv.shift_types.filter(function (s) { return s.timed; });
   if (timedTypes.length) {
@@ -1801,7 +1811,7 @@ function startCreate() {
   var dropIds = pv.rules.filter(function (r) { return SU.drop[r.name]; }).map(function (r) { return r.id; });
   SU.step = 3; renderSetup();
   var stop = function () { if (waitTimer) { clearInterval(waitTimer); waitTimer = null; } };
-  post("setup/create", { text: SU.text, year: SU.year, month: SU.month, name: SU.name, answers: answers,
+  post("setup/create", { text: SU.text, symbols: SU.symbols || "", year: SU.year, month: SU.month, name: SU.name, answers: answers,
                          times: timesOut(), drop_rules: dropIds }).then(function (res) {
     stop();
     if (res.error) { SU.err = res.error; SU.step = 2; renderSetup(); return; }

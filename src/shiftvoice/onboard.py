@@ -41,6 +41,8 @@ ROLE_WORDS = {"介護", "看護", "看護師", "介護福祉士", "パート", "
               "契約職員", "リーダー"}
 # 名前の欄に書かれていても人ではない行（1人2行の表の下の行）
 NOTE_WORDS = {"備考", "時間", "メモ", "勤務時間"}
+# 標準様式（勤務形態一覧表）の「行の種類」の列の言葉。1人が2〜3行ある表で、シフト記号の行と時間数の行を見分ける
+ROWKIND_SYMBOL = "シフト記号"
 # ユニットの値が入る左の列の見出し
 UNIT_HEADS = {"ユニット", "棟", "フロア", "ユニット名", "所属", "部署", "階", "グループ", "チーム"}
 # 集計の行とみなす名前の言葉
@@ -95,6 +97,7 @@ class Pasted:
     unit_list: list[str] = field(default_factory=list)      # ユニットの順
     blank_by: dict[str, int] = field(default_factory=dict)  # 名前 → 空欄を公にした数
     spelled: dict[str, dict[str, int]] = field(default_factory=dict)   # 読み替えた後の記号 → {貼った書き方（空欄は ""）: 回数}
+    merged: list[str] = field(default_factory=list)         # 2行（兼務）あって1人にまとめた名前
 
 
 @dataclass
@@ -117,6 +120,7 @@ class Proposal:
     rest_notes: list[str] = field(default_factory=list)     # 途中入職・長い休みの人の知らせ（一文ずつ）
     paste_symbols: dict[str, str] = field(default_factory=dict)   # アプリの記号 → 貼った表での書き方（同じ物は入れない。空欄は ""）
     paste_merged: dict[str, dict] = field(default_factory=dict)   # 書き方が2つ以上あった記号 → {"to": 持ち出す書き方, "from": [ほかの書き方]}
+    symbol_plan: "SymbolPlan | None" = None                  # シフト記号表から読んだ仮の答え（画面に1行ずつ出す）
 
 
 @dataclass
@@ -221,27 +225,52 @@ def _unit_name(label: str) -> str:
     return u or label
 
 
+def _head_text(raw: str) -> str:
+    """見出しのセル。(10) 氏　名 のような番号と空白を外して「氏名」にする（改行も外す）。"""
+    t = re.sub(r"\s+", "", _nfkc(raw))
+    return re.sub(r"^[(（]\d+[)）]", "", t)
+
+
+def _row_kind(v: str) -> str | None:
+    """行の種類の列の値。シフト記号の行は "sym"、時間数の行（勤務時間数・日中の勤務時間数 など）は "hours"。"""
+    t = re.sub(r"\s+", "", _nfkc(v))
+    if t == ROWKIND_SYMBOL:
+        return "sym"
+    if t and ("時間数" in t or t == "勤務時間"):
+        return "hours"
+    return None
+
+
+def _merge_rows(a: list[str], b: list[str]) -> list[str]:
+    """兼務で2行に分かれた同じ人の日ごとの記号を1行にする。同じ記号か片方が空ならその記号、違えば1行目。"""
+    return [x if x or not y else y for x, y in zip(a, b)]
+
+
 def parse_paste(text: str) -> Pasted:
     text = _nfkc(text)
     delim = "\t" if "\t" in text else ","
 
     rows: list[tuple[int, list[str]]] = []   # (行番号, セル)。引用符の中の改行は行の区切りにしない
+    raws: list[list[str]] = []               # 同じ行の、改行も残した元のセル（見出しを読む時に使う）
     reader = csv.reader(io.StringIO(text), delimiter=delim)
     prev_end = 0
-    for cells in reader:
+    for raw in reader:
         first, prev_end = prev_end + 1, reader.line_num
-        cells = [_cell_text(c) for c in cells]
+        cells = [_cell_text(c) for c in raw]
         if not any(cells):
             continue
         rows.append((first, cells))
+        raws.append(raw)
 
     # 見出しの行を探す。見出しより前の行（表題など）は読まない
     header = None
     start = 0
+    head_rows: list[list[str]] = []   # 日の番号の行と、その上の3行までの見出し（元のセル。近い順）
     for idx, (_, cells) in enumerate(rows):
         found = _find_header(cells)
         if found:
             header, start = (found, cells), idx + 1
+            head_rows = [raws[i] for i in range(idx, max(-1, idx - 4), -1)]
             break
         if _is_wrapped_header(cells):
             raise ParseError("締め日が月末でない表（16日から翌月15日など）は、まだ読めません。"
@@ -262,27 +291,44 @@ def parse_paste(text: str) -> Pasted:
     # items は ("unit", 名前) か ("staff", 行番号, 名前, 日のセル, 左のユニット列の値)
     items: list[tuple] = []
     skipped = 0
+    has_kind = False   # 標準様式（1人が2〜3行で、行の種類の列がある表）か
     n_header: int | None = None
     if header and header[0][0][0] > 0:
         (cols, blanks), hcells = header
         n_header = len(cols)
         left = range(cols[0])
-        uc = next((j for j in left if re.sub(r"\s", "", hcells[j]) in UNIT_HEADS), None)   # ユニットの列
-        nc = next((j for j in left if re.sub(r"\s", "", hcells[j]) in NAME_HEADS), None)
+        def find_head(words: set[str]) -> int | None:
+            # 日の番号の行を先に、なければその上の3行まで（標準様式は「氏名」が日の番号の2行上にある）
+            for hr in head_rows:
+                for j in left:
+                    if j < len(hr) and _head_text(hr[j]) in words:
+                        return j
+            return None
+        uc = find_head(UNIT_HEADS)   # ユニットの列
+        nc = find_head(NAME_HEADS)
+        # 行の種類の列（シフト記号・勤務時間数 などが並ぶ列）。名前と取り違えない
+        kind_counts = {j: sum(1 for _, c in body if j < len(c) and _row_kind(c[j])) for j in left}
+        tc = max(kind_counts, key=lambda j: (kind_counts[j], -j), default=None)
+        has_sym = tc is not None and any(tc < len(c) and _row_kind(c[tc]) == "sym" for _, c in body)
+        if tc is not None and (kind_counts[tc] < 2 or not has_sym or tc == nc):
+            tc = None
         if nc is None:
             def score(j: int) -> int:
                 vals = [_clean_name(c[j]) for _, c in body if j < len(c) and not _is_weekday_row(c)]
                 return sum(1 for v in vals if v and not v.isdigit() and not _is_role_heading(v))
-            nc = max((j for j in left if j != uc), key=lambda j: (score(j), -j))
+            nc = max((j for j in left if j != uc and j != tc), key=lambda j: (score(j), -j))
         for lineno, cells in body:
             if _is_weekday_row(cells):
                 continue
             name = _clean_name(cells[nc]) if nc < len(cells) else ""
+            kind = _row_kind(cells[tc]) if tc is not None and tc < len(cells) else None
+            if kind == "hours" or (tc is not None and not name):
+                continue   # 時間数の行と、名前の無い行（人ではない。集計の行にも数えない）
             if is_label(name) or is_total_row(cells, nc):
                 skipped += 1
                 continue
             days = [cells[c] if c < len(cells) else "" for c in cols]
-            if not any(days):
+            if not any(days) and kind != "sym":
                 if not _is_role_heading(name):
                     items.append(("unit", name))
                 continue
@@ -295,6 +341,8 @@ def parse_paste(text: str) -> Pasted:
                                  "その列を外してコピーしてください")
             ulabel = _clean_name(cells[uc]) if uc is not None and uc < len(cells) else ""
             items.append(("staff", lineno, name, days, ulabel))
+            if kind == "sym":
+                has_kind = True
     else:
         if header:
             n_header = len(header[0][0])
@@ -330,6 +378,24 @@ def parse_paste(text: str) -> Pasted:
     if not 28 <= n <= 31:
         raise ParseError(f"日の数が{n}日分しかありません。1か月分（28〜31日）をまとめてコピーしてください"
                          if n < 28 else f"日の数が{n}日分あります。1か月分（28〜31日）だけをコピーしてください")
+
+    # 標準様式で同じ名前が2行（兼務。それぞれにシフト記号の行がある）なら、止めずに1人にまとめる
+    merged_names: list[str] = []
+    if has_kind:
+        at: dict[str, int] = {}
+        folded: list[tuple] = []
+        for it in items:
+            if it[0] == "staff" and it[2] in at:
+                prev = folded[at[it[2]]]
+                if len(prev[3]) == len(it[3]):
+                    folded[at[it[2]]] = (prev[0], prev[1], prev[2], _merge_rows(prev[3], it[3]), prev[4])
+                    if it[2] not in merged_names:
+                        merged_names.append(it[2])
+                    continue
+            if it[0] == "staff":
+                at[it[2]] = len(folded)
+            folded.append(it)
+        items = folded
 
     seen: dict[str, int] = {}
     table: dict[str, list[str]] = {}
@@ -382,7 +448,7 @@ def parse_paste(text: str) -> Pasted:
     return Pasted(table=table, days=n, skipped=skipped, blank_as_rest=blank,
                   unknown_symbols=unknown, had_header=header is not None,
                   aliases=aliases, unit_of=unit_of, unit_list=unit_list, blank_by=blank_by,
-                  spelled={k: dict(v) for k, v in spelled.items()})
+                  spelled={k: dict(v) for k, v in spelled.items()}, merged=merged_names)
 
 
 # ---------------------------------------------------------------- 雛形
@@ -397,6 +463,130 @@ def _template_symbols() -> set[str]:
 
 def _template_words() -> set[str]:
     return {s["symbol"] for s in _template()} | {s["name"] for s in _template()}
+
+
+# ---------------------------------------------------------------- シフト記号表（様式の別のシート）
+
+_CLOCK = re.compile(r"^(\d{1,2})[:：](\d{2})$|^(\d{1,2})時(?:(\d{1,2})分?)?$")
+_SYMBOL_CELL = re.compile(r"^(?!\d+$)[A-Za-z0-9ぁ-んァ-ヶ一-鿿\u2460-\u2473]{1,4}$")
+_REST_WORD = re.compile(r"^(休|公|休み|公休|休日|休暇|年休|有休|有給|希望休)$")
+GUESS_TIMED = ("早", "日", "遅")   # 記号表の時刻を勤務の時刻の初めの値にする勤務（夜勤・明けは時刻を聞かない）
+
+
+def _clock_minutes(cell: str) -> int | None:
+    """7:00・07:00・7時・7時30分 のような時刻なら0時からの分、違えば None（24:00 は 1440）。"""
+    m = _CLOCK.match(_nfkc(cell).strip())
+    if not m:
+        return None
+    h, mi = (int(m.group(1)), int(m.group(2))) if m.group(1) else (int(m.group(3)), int(m.group(4) or 0))
+    return h * 60 + mi if h <= 24 and mi <= 59 else None
+
+
+def _clock_label(minutes: int) -> str:
+    return f"{minutes // 60}:{minutes % 60:02d}"
+
+
+def parse_symbol_table(text: str) -> dict[str, dict]:
+    """シフト記号表（記号・始業・終業・休憩・勤務時間の表）を読む。記号 → {"start": 分, "end": 分}。
+    休みの行は {"rest": True}。時刻の無い行（空の行・「-」の行）は入れない。同じ記号が2回出たら先の行。
+    見出し（記号・始業時刻・終業時刻）があればその列を見る。無ければ、行の中の最初の2つの時刻を始業・終業にする。"""
+    text = _nfkc(text)
+    delim = "\t" if "\t" in text else ","
+    rows = [[_cell_text(c) for c in raw] for raw in csv.reader(io.StringIO(text), delimiter=delim)]
+    sc = ec = yc = None
+    out: dict[str, dict] = {}
+    for cells in rows:
+        if not any(cells):
+            continue
+        heads = [_head_text(c) for c in cells]
+        if sc is None:
+            s_i = next((j for j, h in enumerate(heads) if h.startswith(("始業", "開始", "始まり"))), None)
+            e_i = next((j for j, h in enumerate(heads) if h.startswith(("終業", "終了", "終わり"))), None)
+            if s_i is not None and e_i is not None:
+                sc, ec = s_i, e_i
+                yc = next((j for j, h in enumerate(heads) if h in ("記号", "シフト記号")), None)
+                continue
+        times = [(j, _clock_minutes(c)) for j, c in enumerate(cells) if c and _clock_minutes(c) is not None]
+        if sc is not None:
+            s_v = _clock_minutes(cells[sc]) if sc < len(cells) and cells[sc] else None
+            e_v = _clock_minutes(cells[ec]) if ec < len(cells) and cells[ec] else None
+            first = yc if yc is not None else 0
+        else:
+            s_v, e_v = (times[0][1], times[1][1]) if len(times) >= 2 else (None, None)
+            first = 0
+        # 記号。見出しの列から右へ、最初の記号らしいセル（結合された列の写しは同じ記号）
+        sym = next((c for c in cells[first:first + 3] if c and _SYMBOL_CELL.match(c)), None)
+        if sym is None:
+            sym = next((c for c in cells if c and _REST_WORD.match(c)), None)
+        if sym is None or sym in out:
+            continue
+        if s_v is not None and e_v is not None and s_v != e_v:
+            out[sym] = {"start": s_v, "end": e_v}
+        elif (s_v is not None and s_v == e_v) or (s_v is None and e_v is None and any(_REST_WORD.match(c) for c in cells if c)):
+            out[sym] = {"rest": True}
+    return out
+
+
+def _guess_target(info: dict) -> str | None:
+    """記号表の1行から、アプリの勤務の記号を決める。決められなければ None。"""
+    if info.get("rest"):
+        return "公"
+    s, e = info["start"], info["end"]
+    if s == 0 and e > 0:
+        return "明"
+    if e in (0, 1440) and s >= 15 * 60:
+        return "夜"
+    if e < s:
+        return "夜"
+    return "早" if s < 8 * 60 else "日" if s < 10 * 60 else "遅"
+
+
+@dataclass
+class SymbolPlan:
+    answers: dict[str, dict] = field(default_factory=dict)       # 知らない記号 → {"same_as": 先}
+    suggestions: dict[str, str] = field(default_factory=dict)    # 知らない記号 → same:先（画面のおすすめ）
+    times: dict[str, dict] = field(default_factory=dict)         # 先の記号（早・日・遅）→ {"start": "07:00", "hours": 9}
+    lines: list[str] = field(default_factory=list)               # 画面に出す1行ずつ（a＝早番（7:00〜16:00））
+    undecided: list[str] = field(default_factory=list)           # 決められなかった記号（作成者に聞く）
+
+
+def plan_symbols(pasted: Pasted, text: str) -> SymbolPlan:
+    """貼った表の知らない記号を、記号表の時刻から仮に決める（作成者は画面で直せる）。
+    - 終わりが24:00か0:00で始まりが15時以降は夜、始まりが0:00は明、日をまたぐ1記号の夜勤は夜
+    - それ以外は始まりが8時より前で早、10時より前で日、10時以降で遅
+    - 休みの行は公
+    時刻の長さは終わり − 始まり（休憩を含む）。早・日・遅の時刻は、その勤務に当てた記号のうち貼った月でいちばん多く出た記号の物。"""
+    table = parse_symbol_table(text)
+    names = {s["symbol"]: s["name"] for s in _template()}
+    uses: Counter = Counter(c for row in pasted.table.values() for c in row)
+    plan = SymbolPlan()
+    best: dict[str, tuple[int, int, str]] = {}   # 先の記号 → (出た回数, 記号表での順の逆, 記号)
+    order = {sym: i for i, sym in enumerate(table)}
+    for sym in pasted.unknown_symbols:
+        info = table.get(sym)
+        target = _guess_target(info) if info else None
+        if target is None:
+            plan.undecided.append(sym)
+            continue
+        plan.answers[sym] = {"same_as": target}
+        plan.suggestions[sym] = f"same:{target}"
+        label = "休み" if target == "公" else names.get(target, target)
+        if info.get("rest"):
+            plan.lines.append(f"{sym}＝{label}")
+        else:
+            end = "24:00" if info["end"] in (0, 1440) and info["start"] > 0 else _clock_label(info["end"])
+            plan.lines.append(f"{sym}＝{label}（{_clock_label(info['start'])}〜{end}）")
+            if target in GUESS_TIMED:
+                key = (uses[sym], -order[sym], sym)
+                if target not in best or key > best[target]:
+                    best[target] = key
+    for target, (_, _, sym) in best.items():
+        info = table[sym]
+        length = (info["end"] - info["start"]) % 1440 or 1440
+        hours = length / 60
+        plan.times[target] = {"start": f"{info['start'] // 60:02d}:{info['start'] % 60:02d}",
+                              "hours": int(hours) if hours == int(hours) else round(hours, 2)}
+    return plan
 
 
 # ---------------------------------------------------------------- 見つける
@@ -457,6 +647,8 @@ def _paste_merged(pasted: Pasted, same: dict[str, str]) -> dict[str, dict]:
 def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) -> Proposal:
     days = calendar.monthrange(year, month)[1]
     if pasted.days != days:
+        if pasted.days == 28:
+            raise ParseError("4週（28日）の表のようです。様式を暦月に切り替えてからコピーしてください")
         raise ParseError(f"{month}月は{days}日までですが、貼った表は{pasted.days}日分あります。月を確かめてください")
     answers = dict(answers or {})
     # 知らない記号の答えのうち「既存の勤務と同じ」は、先に表の中で置き換えてから見つける
@@ -593,7 +785,8 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
                 f"（変える時は、作った後に「全員、公休は月{mode + 1}日」のように一言で）")
     outliers = {nm: v for nm, v in rests.items() if v != mode}
     long_rest = {nm: v for nm, v in rests.items() if mode > 0 and v > mode and v >= mode * LONG_REST_RATIO}
-    rest_notes = [f"{nm}さん 公休{v}日（ほかの人は{mode}日）。月の途中から入った人や長く休んだ人なら、"
+    rest_notes = [f"{nm}さんは2行（兼務）あったので、1人にまとめました" for nm in pasted.merged]
+    rest_notes += [f"{nm}さん 公休{v}日（ほかの人は{mode}日）。月の途中から入った人や長く休んだ人なら、"
                   f"作った後に一言で直してください（例「{nm}さん、公休は{mode}日」）" for nm, v in long_rest.items()]
     add("公休の数", "count", "operational", {"shifts": ["公"], "min": mode, "max": mode},
         f"公休は{len(rests)}人中{hit}人が{mode}日" + note,
