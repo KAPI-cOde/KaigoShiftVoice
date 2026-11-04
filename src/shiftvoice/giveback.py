@@ -12,8 +12,9 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import replace, dataclass, field
 
+from .interval import count_short, short_pairs
 from .model import Acceptance, Facility, Month, Rule, Staff
 from .build import solve_staged
 from .solver import SolveResult, solve_month
@@ -101,6 +102,16 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
     target = {n: max(int(avg) + gs["extra_leave"], leave0[n]) for n in takers}
     run0 = {n: longest_run(base.table[n], work) for n in takers}
     pat0 = pattern_counts({n: base.table[n] for n in others}, facility)
+    # 体の目安（次の勤務までの間が短い並び）を入れた施設は、返す案を目安の罰で解き直さない。罰があると計算の量の上限で
+    # 止まり、返さない案から60〜130マス離れて短い並びが増えていた（2026-11-04 敵対レビュー、頻6×影5）。代わりに、
+    # 短い並びを返さない案より増やさない（全体と、引き受けた人ごと）を条件にする。ほかの「増やさない」と同じ考え方
+    quality = facility.settings.get("quality", {})
+    sr_on = bool(quality.get("short_rest"))
+    sr_hours = quality.get("short_rest_hours", 14)
+    sr_pairs = short_pairs(facility.shift_types, sr_hours) if sr_on else {}
+    sr0 = ({n: count_short({n: base.table[n]}, facility.shift_types, sr_hours, month.prev_tail)[0] for n in names}
+           if sr_on else {})
+    solve_fac = replace(facility, settings={**facility.settings, "quality": {**quality, "short_rest": 0}}) if sr_on else facility
 
     def stage_rules(stage):
         out = []
@@ -132,6 +143,25 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
                 tobi.append(t)
         m.add(sum(runs) <= _run_windows({n: base.table[n] for n in others}, work))
         m.add(sum(tobi) <= pat0["tobi"])
+        if sr_on:   # 短い並びを、返さない案より増やさない（全体と、引き受けた人ごと）
+            per = {}
+            for n in names:
+                ts = []
+                last = month.prev_tail.get(n, [])[-1:]
+                for (a, b), _gap in sr_pairs.items():
+                    if last == [a] and (n, 1, b) in x:
+                        ts.append(x[(n, 1, b)])
+                for d in range(1, month.days):
+                    for (a, b), _gap in sr_pairs.items():
+                        va, vb = x.get((n, d, a)), x.get((n, d + 1, b))
+                        if va is not None and vb is not None:
+                            t = m.new_bool_var("")
+                            m.add(va + vb - 1 <= t)
+                            ts.append(t)
+                per[n] = ts
+            m.add(sum(t for ts in per.values() for t in ts) <= sum(sr0.values()))
+            for n in takers:
+                m.add(sum(per[n]) <= sr0[n])
 
     gb = GiveBack("cannot", base, None, counts=dict(counts), leave_avg=avg, message="この条件では返せません",
                   base_note=note, base_seconds=secs)
@@ -142,7 +172,7 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
         add = stage_rules(stage)
         if not add:
             continue
-        give = solve_month(facility, staff, rules + add, month, hint=base.table, extra=extra)
+        give = solve_month(solve_fac, staff, rules + add, month, hint=base.table, extra=extra)
         if give.status != "ok":
             continue
         pat1 = pattern_counts({n: give.table[n] for n in others}, facility)
@@ -162,6 +192,10 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
             "returned": any(p["leave_after"] > p["leave_before"] or p["run_after"] < p["run_before"]
                             for p in gb.people),
         }
+        if sr_on:
+            sr1 = count_short(give.table, facility.shift_types, sr_hours, month.prev_tail)[0]
+            gb.others.update({"short_before": sum(sr0.values()), "short_after": sr1})
+            gb.checks["6_short_rest_not_more"] = sr1 <= sum(sr0.values())
         if all(gb.checks.values()):
             gb.status, gb.message = "ok", ""
             return gb
