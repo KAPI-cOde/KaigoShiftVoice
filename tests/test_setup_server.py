@@ -79,7 +79,7 @@ def test_作る_もう一度は開くだけ_デモへ戻る(srv):
     code, out = call(base, "/api/setup/create", paste_body(name="こもれびの家（架空）", answers={}, drop_rules=drop))
     assert code == 200 and out["ok"] and not out["existing"]
     assert isinstance(out["diffs"], list) and out["from_month"] == 11
-    assert all(set(d) == {"kind", "text"} for d in out["diffs"])
+    assert all({"kind", "text"} <= set(d) <= {"kind", "text", "say"} for d in out["diffs"])   # say＝違いを戻す一言の例
     st = out["state"]
     assert (st["year"], st["month"]) == (2026, 12) and len(st["staff"]) == 8
     assert len(st["table"]) == 8 and st["days"] == 31
