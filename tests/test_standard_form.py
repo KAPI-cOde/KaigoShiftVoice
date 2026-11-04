@@ -153,3 +153,52 @@ def test_取り込みの画面に2つ目の欄がある():
     assert "シフト記号表（様式の別のシート）を貼ると、記号と時刻を読み取ります" in h
     assert 'id = "su-symbols"' in h and "symbols: SU.symbols" in h
     assert "札" not in h[h.index("su-symbols"):h.index("su-symbols") + 900]
+
+
+# ---- 2026-11-04 深夜の敵対レビュー（Opus）の直し ----
+
+def _info(s, e):
+    h = lambda t: int(t.split(":")[0]) * 60 + int(t.split(":")[1])   # noqa: E731
+    return {"start": h(s), "end": h(e)}
+
+
+def test_短い勤務と19時より前に終わる遅い勤務は記号表から決めない():
+    from shiftvoice.onboard import _guess_target
+    assert _guess_target(_info("07:00", "16:00")) == "早"
+    assert _guess_target(_info("09:00", "18:00")) == "日"
+    assert _guess_target(_info("11:00", "20:00")) == "遅"
+    assert _guess_target(_info("10:00", "19:00")) == "遅"
+    assert _guess_target(_info("10:00", "16:00")) is None   # パート（6時間）。前は遅番になり、遅番の時刻までずれた
+    assert _guess_target(_info("07:00", "09:30")) is None
+    assert _guess_target(_info("09:00", "15:00")) is None
+    assert _guess_target(_info("10:00", "18:00")) is None   # 中番。19時より前に終わる
+
+
+def test_選び直した答えで時刻と行を作る():
+    legend = "記号\t始業時刻\t終業時刻\na\t7:00\t16:00\nb\t11:00\t20:00\nf\t10:00\t16:00\n"
+    days = ["f"] * 10 + ["b"] * 4 + ["a"] * 6 + ["公"] * 10
+    pasted = parse_paste("氏名\t" + "\t".join(str(d) for d in range(1, 31)) + "\n"
+                         + "\n".join(f"{n}\t" + "\t".join(days[i:] + days[:i]) for i, n in enumerate(["上田", "森川", "北村"])))
+    plan = plan_symbols(pasted, legend)
+    assert "f" in plan.undecided and "f" not in plan.answers
+    assert plan.times["遅"]["start"] == "11:00"                       # f が b より多く出ても、遅番の時刻は b
+    assert any(x.startswith("f＝まだ決めていません") for x in plan.lines)
+    chosen = plan_symbols(pasted, legend, {"f": {"name": "fの勤務", "kind": "work"}, "b": {"name": "bの勤務", "kind": "work"}})
+    assert "遅" not in chosen.times                                    # 遅番にした記号が無ければ、遅番の時刻は記号表から入れない
+    assert "f＝新しい勤務（10:00〜16:00）" in chosen.lines and "b＝新しい勤務（11:00〜20:00）" in chosen.lines
+
+
+def test_ふつうの表の見出しはセルの1行目でも読む():
+    # 前の版で読めた「所属（改行）(ユニット)」の見出し。改行をつないで照らすだけだと、ユニットが黙って消えた
+    text = (FX / "pastes" / "19.tsv").read_text(encoding="utf-8")
+    before = parse_paste(text)
+    lines = text.split("\n")
+    lines[0] = lines[0].replace("ユニット", '"ユニット\n(東・西)"', 1)
+    after = parse_paste("\n".join(lines))
+    assert after.unit_of == before.unit_of and len(set(after.unit_of.values())) >= 2
+
+
+def test_様式で氏名の見出しが無ければ止める():
+    text = (FX / "standard_form_gh30.tsv").read_text(encoding="utf-8").replace("(10) 氏　名", "(10) 従業者")
+    with pytest.raises(ParseError, match="氏名"):
+        parse_paste(text)

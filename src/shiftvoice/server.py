@@ -74,9 +74,11 @@ def sample_info() -> dict:
 
 
 def _symbol_plan(data: dict, pasted: Pasted) -> SymbolPlan | None:
-    """シフト記号表（任意の2つ目の欄）の文字があれば、記号と時刻を読んで仮の答えを作る。"""
+    """シフト記号表（任意の2つ目の欄）の文字があれば、記号と時刻を読んで仮の答えを作る。
+    作成者がいま選んでいる答えがあれば、その答えで時刻と行を作る（選び直した記号の時刻を残さない）。"""
     text = str(data.get("symbols") or "").strip()
-    return plan_symbols(pasted, text) if text else None
+    answers = data.get("answers")
+    return plan_symbols(pasted, text, answers if isinstance(answers, dict) else None) if text else None
 
 
 def _parse_setup(data: dict) -> tuple[Pasted, Proposal, int, int]:
@@ -130,6 +132,8 @@ def preview_out(pasted: Pasted, prop: Proposal) -> dict:
         "staff_evidence": prop.staff_evidence, "rest_notes": list(prop.rest_notes),
         "symbol_lines": list(prop.symbol_plan.lines) if prop.symbol_plan else [],
         "symbol_guessed": sorted(prop.symbol_plan.suggestions) if prop.symbol_plan else [],
+        # 記号表の時刻を入れた勤務（画面の時刻の欄の説明で名前を挙げる）
+        "symbol_times": [s["name"] for s in prop.shift_types if prop.symbol_plan and s["symbol"] in prop.symbol_plan.times],
     }
 
 

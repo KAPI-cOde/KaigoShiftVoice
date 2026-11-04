@@ -301,7 +301,8 @@ def parse_paste(text: str) -> Pasted:
             # 日の番号の行を先に、なければその上の3行まで（標準様式は「氏名」が日の番号の2行上にある）
             for hr in head_rows:
                 for j in left:
-                    if j < len(hr) and _head_text(hr[j]) in words:
+                    if j < len(hr) and (_head_text(hr[j]) in words
+                                        or re.sub(r"\s", "", _cell_text(hr[j])) in words):   # 前の版と同じ1行目でも
                         return j
             return None
         uc = find_head(UNIT_HEADS)   # ユニットの列
@@ -312,6 +313,10 @@ def parse_paste(text: str) -> Pasted:
         has_sym = tc is not None and any(tc < len(c) and _row_kind(c[tc]) == "sym" for _, c in body)
         if tc is not None and (kind_counts[tc] < 2 or not has_sym or tc == nc):
             tc = None
+        if nc is None and tc is not None:
+            # 職種・勤務形態・氏名の列が同点になり、職種の列を名前と読んで兼務のまとめと重なると、人が黙って減る（2026-11-04 レビュー）
+            raise ParseError("勤務形態一覧表の「氏名」の見出しが見つかりません。見出しの行から最後の人まで、"
+                             "全部の列を選んでコピーしてください")
         if nc is None:
             def score(j: int) -> int:
                 vals = [_clean_name(c[j]) for _, c in body if j < len(c) and not _is_weekday_row(c)]
@@ -470,7 +475,8 @@ def _template_words() -> set[str]:
 _CLOCK = re.compile(r"^(\d{1,2})[:：](\d{2})$|^(\d{1,2})時(?:(\d{1,2})分?)?$")
 _SYMBOL_CELL = re.compile(r"^(?!\d+$)[A-Za-z0-9ぁ-んァ-ヶ一-鿿\u2460-\u2473]{1,4}$")
 _REST_WORD = re.compile(r"^(休|公|休み|公休|休日|休暇|年休|有休|有給|希望休)$")
-GUESS_TIMED = ("早", "日", "遅")   # 記号表の時刻を勤務の時刻の初めの値にする勤務（夜勤・明けは時刻を聞かない）
+GUESS_TIMED = ("早", "日", "遅")
+SHORT_SHIFT_MIN = 7 * 60   # これより短い勤務は記号表から決めない（2026-11-04 レビュー。10:00〜16:00 のパートが遅番になった）   # 記号表の時刻を勤務の時刻の初めの値にする勤務（夜勤・明けは時刻を聞かない）
 
 
 def _clock_minutes(cell: str) -> int | None:
@@ -538,7 +544,13 @@ def _guess_target(info: dict) -> str | None:
         return "夜"
     if e < s:
         return "夜"
-    return "早" if s < 8 * 60 else "日" if s < 10 * 60 else "遅"
+    if e - s < SHORT_SHIFT_MIN:
+        return None   # 7時間より短い勤務（パートなど）は、始まりの時刻だけでは決めない（作成者に聞く）
+    if s < 8 * 60:
+        return "早"
+    if s < 10 * 60:
+        return "日"
+    return "遅" if e >= 19 * 60 else None   # 10時以降に始まり19時より前に終わる勤務（中番など）も聞く
 
 
 @dataclass
@@ -550,36 +562,51 @@ class SymbolPlan:
     undecided: list[str] = field(default_factory=list)           # 決められなかった記号（作成者に聞く）
 
 
-def plan_symbols(pasted: Pasted, text: str) -> SymbolPlan:
+def plan_symbols(pasted: Pasted, text: str, answers: dict | None = None) -> SymbolPlan:
     """貼った表の知らない記号を、記号表の時刻から仮に決める（作成者は画面で直せる）。
     - 終わりが24:00か0:00で始まりが15時以降は夜、始まりが0:00は明、日をまたぐ1記号の夜勤は夜
-    - それ以外は始まりが8時より前で早、10時より前で日、10時以降で遅
+    - 7時間より短い勤務は決めない（聞く）。それ以外は始まりが8時より前で早、10時より前で日、
+      10時以降で終わりが19時以降なら遅（19時より前に終わる勤務は聞く）
     - 休みの行は公
-    時刻の長さは終わり − 始まり（休憩を含む）。早・日・遅の時刻は、その勤務に当てた記号のうち貼った月でいちばん多く出た記号の物。"""
+    answers（作成者がいま選んでいる答え）があれば、その記号は答えのとおりに扱う。早・日・遅の時刻は、
+    答え（無ければ仮の決め）でその勤務になった記号のうち、貼った月でいちばん多く出た記号の物
+    （2026-11-04 レビュー。選び直しても前の記号の時刻と行が残っていた）。時刻の長さは終わり − 始まり（休憩を含む）。"""
     table = parse_symbol_table(text)
     names = {s["symbol"]: s["name"] for s in _template()}
     uses: Counter = Counter(c for row in pasted.table.values() for c in row)
+    given = answers if isinstance(answers, dict) else {}
     plan = SymbolPlan()
     best: dict[str, tuple[int, int, str]] = {}   # 先の記号 → (出た回数, 記号表での順の逆, 記号)
     order = {sym: i for i, sym in enumerate(table)}
     for sym in pasted.unknown_symbols:
         info = table.get(sym)
-        target = _guess_target(info) if info else None
-        if target is None:
+        guess = _guess_target(info) if info else None
+        if guess is not None:
+            plan.answers[sym] = {"same_as": guess}
+            plan.suggestions[sym] = f"same:{guess}"
+        elif info is not None:
             plan.undecided.append(sym)
+        elif sym not in given:
+            plan.undecided.append(sym)
+        if info is None:
             continue
-        plan.answers[sym] = {"same_as": target}
-        plan.suggestions[sym] = f"same:{target}"
+        a = given.get(sym)
+        target = (a.get("same_as") if isinstance(a, dict) else None) if a is not None else guess
+        when = "" if info.get("rest") else (
+            f"（{_clock_label(info['start'])}〜"
+            f"{'24:00' if info['end'] in (0, 1440) and info['start'] > 0 else _clock_label(info['end'])}）")
+        if target is None and a is not None:
+            plan.lines.append(f"{sym}＝新しい勤務{when}")
+            continue
+        if target is None:
+            plan.lines.append(f"{sym}＝まだ決めていません{when}。短い勤務などは上の欄で選んでください")
+            continue
         label = "休み" if target == "公" else names.get(target, target)
-        if info.get("rest"):
-            plan.lines.append(f"{sym}＝{label}")
-        else:
-            end = "24:00" if info["end"] in (0, 1440) and info["start"] > 0 else _clock_label(info["end"])
-            plan.lines.append(f"{sym}＝{label}（{_clock_label(info['start'])}〜{end}）")
-            if target in GUESS_TIMED:
-                key = (uses[sym], -order[sym], sym)
-                if target not in best or key > best[target]:
-                    best[target] = key
+        plan.lines.append(f"{sym}＝{label}{when}")
+        if target in GUESS_TIMED and not info.get("rest"):
+            key = (uses[sym], -order[sym], sym)
+            if target not in best or key > best[target]:
+                best[target] = key
     for target, (_, _, sym) in best.items():
         info = table[sym]
         length = (info["end"] - info["start"]) % 1440 or 1440

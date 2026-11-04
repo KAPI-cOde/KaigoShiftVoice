@@ -1753,18 +1753,20 @@ function renderSetup2(box) {
   if (timedTypes.length) {
     SU.times = SU.times || {};
     box.appendChild(el("label", "", "勤務の時刻（遅番の次の日の早番のような、次の勤務までの間が短い並びを避けるために使います）"));
-    box.appendChild(el("div", "small", ((pv.symbol_lines || []).length
-      ? "シフト記号表の時刻を入れました。違えば直してください。"
+    var fromTable = pv.symbol_times || [];
+    box.appendChild(el("div", "small", (fromTable.length
+      ? fromTable.join("・") + "は、シフト記号表の時刻を入れました。ほかは見本の時刻です。違えば直してください。"
       : "見本の時刻が入っています。施設の時刻に直してください。分からなければ、そのままで大丈夫です。")
       + "夜勤と明けは、夜勤の後の休みのルールで扱うので聞きません"));
     timedTypes.forEach(function (s) {
       var t = SU.times[s.symbol] || (SU.times[s.symbol] = { start: String(s.start || ""), hours: String(s.hours || "") });
+      if (!t.edited) { t.start = String(s.start || ""); t.hours = String(s.hours || ""); }   // 手で直していなければ、答えを選び直した後の時刻に入れ替える
       var row = el("div", "su-time");
       row.appendChild(el("span", "tn", s.name + "（" + s.symbol + "）"));
       var si = el("input"); si.type = "time"; si.value = t.start; si.dataset.timeStart = s.symbol;
-      si.addEventListener("input", function () { t.start = si.value; });
+      si.addEventListener("input", function () { t.start = si.value; t.edited = true; });
       var hi = el("input"); hi.type = "number"; hi.min = 1; hi.max = 24; hi.step = 0.5; hi.value = t.hours; hi.dataset.timeHours = s.symbol;
-      hi.addEventListener("input", function () { t.hours = hi.value; });
+      hi.addEventListener("input", function () { t.hours = hi.value; t.edited = true; });
       row.appendChild(el("span", "", "始まり")); row.appendChild(si);
       row.appendChild(el("span", "", "長さ")); row.appendChild(hi); row.appendChild(el("span", "", "時間"));
       if (!s.start) row.appendChild(el("span", "small", "時刻を入れると、次の勤務までの間を数えます"));

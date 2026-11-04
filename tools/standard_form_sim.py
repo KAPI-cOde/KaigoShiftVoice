@@ -31,19 +31,35 @@ def main(argv: list[str]) -> int:
         return 2
     year, mon = int(month[:4]), int(month[5:7])
     pasted = onboard.parse_paste(Path(args[0]).read_text(encoding="utf-8"))
-    plan = onboard.plan_symbols(pasted, Path(args[1]).read_text(encoding="utf-8")) if len(args) > 1 else None
-    answers = plan.answers if plan else {}
+    symtext = Path(args[1]).read_text(encoding="utf-8") if len(args) > 1 else ""
+    plan = onboard.plan_symbols(pasted, symtext) if symtext else None
+    answers = dict(plan.answers) if plan else {}
+    times = dict(plan.times) if plan else {}
+    new_shifts = []
+    if plan:
+        # 記号表から決めなかった記号（7時間より短い勤務など）は、画面で［新しい勤務］を選んだ時と同じにし、
+        # 記号表の時刻を入れる（作成者がパートの勤務を遅番と同じにすることは、まず無いため）
+        legend = onboard.parse_symbol_table(symtext)
+        for sym in plan.undecided:
+            info = legend.get(sym)
+            if info and "start" in info:
+                answers[sym] = {"name": f"{sym}の勤務", "kind": "work"}
+                length = (info["end"] - info["start"]) % 1440 or 1440
+                times[sym] = {"start": f"{info['start'] // 60:02d}:{info['start'] % 60:02d}",
+                              "hours": int(length / 60) if length % 60 == 0 else round(length / 60, 2)}
+                new_shifts.append(sym)
     prop = onboard.infer(pasted, year, mon, answers)
     ny, nm = next_ym(year, mon)
     print(f"読んだ人数 {len(prop.staff)}人（兼務で1人にまとめた人 {len(pasted.merged)}人）、日数 {pasted.days}、"
-          f"知らない記号 {len(pasted.unknown_symbols)}つ、記号表で決めた {len(answers)}つ、決められなかった "
-          f"{plan.undecided if plan else pasted.unknown_symbols}")
+          f"知らない記号 {len(pasted.unknown_symbols)}つ、記号表で決めた {len(plan.answers) if plan else 0}つ、"
+          f"新しい勤務にした {new_shifts}、決められなかった "
+          f"{[x for x in plan.undecided if x not in new_shifts] if plan else pasted.unknown_symbols}")
     if prop.problems:
         print("このままでは作れない理由", prop.problems)
     with tempfile.TemporaryDirectory() as tmp:
         t0 = time.perf_counter()
         c = onboard.create_facility(prop, Path(tmp) / "f", name="試験", next_year=ny, next_month=nm,
-                                    answers=answers, times=plan.times if plan else None)
+                                    answers=answers, times=times or None)
         sec = time.perf_counter() - t0
     sr = c.short_rest or {}
     print(f"ルール {c.rule_count}件、翌月の表 {'できた' if c.next_table_made else 'できなかった'}、計算 {sec:.1f}秒")
