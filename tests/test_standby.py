@@ -56,7 +56,9 @@ def test_d3_only_duty_moves(act1_store):
     assert {c["staff"] for c in r["changes"]} == {"青木", "小島"}
     print("2幕の直し", r["changes"], r["rest"], f"{r['seconds']:.2f}秒")
     assert r["table"]["青木"][0] == "公" and r["table"]["小島"][0] == "日"
-    assert r["rest"]["青木"] == (9, 10) and r["rest"]["小島"] == (9, 8)
+    # 小島さんの公休は減らさず、1日より後へ移す（公休移動。2026-11-04 に 青木さん 9→10・小島さん 9→8 から変えた）
+    assert r["moved_to"] > 1 and r["table"]["小島"][r["moved_to"] - 1] == "公"
+    assert r["rest"]["青木"] == (9, 9) and r["rest"]["小島"] == (9, 9)
     assert r["table"]["小島"][:29].count("夜") <= 3   # 試験までの夜勤3回は守ったまま
 
 

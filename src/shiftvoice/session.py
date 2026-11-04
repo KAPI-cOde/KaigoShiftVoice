@@ -26,7 +26,7 @@ from .model import Acceptance
 from .resolve import changed_cells, resolve
 from .rules import same_slot
 from .review import history as _history
-from .standby import ASK_WIDER, assign, duty_days, fix_absence
+from .standby import ASK_WIDER, NO_MOVE, assign, duty_days, fix_absence, use_move
 from .store import Store
 
 JST = dt.timezone(dt.timedelta(hours=9))
@@ -34,6 +34,8 @@ ASK_PERIOD = "毎月ですか、今月だけですか"
 READ_FAILED = "読み取りに失敗しました。表もルールも変えていません"
 ANSWER_FIRST = "先に上の質問に答えてください（毎月／今月だけ）"
 ANSWER_FIRST_REPLACE = "先に上の質問に答えてください（置き換える／別に足す）"
+# 休みを移す日の候補のうち、画面へ送る物（表の中身・足し引き・応援は送らない）
+MOVE_SHOWN = ("day", "kind", "line", "parts", "label", "warn", "changes", "message", "summary")
 
 # 聞き返しへの答えそのもの。句読点と空白を除いた全文が「相づち＋答えの言葉1つ＋言い終わり」の時だけ答えにする。
 # 中身の言葉が1字でも残る一言は答えにしない。前は文の中の「毎月」を拾い、「連勤は4日までにしよう。毎月」を
@@ -564,29 +566,93 @@ class Session:
         return self._make_offer(u, m, name, day, r, layer["def"]["id"])
 
     def _make_offer(self, u: dict, m, name: str, day: int, r: dict, layer_id: str, wider: bool = False) -> Reply:
-        """頼む人が決まった案（待機の人、または案Eで広げた休みの人）。［了承をもらって直す］まで表は変えない。"""
+        """頼む人が決まった案（待機の人、または案Eで広げた休みの人）。［了承をもらって直す］まで表は変えない。
+        頼まれた人の公休は減らさず、別の日へ移す（公休移動。2026-11-04）。移す日の候補（3つまで）を案に持ち、
+        1つ目（おすすめ）で出す。［休みを移す日を変える］で選んだ候補は、［了承をもらって直す］の時に受け取る。
+        今月の中に移せる日が無い時だけ、今までの形（公休が1日減る）にして、そう言う。"""
         helper = r["duty"]
+        who = f"待機ではない、その日休みの{helper}さん" if wider else f"その日の待機の{helper}さん"
+
+        def message(changes) -> str:
+            return f"{who}に頼む案です（{len(changes)}マス）"
+
+        def summary(rest, moved_to) -> str:
+            if moved_to:
+                return f"{helper}さん 公休{rest[helper][0]}日のまま（休みは{moved_to}日へ移す）"
+            return (f"公休　{name}さん {rest[name][0]}日 → {rest[name][1]}日　"
+                    f"{helper}さん {rest[helper][0]}日 → {rest[helper][1]}日")
+
+        moves = [{"day": mv["day"], "kind": mv["kind"], "makeup": mv["makeup"], "line": mv["line"],
+                  "parts": mv["parts"], "label": mv["label"], "warn": mv["warn"], "table": mv["table"],
+                  "changes": mv["changes"], "rest": mv["rest"], "rest_adjust": mv["rest_adjust"],
+                  "support": mv["support"], "message": message(mv["changes"]), "summary": summary(mv["rest"], mv["day"])}
+                 for mv in r.get("moves") or []]
+        no_move = None if moves else NO_MOVE.format(n=r["rest"][helper][1])
         offer = {"requester": name, "day": day, "duty": helper, "table": r["table"], "changes": r["changes"],
                  "rest": r["rest"], "rest_adjust": r["rest_adjust"], "support": r["support"],
+                 "moved_to": r.get("moved_to"), "moves": moves, "pick": 0, "no_move": no_move,
+                 "message": message(r["changes"]), "summary": summary(r["rest"], r.get("moved_to")),
                  "layer": layer_id, "wider": wider, "base_rev": self.store.ledger().rev,
                  "base_table": json.dumps(m.table),
                  "rules": [{"name": f"{name}さん {day}日 休み", "kind": "cell", "flex": "wish",
                             "params": {"in": ["公"]}, "who": [name], "when": [day]}], "scope": "once"}
         self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
-        n = self._accepted(helper)
-        rb, ra = r["rest"][helper]
-        who = f"待機ではない、その日休みの{helper}さん" if wider else f"その日の待機の{helper}さん"
-        return Reply(
-                     "standby_offer", u["id"], f"{who}に頼む案です（{len(r['changes'])}マス）",
-                     changes=r["changes"], seconds=r["seconds"],
-                     summary=f"公休　{name}さん {r['rest'][name][0]}日 → {r['rest'][name][1]}日　"
-                             f"{helper}さん {rb}日 → {ra}日",
-                     extra={"duty": helper, "requester": name, "day": day, "accepted": [n, n + 1]})
+        return self._offer_reply(u["id"], offer, seconds=r["seconds"])
 
-    def accept(self, uid: str) -> Reply:
+    def _offer_reply(self, uid: str, o: dict, seconds: float = 0.0) -> Reply:
+        """待機の人に頼む案の返事。案に書いた中身から作る（休みを移す日を選び直した時も同じ形で出す）。
+        extra の moves は画面に出す物だけ（表の中身は送らない）。"""
+        n = self._accepted(o["duty"])
+        return Reply("standby_offer", uid, o["message"], changes=o["changes"], seconds=seconds, summary=o["summary"],
+                     extra={"duty": o["duty"], "requester": o["requester"], "day": o["day"], "accepted": [n, n + 1],
+                            "moves": [{k: mv.get(k) for k in MOVE_SHOWN} for mv in o.get("moves") or []],
+                            "pick": o.get("pick", 0), "no_move": o.get("no_move")})
+
+    def _pick(self, o: dict, pick) -> dict | None:
+        """休みを移す日の候補を選んだ案。番号が候補に無ければ None（表は変えない）。"""
+        try:
+            i = int(pick)
+        except (TypeError, ValueError):
+            return None
+        moves = o.get("moves") or []
+        if not 0 <= i < len(moves):
+            return None
+        if i == o.get("pick", 0):
+            return o
+        mv = moves[i]
+        return {**o, **use_move(mv), "pick": i, "message": mv["message"], "summary": mv["summary"]}
+
+    def move(self, uid: str, pick) -> Reply:
+        """［休みを移す日を変える］で候補を選んだ。表はまだ変えず、案をその候補にして出し直す。
+        ［了承をもらって直す］を押すと、この候補で直る（案に書いておくので、開き直しても選んだ候補のまま）。"""
+        u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
+        if u is None or u.get("status") != "offer" or not (u.get("offer") or {}).get("duty"):
+            return Reply("error", uid, "休みを移す日を選ぶ案が見つかりません。表は変えていません")
+        o = self._pick(u["offer"], pick)
+        if o is None:
+            return Reply("error", uid, "選んだ休みの日が見つかりません。表は変えていません")
+        if o is not u["offer"]:
+            self.store.update_pending(self.year, self.month, uid, offer=o)
+        return self._offer_reply(uid, o)
+
+    def _records(self, name: str) -> list[dict]:
+        """その人の、この月の引き受けの記録（発生日の順）。数えるのは画面の「〇月の引き受け」と同じ物（基準日まで）。
+        画面の1行は「11/1 引き受け（休みは10日へ）」。休みを移した日が無い記録は「11/8 引き受け」。"""
+        base = self.base_date or self.now().date().isoformat()
+        out = []
+        for a in sorted((a for a in self.store.acceptances()
+                         if a.staff == name and a.date[:7] == self.ym and a.date <= base), key=lambda a: a.date):
+            line = f"{int(a.date[5:7])}/{int(a.date[8:10])} 引き受け"
+            if a.moved_to:
+                line += f"（休みは{int(a.moved_to[8:10])}日へ）"
+            out.append({"date": a.date, "moved_to": a.moved_to, "line": line})
+        return out
+
+    def accept(self, uid: str, pick: int | None = None) -> Reply:
         """［了承をもらって直す］（待機の人に頼む案）と［これで直す］（配った後のほかの直し）。
         待機の案の時だけ引き受けの記録が増える（17章 A23 の13）。案を作った後に表か帳面が変わっていたら、
-        古い案で上書きせずに作り直す（Astra 2026-11-02 の指摘1）。"""
+        古い案で上書きせずに作り直す（Astra 2026-11-02 の指摘1）。
+        pick は［休みを移す日を変える］で選んだ候補の番号（0 がおすすめ。待機の案だけ。省くと案に書いた候補）。"""
         u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
         if u is None or u.get("status") != "offer":
             return Reply("error", uid, "了承をもらう案が見つかりません")
@@ -611,15 +677,26 @@ class Session:
                 r = self._propose({**u, "status": "read"})
             r.message = "表が変わったので、案を作り直しました。" + r.message
             return r
+        if pick is not None and o.get("duty") and o.get("moves"):
+            # ［休みを移す日を変える］で選んだ候補にしてから当てる（案に書いてから当てるので、途中で止まっても同じ候補で立て直す）
+            o2 = self._pick(o, pick)
+            if o2 is None:
+                return Reply("error", uid, "選んだ休みの日が見つかりません。表は変えていません")
+            if o2 is not o:
+                o = o2
+                self.store.update_pending(self.year, self.month, uid, offer=o)
+                u = {**u, "offer": o}
         before_n = self._accepted(o["duty"]) if o.get("duty") else 0
         self._commit_offer(u, led, m)
         if not o.get("duty"):
             return Reply("applied", uid, "直しました", changes=o["changes"], summary=o.get("summary", ""))
         after_n = self._accepted(o["duty"])
-        return Reply("applied", uid, f"{o['duty']}さんの了承をもらって直しました", changes=o["changes"],
+        moved = f"（休みは{o['moved_to']}日へ）" if o.get("moved_to") else ""
+        return Reply("applied", uid, f"{o['duty']}さんの了承をもらって直しました{moved}", changes=o["changes"],
                      summary=f"{self.month}月の引き受け {before_n}回 → {after_n}回",
-                     extra={"duty": o["duty"], "accepted": [before_n, after_n],
-                            "note": "引き受け＝了承をもらって表を直した回数"})
+                     extra={"duty": o["duty"], "accepted": [before_n, after_n], "moved_to": o.get("moved_to"),
+                            "note": "引き受け＝了承をもらって表を直した回数",
+                            "records": [x["line"] for x in self._records(o["duty"])]})
 
     def _commit_offer(self, u: dict, led, m) -> None:
         """案を当てる。何度呼んでも同じ結果（保存の途中で止まった後の立て直しにも使う）。
@@ -648,7 +725,8 @@ class Session:
         acc_id = None
         if o.get("duty"):
             acc = Acceptance(id=f"a-{uid}", staff=o["duty"], date=f"{self.ym}-{o['day']:02d}", layer=o["layer"],
-                             op_id=uid, tx_rev=led.rev, note=f"{o['requester']}さんの休みの穴埋め")
+                             op_id=uid, tx_rev=led.rev, note=f"{o['requester']}さんの休みの穴埋め",
+                             moved_to=f"{self.ym}-{o['moved_to']:02d}" if o.get("moved_to") else None)
             acc_id = acc.id
             items = self.store.acceptances()
             if not any(a.id == acc.id for a in items):

@@ -171,6 +171,7 @@ class Acceptance:
 
     数えるのは、了承をもらって表を直した回数（layer は当番の ID）と、配った後の直しで休みから勤務に
     変わった回数（layer は "fix"）。発生日を持つ。次の月に返したら returned_in にその月（YYYY-MM）を書く。
+    公休を別の日へ移した時は、移した先の日を moved_to に書く（2026-11-04。前の記録には無い）。
     """
     id: str
     staff: str
@@ -180,6 +181,7 @@ class Acceptance:
     tx_rev: int | None = None
     note: str = ""
     returned_in: str | None = None
+    moved_to: str | None = None   # 公休を移した先の日 YYYY-MM-DD（移せなかった時は None）
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)

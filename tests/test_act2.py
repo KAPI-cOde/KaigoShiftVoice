@@ -61,8 +61,10 @@ def test_d3_d5_accept(act2):
     t0 = json.dumps(act2.store.month(2026, 11).table)
     r = act2.say(CALL)
     assert r.kind == "standby_offer", r.message
-    assert r.extra["duty"] == "小島" and len(r.changes) == 2
-    assert "小島さん 9日 → 8日" in r.summary and "青木さん 9日 → 10日" in r.summary
+    # 1日の2マスと、小島さんの休みを移す日・青木さんが代わりに入る日の2マス（公休移動。2026-11-04 に2マスから変えた）
+    assert r.extra["duty"] == "小島" and len(r.changes) == 4
+    d = r.extra["moves"][0]["day"]
+    assert r.summary == f"小島さん 公休9日のまま（休みは{d}日へ移す）"
     assert json.dumps(act2.store.month(2026, 11).table) == t0          # 了承の前は変えない
     assert act2.store.acceptances() == [a for a in act2.store.acceptances() if a.staff != "小島"]
     a = act2.accept(r.uid)

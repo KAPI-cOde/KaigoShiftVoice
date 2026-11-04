@@ -11,7 +11,8 @@ API（すべて JSON）
 - POST /api/restore {"rule_id"}       片付けたルールを戻す（次に表を作る時から効く）
 - GET  /api/cleanup · POST /api/cleanup {"archive", "keep"}  ルールの整理（片付けの候補を種類ごとにまとめて決める）
 - POST /api/distribute {}             表を配った（ここから休みの電話は待機の人に頼む直し）
-- POST /api/accept|refuse|cancel {"uid"}  ［了承をもらって直す］［断られた］［やめる］
+- POST /api/accept|refuse|cancel {"uid"}  ［了承をもらって直す］［断られた］［やめる］（accept は pick で休みを移す日の候補を選べる）
+- POST /api/move    {"uid", "pick"}   ［休みを移す日を変える］で候補を選ぶ（表は了承まで変えない）
 鍵は環境変数 ANTHROPIC_API_KEY（.env からも読む）。画面にも記録にも出さない。
 """
 from __future__ import annotations
@@ -377,7 +378,9 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                 elif self.path == "/api/answer":
                     r = box.session.answer(data.get("uid", ""), data.get("text", ""))
                 elif self.path == "/api/accept":
-                    r = box.session.accept(data.get("uid", ""))
+                    r = box.session.accept(data.get("uid", ""), data.get("pick"))
+                elif self.path == "/api/move":
+                    r = box.session.move(data.get("uid", ""), data.get("pick"))
                 elif self.path == "/api/refuse":
                     r = box.session.refuse(data.get("uid", ""))
                 elif self.path == "/api/cancel":
