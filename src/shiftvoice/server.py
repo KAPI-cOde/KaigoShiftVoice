@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .nextmonth import next_ym
-from .onboard import (OnboardError, ParseError, Proposal, Pasted, _short_id, _template, create_facility, infer,
+from .onboard import (OnboardError, ParseError, Proposal, Pasted, _short_id, _template, create_facility, infer, timed_kind,
                       parse_paste)
 from .reader import HaikuReader, ReadError, SonnetBuilder
 from .session import Session
@@ -101,7 +101,9 @@ def preview_out(pasted: Pasted, prop: Proposal) -> dict:
         "ok": True, "year": prop.year, "month": prop.month, "next_year": ny, "next_month": nm,
         "staff": list(prop.table), "days": pasted.days,
         "shift_types": [{"symbol": s["symbol"], "name": s["name"], "kind": s["kind"],
-                         "on_request_only": bool(s.get("on_request_only"))} for s in prop.shift_types],
+                         "on_request_only": bool(s.get("on_request_only")),
+                         "timed": timed_kind(s), "start": s.get("start") or "", "hours": s.get("hours") or ""}
+                        for s in prop.shift_types],
         "rules": [{"id": r["id"], "name": r["name"], "evidence": r["meta"]["evidence"]} for r in prop.rules],
         "unknown_symbols": list(pasted.unknown_symbols),
         "same_choices": [{"symbol": t["symbol"], "name": t["name"]} for t in _template()],
@@ -297,7 +299,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                         shutil.rmtree(tmp, ignore_errors=True)
                         try:
                             c = create_facility(prop, tmp, name=name, next_year=ny, next_month=nm,
-                                                answers=data.get("answers") or {})
+                                                answers=data.get("answers") or {},
+                                                times=data.get("times") if isinstance(data.get("times"), dict) else None)
                         except BaseException:
                             shutil.rmtree(tmp, ignore_errors=True)
                             raise

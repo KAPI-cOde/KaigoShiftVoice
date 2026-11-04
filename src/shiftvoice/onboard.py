@@ -127,7 +127,7 @@ class Created:
     seconds: float
     notes: list[str] = field(default_factory=list)
     diffs: list[dict] = field(default_factory=list)   # 貼った月と翌月の表の違い（text＝一文、kind＝種類）
-    short_rest: dict | None = None   # 次の勤務までの間が短い並びの数（line・before・after・month・next_month）
+    short_rest: dict | None = None   # 次の勤務までの間が短い並びの数（line・before・after・month・next_month・untimed＝時刻の無い勤務の名前）
 
 
 # ---------------------------------------------------------------- 読む
@@ -739,8 +739,44 @@ def _settings(year: int, month: int, ny: int, nm: int, notes: list[str]) -> dict
     return out
 
 
+def timed_kind(st: dict) -> bool:
+    """始まりの時刻と長さを聞く勤務（夜勤・明け・休みは聞かない）。"""
+    return st.get("kind") == "work" and not st.get("next_is_ake")
+
+
+def _clock_text(v) -> str:
+    m = re.fullmatch(r"(\d{1,2})\s*[:：]\s*(\d{2})", _nfkc(str(v or "")).strip())
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        raise OnboardError(f"始まりの時刻「{v}」は、7:00 のように入れてください")
+    return f"{int(m.group(1)):02d}:{m.group(2)}"
+
+
+def apply_times(shift_types: list[dict], times: dict | None) -> None:
+    """取り込みの時に確かめた勤務の時刻（記号 → {start, hours}）を勤務の種類に書く。空は時刻なし（数えない）。
+    渡されなかった記号は、そのまま（見本の時刻）。"""
+    for st in shift_types:
+        if not timed_kind(st) or not isinstance(times, dict) or st["symbol"] not in times:
+            continue
+        t = times[st["symbol"]] or {}
+        start, hours = str(t.get("start") or "").strip(), t.get("hours")
+        if start == "" and hours in (None, ""):
+            st.pop("start", None)
+            st.pop("hours", None)
+            continue
+        if start == "" or hours in (None, ""):
+            raise OnboardError(f"{st['name']}は、始まりの時刻と長さ（時間）の両方を入れるか、両方を空にしてください")
+        try:
+            h = float(_nfkc(str(hours)))
+        except ValueError:
+            raise OnboardError(f"{st['name']}の長さ（時間）は数字で入れてください")
+        if not 0 < h <= 24:
+            raise OnboardError(f"{st['name']}の長さ（時間）は、0より大きく24以下にしてください")
+        st["start"] = _clock_text(start)
+        st["hours"] = int(h) if h == int(h) else h
+
+
 def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int, next_month: int,
-                    answers: dict | None = None) -> Created:
+                    answers: dict | None = None, times: dict | None = None) -> Created:
     root = Path(root)
     answers = answers or {}
     if (next_year, next_month) != next_ym(proposal.year, proposal.month):
@@ -769,6 +805,7 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
         shift_types.append(st)
     if proposal.problems:
         raise OnboardError("。".join(proposal.problems))
+    apply_times(shift_types, times)
 
     notes: list[str] = []
     t0 = time.perf_counter()
@@ -831,7 +868,9 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
         line = settings["quality"]["short_rest_hours"]
         short_rest = {"line": line, "month": proposal.month, "next_month": next_month,
                       "before": count_short(proposal.table, shift_types, line)[0],
-                      "after": count_short(nxt.table, shift_types, line, nxt.prev_tail)[0]}
+                      "after": count_short(nxt.table, shift_types, line, nxt.prev_tail)[0],
+                      "untimed": [st["name"] for st in shift_types
+                                  if timed_kind(st) and not (st.get("start") and st.get("hours"))]}
         diffs = compare_months(proposal.table, nxt.table, shift_types, proposal.month, next_month,
                                raw=proposal.raw, year=proposal.year, next_year=next_year,
                                holidays=settings["holidays"],

@@ -172,6 +172,10 @@
   .su-rule .nm { font-weight: 700; }
   .su-rule .ev { font-size: 12px; }
   .su-sym { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .su-time { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 14px; }
+  .su-time .tn { min-width: 8em; }
+  .su-wrap .su-time input { font: inherit; font-size: 14px; border: 1px solid #000; border-radius: 3px; padding: 3px 6px; background: #fff; color: #000; }
+  .su-wrap .su-time input[type=number] { width: 4.5em; }
   #diffs { display: none; margin: 0 0 10px; font-size: 14px; }
   #diffs h3 { font-size: 14px; margin: 0 0 4px; }
   #diffs .df { color: #c0392b; margin: 2px 0; }
@@ -1522,7 +1526,9 @@ function showDiffs(diffs, fromMonth, sr) {
     wrap.appendChild(el("div", sr.after > sr.before ? "df" : "same",
       "次の勤務までの間が短い並び（" + sr.line + "時間未満。遅番の翌日の早番など）　" +
       sr.month + "月 " + sr.before + "回 → " + sr.next_month + "月 " + sr.after + "回"));
-    wrap.appendChild(el("div", "note", "勤務の時刻は見本の時刻（早番7時から9時間 など）で数えています"));
+    wrap.appendChild(el("div", "note", (sr.untimed && sr.untimed.length)
+      ? sr.untimed.join("・") + "は時刻が無いので数えていません"
+      : "勤務の時刻は、取り込みの時に確かめた時刻で数えています"));
     box.appendChild(wrap);
   }
   if (!diffs.length) {
@@ -1624,7 +1630,7 @@ function renderSetup1(box) {
     go.disabled = true; err.textContent = "";
     post("setup/preview", { text: SU.text, year: SU.year, month: SU.month }).then(function (res) {
       if (res.error) { SU.err = res.error; renderSetup(); return; }
-      SU.pv = res; SU.drop = {}; SU.answers = {}; SU.err = ""; SU.step = 2;
+      SU.pv = res; SU.drop = {}; SU.answers = {}; SU.times = {}; SU.err = ""; SU.step = 2;
       var sg = res.suggestions || {};
       Object.keys(sg).forEach(function (sym) { SU.answers[sym] = { choice: sg[sym], name: "" }; });   // おすすめを先に入れる
       if (Object.keys(sg).length) refreshPreview(); else renderSetup();
@@ -1698,6 +1704,25 @@ function renderSetup2(box) {
       box.appendChild(row);
     });
   }
+  var timedTypes = pv.shift_types.filter(function (s) { return s.timed; });
+  if (timedTypes.length) {
+    SU.times = SU.times || {};
+    box.appendChild(el("label", "", "勤務の時刻（次の勤務までの間を数えるのに使います）"));
+    timedTypes.forEach(function (s) {
+      var t = SU.times[s.symbol] || (SU.times[s.symbol] = { start: String(s.start || ""), hours: String(s.hours || "") });
+      var row = el("div", "su-time");
+      row.appendChild(el("span", "tn", s.name + "（" + s.symbol + "）"));
+      var si = el("input"); si.type = "time"; si.value = t.start; si.dataset.timeStart = s.symbol;
+      si.addEventListener("input", function () { t.start = si.value; });
+      var hi = el("input"); hi.type = "number"; hi.min = 1; hi.max = 24; hi.step = 0.5; hi.value = t.hours; hi.dataset.timeHours = s.symbol;
+      hi.addEventListener("input", function () { t.hours = hi.value; });
+      row.appendChild(el("span", "", "始まり")); row.appendChild(si);
+      row.appendChild(el("span", "", "長さ")); row.appendChild(hi); row.appendChild(el("span", "", "時間"));
+      if (!s.start) row.appendChild(el("span", "small", "時刻を入れると、次の勤務までの間を数えます"));
+      row.dataset.sym = s.symbol;
+      box.appendChild(row);
+    });
+  }
   var probs = pv.problems || [];
   probs.forEach(function (t) { var pr = el("div", "rv-err su-problem", t); pr.style.margin = "6px 0"; box.appendChild(pr); });
   if (pv.reading && pv.reading.length) {
@@ -1729,6 +1754,13 @@ function renderSetup3(box) {
   var t0 = Date.now();
   waitTimer = setInterval(function () { sec.textContent = Math.floor((Date.now() - t0) / 1000) + "秒"; }, 500);
 }
+function timesOut() {
+  var out = {};
+  Object.keys(SU.times || {}).forEach(function (sym) {
+    out[sym] = { start: SU.times[sym].start || "", hours: SU.times[sym].hours || "" };
+  });
+  return out;
+}
 function startCreate() {
   var pv = SU.pv;
   var answers = buildAnswers();
@@ -1736,7 +1768,7 @@ function startCreate() {
   SU.step = 3; renderSetup();
   var stop = function () { if (waitTimer) { clearInterval(waitTimer); waitTimer = null; } };
   post("setup/create", { text: SU.text, year: SU.year, month: SU.month, name: SU.name, answers: answers,
-                         drop_rules: dropIds }).then(function (res) {
+                         times: timesOut(), drop_rules: dropIds }).then(function (res) {
     stop();
     if (res.error) { SU.err = res.error; SU.step = 2; renderSetup(); return; }
     var nm = res.facility.name || SU.name;
