@@ -95,3 +95,12 @@ def test_タブと改行を含む名前でも列がずれない():
 def test_Hostが違うと断る(served):
     base, _ = served
     assert fetch(base, {"Host": "evil.example"})[0] == 403
+
+
+def test_式に見える名前は先頭にアポストロフィを付ける():
+    # Excel に貼った時に式として動かないように（自動のセキュリティレビューの指摘）。記号1字の「-」はそのまま
+    st = {"staff": [{"name": "=1+1", "unit": "A"}, {"name": "＝HYPERLINK(1)", "unit": "A"}], "days": 2,
+          "weekdays": ["sat", "sun"], "table": {"=1+1": ["-", "@x"], "＝HYPERLINK(1)": ["日", "公"]}, "layers": {}}
+    rows = grid(table_tsv(st))
+    assert rows[2][0] == "'=1+1" and rows[3][0] == "'＝HYPERLINK(1)"
+    assert rows[2][1:] == ["-", "'@x"]

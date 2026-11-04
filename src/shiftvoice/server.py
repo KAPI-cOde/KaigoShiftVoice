@@ -170,7 +170,12 @@ def table_tsv(st: dict) -> str:
     1行目は日付、2行目は曜日、3行目から「名前＋各日の記号」。ユニットが2つ以上ならユニットの列を名前の前に置く。
     待機当番などの欄の行は最後に、その日の担当の名前（さんは外す）を入れる。"""
     def cell(v) -> str:
-        return str(v if v is not None else "").replace("\t", " ").replace("\r", " ").replace("\n", " ")
+        t = str(v if v is not None else "").replace("\t", " ").replace("\r", " ").replace("\n", " ")
+        # Excel に貼った時に式として動かないよう、＝・＋・－・＠で始まる2字以上の文字は先頭に ' を付ける
+        # （自動のセキュリティレビューの指摘。記号1字の「-」などはそのまま）
+        if len(t) > 1 and t.lstrip()[:1] in ("=", "+", "-", "@", "＝", "＋", "－", "＠"):
+            t = "'" + t
+        return t
 
     staff, days = st["staff"], st["days"]
     multi = len({s["unit"] for s in staff}) > 1
