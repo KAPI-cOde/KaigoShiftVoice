@@ -2,13 +2,15 @@ name: tests
 
 # 試験を回す。本物の Claude で録った返事（tests/fixtures/）で回るので、Claude の鍵は使わない。
 # 声の試験は、声のモデルと録音が無いので飛ばされる。
+# Mac で回す。計算の部品（OR-Tools）は OS ごとに探し方の道筋が違い、同じ入力でも違う表になる（ルールはどれも守る）。
+# 試験は、作者の Mac で作った表と数（動画・写真・README と同じ）を確かめるので、Linux では一部が合わない。
 on:
   push:
   pull_request:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
