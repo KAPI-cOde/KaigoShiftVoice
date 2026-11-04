@@ -76,6 +76,19 @@
   .card .explain div.box { border: 1px solid #000; border-radius: 3px; padding: 1px 6px; margin: 2px 0; display: inline-block; }
   .reply .offer { font-weight: 700; margin-bottom: 2px; }
   .reply .offer2 { margin-bottom: 6px; }
+  /* 休みの電話の案。休みを移す日（公休移動）と、選び直す候補 */
+  .reply .rest1 { font-weight: 700; margin-bottom: 2px; }
+  .reply .rest1 button.linkish { margin-left: 12px; font-weight: 400; }
+  .reply .mvnote { font-size: 13px; margin-bottom: 8px; }
+  .reply .mvnote .warn, .reply .mvrow .warn { color: #c0392b; }
+  .reply .mvlist { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 4px; }
+  .reply .mvrow { display: flex; gap: 12px; align-items: baseline; text-align: left; padding: 8px 12px; border-color: #bbb; }
+  .reply .mvrow:hover { border-color: #000; background: #fff; }
+  .reply .mvrow.on { border-color: #000; }
+  .reply .mvrow .mvday { font-weight: 700; white-space: nowrap; }
+  .reply .mvrow .mvtext { flex: 1; font-size: 13px; }
+  .reply .mvrow .mvlabel { font-size: 11px; font-weight: 700; border: 1px solid #000; border-radius: 3px; padding: 0 5px; white-space: nowrap; }
+  .reply .records { margin-top: 2px; font-size: 13px; }
   .reply .sentline { font-size: 11px; color: #777; margin-top: 8px; font-weight: 400; word-break: break-all; }
   .reply .sentnote { margin-top: 2px; }
   .reply .note { font-size: 11px; margin-left: 10px; font-weight: 400; }
@@ -217,6 +230,7 @@ var ask = null;            // {uid, message, kind}
 var saidList = [];
 var busy = false;
 var offerR = null;         // 出ている頼む案 {uid, ...}
+var moveOpen = false;      // 休みの電話の案で［休みを移す日を変える］の候補を開いているか
 var glowTimer = null;
 var WD = { sun: "日", mon: "月", tue: "火", wed: "水", thu: "木", fri: "金", sat: "土" };
 
@@ -697,19 +711,63 @@ function renderReplyBody(r) {
   box.textContent = "";
   if (!r) return;
   if (r.kind === "standby_offer") {
+    var ex = r.extra || {};
+    var moves = ex.moves || [];
+    var pick = ex.pick || 0;
+    if (moveOpen && moves.length > 1) {
+      // ［休みを移す日を変える］。決めるのは「どの日へ移すか」の1つだけ。候補を1行ずつ、おすすめに印
+      box.appendChild(el("div", "offer", (ex.duty ? ex.duty + "さんの" : "") + "休みを移す日を選んでください"));
+      var list = el("div", "mvlist");
+      moves.forEach(function (m, i) {
+        var row = el("button", "mvrow" + (i === pick ? " on" : ""));
+        row.type = "button";
+        row.appendChild(el("span", "mvday", m.day + "日へ（" + (m.changes || []).length + "マス）"));
+        var tx = el("span", "mvtext");
+        tx.appendChild(moveParts(m));
+        row.appendChild(tx);
+        if (m.label) row.appendChild(el("span", "mvlabel", m.label));
+        row.addEventListener("click", function () { sendMove(r.uid, i); });
+        list.appendChild(row);
+      });
+      box.appendChild(list);
+      box.appendChild(el("div", "q2", "短い並び＝次の勤務までが14時間より短い並び（遅番の次の日の早番など）"));
+      var back = el("div", "btns"); back.style.marginTop = "8px";
+      var bk = el("button", "", "戻る"); bk.type = "button";
+      bk.addEventListener("click", function () { moveOpen = false; renderReply(r); });
+      back.appendChild(bk);
+      box.appendChild(back);
+      return;
+    }
     box.appendChild(el("div", "offer", r.message || ""));
-    // 動くマスを日本語の1行で（例「青木さん 1日 日勤→公休、小島さん 1日 公休→日勤」）
-    var nm = {}; (S && S.shift_names || []).forEach(function (x) { nm[x[0]] = x[1]; });
-    var mv = (r.changes || []).map(function (c) {
-      return c.staff + "さん " + c.day + "日 " + (nm[c.before] || c.before) + "→" + (nm[c.after] || c.after);
-    }).join("、");
-    if (mv) box.appendChild(el("div", "offer2", mv));
-    box.appendChild(el("div", "offer2", r.summary || ""));
+    var cur = moves[pick];
+    if (cur) {
+      // 頼まれた人の公休は減らさず、別の日へ移す（公休移動）。電話の日と移す日のマスが光る
+      var r1 = el("div", "rest1", r.summary || "");
+      if (moves.length > 1) {
+        var mb = el("button", "linkish", "休みを移す日を変える");
+        mb.type = "button";
+        mb.addEventListener("click", function () { moveOpen = true; renderReply(r); });
+        r1.appendChild(mb);
+      }
+      box.appendChild(r1);
+      var note = el("div", "mvnote");
+      note.appendChild(moveParts(cur));
+      box.appendChild(note);
+    } else {
+      // 今月の中に移せる日が無い時だけ、今までの形（公休が1日減る）。動くマスを日本語の1行で
+      var nm = {}; (S && S.shift_names || []).forEach(function (x) { nm[x[0]] = x[1]; });
+      var mvs = (r.changes || []).map(function (c) {
+        return c.staff + "さん " + c.day + "日 " + (nm[c.before] || c.before) + "→" + (nm[c.after] || c.after);
+      }).join("、");
+      if (mvs) box.appendChild(el("div", "offer2", mvs));
+      box.appendChild(el("div", "offer2", r.summary || ""));
+      if (ex.no_move) { var nmv = el("div", "warning", ex.no_move); nmv.style.margin = "-2px 0 8px"; box.appendChild(nmv); }
+    }
     var ob = el("div", "btns");
     [["了承をもらって直す", "accept", "primary"], ["断られた", "refuse", ""], ["やめる", "cancel", ""]].forEach(function (p) {
       var b = el("button", p[2], p[0]);
       b.type = "button";
-      b.addEventListener("click", function () { sendOffer(p[1], r.uid); });
+      b.addEventListener("click", function () { sendOffer(p[1], r.uid, p[1] === "accept" && cur ? { pick: pick } : null); });
       ob.appendChild(b);
     });
     box.appendChild(ob);
@@ -733,6 +791,8 @@ function renderReplyBody(r) {
       if (r.extra && r.extra.note) sm.appendChild(el("span", "note", r.extra.note));
       box.appendChild(sm);
     }
+    // 引き受けの記録（その人のこの月の分）。1行ずつ「11/1 引き受け（休みは10日へ）」
+    ((r.extra && r.extra.records) || []).forEach(function (t) { box.appendChild(el("div", "records", t)); });
     if (r.warning) box.appendChild(el("div", "warning", r.warning));
     return;
   }
@@ -837,13 +897,37 @@ function renderDist() {
   w.appendChild(b);
 }
 
-function sendOffer(path, uid) {
+function sendOffer(path, uid, extra) {
   if (busy) return;
   setBusy(true);
-  post(path, { uid: uid }).then(function (res) {
+  var body = { uid: uid };
+  Object.keys(extra || {}).forEach(function (k) { body[k] = extra[k]; });
+  post(path, body).then(function (res) {
     setBusy(false);
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
     offerR = null;
+    handle(res);
+  }).catch(fail);
+}
+
+// 休みを移す日の候補の説明（区切りを「。」でつなぐ。負担が増える区切りだけ赤）
+function moveParts(m) {
+  var span = el("span", "");
+  (m.parts || [{ text: m.line || "", warn: false }]).forEach(function (p, i) {
+    if (i) span.appendChild(document.createTextNode("。"));
+    span.appendChild(p.warn ? el("span", "warn", p.text) : document.createTextNode(p.text));
+  });
+  return span;
+}
+
+// ［休みを移す日を変える］で候補を選んだ。表はまだ変えず、案をその候補にして出し直す（光るマスも変わる）
+function sendMove(uid, i) {
+  if (busy) return;
+  setBusy(true);
+  post("move", { uid: uid, pick: i }).then(function (res) {
+    setBusy(false);
+    if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
+    moveOpen = false;
     handle(res);
   }).catch(fail);
 }
@@ -890,6 +974,7 @@ function handle(res, isUndo) {
     shown[k] = c.before;
   });
   S = res.state;
+  moveOpen = false;
   offerR = r && (r.kind === "standby_offer" || r.kind === "fix_offer") ? r : null;
   if (offerR) (r.changes || []).forEach(function (c) { glowCells[c.staff + "|" + c.day] = true; });
   ask = r && (r.kind === "ask_period" || r.kind === "ask_replace") ? r : null;
@@ -1627,9 +1712,16 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
     var pr = function (n) { return rest[n] ? n + "さん " + rest[n][0] + "日 → " + rest[n][1] + "日" : ""; };
     saidList.push(of.text);
     renderSaid();
+    // 開き直した時も、案に書いた文と候補（選んだ休みを移す日）で出す。文の無い前の案だけ今までの形で作る
+    var shownMoves = (o.moves || []).map(function (m) {
+      return { day: m.day, kind: m.kind, line: m.line, parts: m.parts, label: m.label, warn: m.warn,
+               changes: m.changes, message: m.message, summary: m.summary };
+    });
     offerR = o.duty ? { kind: "standby_offer", uid: of.id, changes: o.changes || [],
-               message: "その日の待機の" + o.duty + "さんに頼む案です（" + (o.changes || []).length + "マス）",
-               summary: "公休　" + pr(o.requester) + "　" + pr(o.duty) }
+               message: o.message || ("その日の待機の" + o.duty + "さんに頼む案です（" + (o.changes || []).length + "マス）"),
+               summary: o.summary || ("公休　" + pr(o.requester) + "　" + pr(o.duty)),
+               extra: { duty: o.duty, requester: o.requester, day: o.day, moves: shownMoves, pick: o.pick || 0,
+                        no_move: o.no_move || null } }
              : { kind: "fix_offer", uid: of.id, changes: o.changes || [],
                  message: o.message || ((o.summary || "") + "。" + (o.changes || []).length + "マス動きます") };
     (offerR.changes).forEach(function (c) { glowCells[c.staff + "|" + c.day] = true; });
