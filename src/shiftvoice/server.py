@@ -190,8 +190,9 @@ def load_dotenv(path: Path) -> None:
 
 def codespaces_host(port: int) -> str | None:
     """GitHub Codespaces の中で動いている時だけ、その Codespace の転送先の名前（<Codespace の名前>-<番号>.<転送の領域>）を返す。
-    Codespaces では、画面はこの名前で届く（Host と Origin）。ほかの時は None（今までどおり 127.0.0.1 と localhost だけ）。
-    受けるのは、この Codespace のこの番号の名前1つだけ（Codespaces の転送は、既定で持ち主だけが開ける）。"""
+    Codespaces の転送は、多くの場合 Host と画面の Origin を localhost に書き換えて届けるので、今までの確かめのまま通る。
+    転送のしかたによって、この名前のまま届く時のために、この名前1つも受ける。ほかの時は None（今までどおり 127.0.0.1 と
+    localhost だけ）。受けるのは、この Codespace のこの番号の名前1つだけ（Codespaces の転送は、既定で持ち主だけが開ける）。"""
     if os.environ.get("CODESPACES") != "true":
         return None
     name = os.environ.get("CODESPACE_NAME", "")
@@ -265,7 +266,8 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
 
         def _local(self) -> bool:
             """手元からだけ受ける。Host と Origin が 127.0.0.1 か localhost（DNS の付け替えと、ほかのサイトからの送信を止める）。
-            GitHub Codespaces の中で動く時だけ、その Codespace の転送先の名前1つも受ける（codespaces_host）。"""
+            GitHub Codespaces の中で動く時だけ、その Codespace の転送先の名前のまま届いた時のために、その名前1つも受ける
+            （codespaces_host。多くの場合、転送は localhost に書き換えて届ける）。"""
             port = self.server.server_address[1]
             ok = {f"127.0.0.1:{port}", f"localhost:{port}"}
             origins = {f"http://{h}" for h in ok}

@@ -1,4 +1,6 @@
-"""GitHub Codespaces の中で動く時だけ、その Codespace の転送先の名前1つを Host と Origin で受ける。
+"""GitHub Codespaces の中で動く時だけ、その Codespace の転送先の名前1つも Host と Origin で受ける。
+Codespaces の転送は、多くの場合 Host と画面の Origin を localhost に書き換え、転送先の名前は X-Forwarded-Host に入れて
+届けるので、その形は今までの確かめのまま通る（2026-11-05 敵対レビュー）。名前のまま届いた時のために、その名前1つも受ける。
 ほかの時と、ほかの名前は、今までどおり断る（DNS の付け替えと、ほかのサイトからの送信を止める守りは弱めない）。"""
 import json
 import shutil
@@ -72,3 +74,13 @@ def test_Codespaces_の外では今までどおり断る(served, monkeypatch):
     monkeypatch.delenv("CODESPACES", raising=False)
     assert call(base + "/api/state", headers={"Host": f"demo-abc-{port}.app.github.dev"}) == 403
     assert call(base + "/api/state") == 200
+
+
+def test_転送が_localhost_に書き換えて届けた形も通る(served, monkeypatch):
+    base, port = served
+    codespace(monkeypatch)
+    fwd = {"Host": f"localhost:{port}", "X-Forwarded-Host": f"demo-abc-{port}.app.github.dev"}
+    assert call(base + "/api/state", headers=fwd) == 200
+    post = {**fwd, "Origin": f"http://localhost:{port}", "Content-Type": "application/json"}
+    assert call(base + "/api/undo", "POST", post, {}) != 403
+    assert call(base + "/api/undo", "POST", {**post, "Origin": "https://evil.example"}, {}) == 403
