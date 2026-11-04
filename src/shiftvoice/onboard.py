@@ -116,6 +116,7 @@ class Proposal:
     rest_mode: int = 0                                      # 公休のいちばん多い日数
     rest_notes: list[str] = field(default_factory=list)     # 途中入職・長い休みの人の知らせ（一文ずつ）
     paste_symbols: dict[str, str] = field(default_factory=dict)   # アプリの記号 → 貼った表での書き方（同じ物は入れない。空欄は ""）
+    paste_merged: dict[str, dict] = field(default_factory=dict)   # 書き方が2つ以上あった記号 → {"to": 持ち出す書き方, "from": [ほかの書き方]}
 
 
 @dataclass
@@ -432,18 +433,25 @@ def _run_ends(table: dict[str, list[str]], sym: str) -> list[str | None]:
     return out
 
 
-def _paste_symbols(pasted: Pasted, same: dict[str, str]) -> dict[str, str]:
-    """アプリの記号 → 貼った表での書き方。1つの記号に書き方が2つ以上あれば、いちばん多かった書き方
-    （同数なら、記号そのままの書き方を先に、次に先に出た書き方）。アプリの記号と同じ書き方は入れない。"""
+def _spellings(pasted: Pasted, same: dict[str, str]) -> dict[str, tuple[str, Counter]]:
+    """アプリの記号 → (持ち出す書き方, 貼った表での書き方ごとの回数)。持ち出す書き方は、いちばん多かった書き方
+    （同数なら、記号そのままの書き方を先に、次に先に出た書き方）。"""
     merged: dict[str, Counter] = {}
     for sym, cnt in pasted.spelled.items():
         merged.setdefault(same.get(sym, sym), Counter()).update(cnt)
-    out: dict[str, str] = {}
-    for sym, cnt in merged.items():
-        best = max(cnt, key=lambda w: (cnt[w], w == sym))
-        if best != sym:
-            out[sym] = best
-    return out
+    return {sym: (max(cnt, key=lambda w: (cnt[w], w == sym)), cnt) for sym, cnt in merged.items()}
+
+
+def _paste_symbols(pasted: Pasted, same: dict[str, str]) -> dict[str, str]:
+    """アプリの記号 → 貼った表での書き方。アプリの記号と同じ書き方は入れない。"""
+    return {sym: best for sym, (best, _) in _spellings(pasted, same).items() if best != sym}
+
+
+def _paste_merged(pasted: Pasted, same: dict[str, str]) -> dict[str, dict]:
+    """1つの記号に書き方が2つ以上あった時（休と希、空欄と休 など）、持ち出しで1つにまとまる書き方。
+    持ち出す時は1つの書き方にしか戻せないので、コピーの知らせで伝える（2026-11-04 Astra の指摘）。"""
+    return {sym: {"to": best, "from": [w for w in cnt if w != best]}
+            for sym, (best, cnt) in _spellings(pasted, same).items() if len(cnt) >= 2}
 
 
 def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) -> Proposal:
@@ -649,7 +657,7 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
                     staff=staff, rules=rules, unknown_symbols=unknown, same_as=same,
                     problems=problems, suggestions=suggestions, raw=pasted.table, staff_evidence=staff_evidence,
                     long_rest=long_rest, rest_mode=mode, rest_notes=rest_notes,
-                    paste_symbols=_paste_symbols(pasted, same))
+                    paste_symbols=_paste_symbols(pasted, same), paste_merged=_paste_merged(pasted, same))
 
 
 def _answer_problems(pasted: Pasted, same: dict[str, str], answers: dict, month: int) -> list[str]:
@@ -833,6 +841,8 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
     settings = _settings(proposal.year, proposal.month, next_year, next_month, notes)
     if proposal.paste_symbols:
         settings["paste_symbols"] = dict(proposal.paste_symbols)   # 持ち出す時に、施設の書き方へ戻す
+    if proposal.paste_merged:
+        settings["paste_merged"] = dict(proposal.paste_merged)     # 1つにまとまる書き方（コピーの知らせで伝える）
     fac = {"id": _short_id(name), "name": name.strip(), "units": list(proposal.units),
            "shift_types": shift_types, "settings": settings}
     atomic_write_json(root / "facility.json", fac)
@@ -1034,7 +1044,12 @@ def compare_months(cur: dict[str, list[str]], nxt: dict[str, list[str]], shift_t
             gap_c, gap_n = cw - ce, nw - ne
             swapped = gap_c * gap_n < 0 and max(abs(gap_c), abs(gap_n)) >= 0.2
             if abs(gap_n - gap_c) >= 0.5 or swapped:
-                out.append({"kind": "weekday_shape",
+                # 戻すための一言の例。増えた側を、貼った月の平均（四捨五入）に決める一言
+                # （2026-11-04 本物の Haiku で「土日の日勤は1人」が2秒・17マスで貼った月の形に戻った。
+                #   「日勤は平日2人、土日1人」は平日の2人以上がぶつかり32秒かかった）
+                say = (f"土日の{names[sym]}は{int(ce + 0.5)}人" if ne > ce else
+                       f"平日の{names[sym]}は{int(cw + 0.5)}人" if nw > cw else "")
+                out.append({"kind": "weekday_shape", "say": say,
                             "text": f"{names[sym]}　{month}月は平日{cw:.1f}人・土日{ce:.1f}人 → "
                                     f"{next_month}月は平日{nw:.1f}人・土日{ne:.1f}人"})
 

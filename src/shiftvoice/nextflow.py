@@ -208,10 +208,13 @@ class NextFlow:
         self._pair = gb
         m = self.store.month(self.ny, self.nm)
         months = set(_months_back(ym, window))
+        acc = [x for x in items if x.date[:7] in months and x.date <= base_date
+               and not x.returned_in and x.staff in counts]
         m.layers["_plans"] = {"base": gb.base.table, "give": gb.give.table, "rev": self.store.ledger().rev,
                               "tail": m.prev_tail,
-                              "acc_ids": [x.id for x in items if x.date[:7] in months and x.date <= base_date
-                                          and not x.returned_in and x.staff in counts]}
+                              "acc_ids": [x.id for x in acc],
+                              # 採った月の表の題の下の1行で、実際に返した物と引き受けの月を言うため
+                              "stage": list(gb.stage), "acc_months": sorted({x.date[:7] for x in acc})}
         self.store.save_month(m)
         return out
 

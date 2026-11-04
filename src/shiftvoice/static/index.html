@@ -1558,7 +1558,9 @@ function showDiffs(diffs, fromMonth, sr) {
     box.appendChild(el("h3", "", fromMonth + "月と違う所"));
     diffs.slice(0, 5).forEach(function (d) { box.appendChild(el("div", "df", d.text)); });
     if (diffs.length > 5) box.appendChild(el("div", "df", "ほか" + (diffs.length - 5) + "件"));
-    box.appendChild(el("div", "hint2", "違う所は、下の欄に一言で直せます（例「井上さんは日勤だけ」）"));
+    // 例は、出した違いを戻す一言（平日と土日の形なら「土日の日勤は1人」など）。無ければ今までの例
+    var ex = (diffs.filter(function (d) { return d.say; })[0] || {}).say || "井上さんは日勤だけ";
+    box.appendChild(el("div", "hint2", "ルールにしていない形は、" + fromMonth + "月と変わることがあります。違う所は、下の欄に一言で直せます（例「" + ex + "」）"));
   }
   box.style.display = "block";
 }
@@ -1868,13 +1870,24 @@ function showCopyNote(text, tsv) {
   }
 }
 // コピーの知らせに足す文。施設の書き方に戻した記号（取り込んだ施設だけ）と、最後に入る係の行（係がある月だけ）
-function copyExtra(restored) {
+function copyExtra(restored, merged) {
   var out = "";
+  var show = function (w) { return w === "" ? "空欄" : "「" + w + "」"; };
   if (restored) {
     try {
       var m = JSON.parse(decodeURIComponent(restored));
       var pairs = Object.keys(m).map(function (k) { return k + "→" + (m[k] === "" ? "空欄" : m[k]); });
       if (pairs.length) out += "。記号は、貼った表の書き方に戻しています（" + pairs.join("、") + "）";
+    } catch (e) { /* 読めない時は書かない */ }
+  }
+  if (merged) {
+    // 貼った表で書き方が2つ以上あった記号（休と希 など）は、1つの書き方でしか出せない。どれがまとまるかを言う
+    try {
+      var g = JSON.parse(decodeURIComponent(merged));
+      Object.keys(g).forEach(function (k) {
+        var x = g[k] || {}, from = (x.from || []).map(show);
+        if (from.length) out += "。貼った表で" + from.join("・") + "と書いていた所も、" + show(x.to || "") + "で出ます";
+      });
     } catch (e) { /* 読めない時は書かない */ }
   }
   var names = Object.keys((S && S.layers) || {}).map(function (k) { return (S.layers[k] && S.layers[k].name) || "待機当番"; });
@@ -1883,10 +1896,10 @@ function copyExtra(restored) {
 }
 document.getElementById("copytsv").addEventListener("click", function () {
   fetch("/api/table.tsv").then(function (r) {
-    var h = r.headers.get("X-Restored-Symbols");
-    return r.text().then(function (t) { return [t, h]; });
+    var h = r.headers.get("X-Restored-Symbols"), hm = r.headers.get("X-Merged-Symbols");
+    return r.text().then(function (t) { return [t, h, hm]; });
   }).then(function (got) {
-    var tsv = got[0], extra = copyExtra(got[1]);
+    var tsv = got[0], extra = copyExtra(got[1], got[2]);
     var fallback = function () { showCopyNote("自動でコピーできませんでした。下の文字を選んでコピーし、Excel の表の左上のマスに貼ってください" + extra, tsv); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(tsv).then(function () {

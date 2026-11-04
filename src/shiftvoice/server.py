@@ -374,13 +374,17 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                 self._json(200, st)
             elif self.path == "/api/table.tsv":
                 with lock:
-                    back = box.session.store.facility().settings.get("paste_symbols") or {}
+                    settings = box.session.store.facility().settings
+                    back = settings.get("paste_symbols") or {}
+                    merged = settings.get("paste_merged") or {}
                     body = table_tsv(box.session.state(), back).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/tab-separated-values; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
                 if back:   # 施設の書き方に戻した記号（アプリの記号 → 戻した書き方）。日本語を含むので URL エンコードの JSON
                     self.send_header("X-Restored-Symbols", urllib.parse.quote(json.dumps(back, ensure_ascii=False)))
+                if merged:   # 貼った表で書き方が2つ以上あり、1つにまとめて出す記号（休と希 など）
+                    self.send_header("X-Merged-Symbols", urllib.parse.quote(json.dumps(merged, ensure_ascii=False)))
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)

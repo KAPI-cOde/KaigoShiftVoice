@@ -1058,5 +1058,10 @@ class Session:
         plans = m.layers.get("_plans")
         if m.layers.get("_adopted") != "give" or not isinstance(plans, dict) or not plans.get("acc_ids"):
             return ""
-        prev = 12 if self.month == 1 else self.month - 1
-        return f"{prev}月に引き受けた人に、有給と短い連勤を返した{self.month}月の表です"
+        # 返した物と引き受けの月は、案を作った時の記録から言う（片方だけ返した案や、前の月より前の引き受けもある。
+        # 2026-11-04 Astra の指摘）。記録の無い古い案は、物と月を言わない
+        what = {("leave", "run"): "有給と短い連勤", ("leave",): "有給", ("run",): "短い連勤"}.get(
+            tuple(plans.get("stage") or ()))
+        months = [int(x[5:7]) for x in plans.get("acc_months") or [] if len(x) >= 7]
+        who = ("・".join(f"{n}月" for n in months) + "に引き受けた人に") if months else "引き受けた人に"
+        return f"{who}、{what}を返した{self.month}月の表です" if what else f"{who}報いた{self.month}月の表です"
