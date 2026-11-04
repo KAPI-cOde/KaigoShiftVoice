@@ -4,6 +4,7 @@ name: tests
 # 声の試験は、声のモデルと録音が無いので飛ばされる。
 # Mac で回す。計算の部品（OR-Tools）は OS ごとに探し方の道筋が違い、同じ入力でも違う表になる（ルールはどれも守る）。
 # 試験は、作者の Mac で作った表と数（動画・写真・README と同じ）を確かめるので、Linux では一部が合わない。
+# 審査員は Linux（Codespaces）で試すので、Linux では「どの OS でも成り立つこと」の試験だけを別の仕事（pytest-linux）で流す。
 on:
   push:
   pull_request:
@@ -20,3 +21,18 @@ jobs:
       - run: python -m pip install uv
       - name: uv run pytest -q
         run: uv run pytest -q
+
+  # Linux では、マスの位置を決め打ちしない試験だけ流す（全部を流すと、Mac の表と違う所が落ちる）。
+  # README「審査員の方へ」の手順が Linux で最後まで動くことと、見本の施設の表の確かめ。
+  pytest-linux:
+    name: pytest-linux（Linux では OS で変わらない試験だけ）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install uv
+      - name: uv run pytest（Linux 向けの2ファイル）
+        run: uv run pytest -q tests/test_flow_any_os.py tests/test_seed_table.py
