@@ -207,6 +207,7 @@
     .printonly { display: block !important; font-size: 10px; margin: 0 0 4px; }   /* 画面だけの書き込み（引き受けの回数・〇月から夜勤も・黄色の凡例）は紙に出さない */
   }
   .printonly { display: none; }
+  .legend .glowkey { white-space: nowrap; }   /* 「黄色＝いま直ったマス」を途中で折り返さない */
   footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
 </style>
 </head>
@@ -900,6 +901,7 @@ function renderReplyBody(r) {
   }
   if (r.kind === "error") {
     box.appendChild(el("div", "q", r.message || "読み取れませんでした"));
+    if (r.extra && r.extra.no_key) return;   // 鍵なし。送り直しても同じなので、ボタンは出さない
     var rb = el("button", "", "送り直す");
     rb.type = "button";
     rb.addEventListener("click", function () { doRetry(r.uid); });
@@ -1799,7 +1801,7 @@ function renderSetup2(box) {
 }
 function renderSetup3(box) {
   var w = el("div", "wait");
-  w.appendChild(el("div", "t", "表を作っています（10秒ほど）"));
+  w.appendChild(el("div", "t", "表を作っています（10秒〜1分ほど。人数と勤務の種類が多いと長くなります）"));
   var sec = el("div", "sec", "0秒"); w.appendChild(sec);
   box.appendChild(w);
   var t0 = Date.now();

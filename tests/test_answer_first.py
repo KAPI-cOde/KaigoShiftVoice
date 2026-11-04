@@ -167,3 +167,20 @@ def test_http_voice(srv, sess):
     out = post(base, "/api/voice", pcm, "application/octet-stream", {"X-Answer-Uid": uid})
     assert out["reply"]["kind"] == "applied"
     assert sess.store.ledger().rules_at()[out["reply"]["rule_ids"][0]].scope == "rule"
+
+
+def test_鍵なしの一言は鍵が要ると言い送り直しを出さない(built_dir, tmp_path):
+    """2026-11-05 まっさらな取得の確かめ。鍵なしで一言を送ると「読み取りに失敗しました」と［送り直す］になっていた。"""
+    import shutil
+    from shiftvoice.server import NoKeyReader
+    from shiftvoice.session import NO_KEY, Session
+    from shiftvoice.store import Store
+    from conftest import FIXED_NOW
+    root = tmp_path / "h"
+    shutil.copytree(built_dir, root)
+    s = Session(Store(root), 2026, 11, NoKeyReader(), now=lambda: FIXED_NOW)
+    s.open()
+    before = {n: list(r) for n, r in s.state()["table"].items()}
+    r = s.say("遅番の次の日に早番はきついから、やめてあげて")
+    assert r.kind == "error" and r.message == NO_KEY and r.extra.get("no_key") is True
+    assert s.state()["table"] == before

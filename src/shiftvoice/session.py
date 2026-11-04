@@ -32,6 +32,11 @@ from .store import Store
 JST = dt.timezone(dt.timedelta(hours=9))
 ASK_PERIOD = "毎月ですか、今月だけですか"
 READ_FAILED = "読み取りに失敗しました。表もルールも変えていません"
+# 鍵が無くて Claude を呼べない時。送り直しても同じなので、何ができて何が要るかを言う（2026-11-05 まっさらな取得の確かめで、
+# 鍵なしの一言が「読み取りに失敗しました」と［送り直す］になり、審査員が止まると分かった）
+NO_KEY = ("Claude の鍵が入っていないので、一言では直せません（Claude へは送っていません。表もルールも変えていません）。"
+          "鍵なしでも、表を見ることと、右上の［自分の施設で始める］で来月の表を作ることはできます。"
+          "鍵の入れ方は README の「鍵の入れ方」にあります")
 ANSWER_FIRST = "先に上の質問に答えてください（毎月／今月だけ）"
 ANSWER_FIRST_REPLACE = "先に上の質問に答えてください（置き換える／別に足す）"
 # 休みを移す日の候補のうち、画面へ送る物（表の中身・足し引き・応援は送らない）
@@ -240,6 +245,8 @@ class Session:
                          else [{"type": "unclear", "question": b.get("question")}])
         except ReadError as e:
             self.store.update_pending(self.year, self.month, u["id"], status="failed", error=str(e))
+            if getattr(self.reader, "calls_claude", True) is False:   # 鍵なし（NoKeyReader）
+                return Reply("error", u["id"], NO_KEY, extra={"no_key": True})
             return Reply("error", u["id"], READ_FAILED)
         # 一度読んだら残し、AI を呼び直さない（3章 drafts）
         self.store.update_pending(self.year, self.month, u["id"], items=items, status="read")
