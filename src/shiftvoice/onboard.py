@@ -118,6 +118,7 @@ class Proposal:
     long_rest: dict[str, int] = field(default_factory=dict)  # 公休が最頻値の1.5倍以上の人 → 公休の日数
     rest_mode: int = 0                                      # 公休のいちばん多い日数
     rest_notes: list[str] = field(default_factory=list)     # 途中入職・長い休みの人の知らせ（一文ずつ）
+    merge_notes: list[str] = field(default_factory=list)    # 兼務の2行を1人にまとめた知らせ（警告ではない）
     paste_symbols: dict[str, str] = field(default_factory=dict)   # アプリの記号 → 貼った表での書き方（同じ物は入れない。空欄は ""）
     paste_merged: dict[str, dict] = field(default_factory=dict)   # 書き方が2つ以上あった記号 → {"to": 持ち出す書き方, "from": [ほかの書き方]}
     symbol_plan: "SymbolPlan | None" = None                  # シフト記号表から読んだ仮の答え（画面に1行ずつ出す）
@@ -558,6 +559,7 @@ class SymbolPlan:
     answers: dict[str, dict] = field(default_factory=dict)       # 知らない記号 → {"same_as": 先}
     suggestions: dict[str, str] = field(default_factory=dict)    # 知らない記号 → same:先（画面のおすすめ）
     times: dict[str, dict] = field(default_factory=dict)         # 先の記号（早・日・遅）→ {"start": "07:00", "hours": 9}
+    time_from: dict[str, str] = field(default_factory=dict)      # 先の記号 → 時刻を取った記号表の記号
     lines: list[str] = field(default_factory=list)               # 画面に出す1行ずつ（a＝早番（7:00〜16:00））
     undecided: list[str] = field(default_factory=list)           # 決められなかった記号（作成者に聞く）
 
@@ -613,6 +615,20 @@ def plan_symbols(pasted: Pasted, text: str, answers: dict | None = None) -> Symb
         hours = length / 60
         plan.times[target] = {"start": f"{info['start'] // 60:02d}:{info['start'] % 60:02d}",
                               "hours": int(hours) if hours == int(hours) else round(hours, 2)}
+        plan.time_from[target] = sym
+    # 同じ勤務に記号を2つ以上当てた時（日勤の c と d など）。時刻が違っても1つの勤務にまとまることを言う
+    # （2026-11-05 受け止めの主任役・リーダー役がそろって、勝手にまとめられたと読んだ）
+    same: dict[str, list[str]] = {}
+    for sym in pasted.unknown_symbols:
+        if sym in table:
+            a = given.get(sym)
+            t = (a.get("same_as") if isinstance(a, dict) else None) if a is not None else plan.answers.get(sym, {}).get("same_as")
+            if t in GUESS_TIMED:
+                same.setdefault(t, []).append(sym)
+    for t, syms in same.items():
+        if len(syms) >= 2 and t in plan.time_from:
+            plan.lines.append(f"{'・'.join(syms)}は、同じ{names.get(t, t)}として読みます。次の勤務までの間は、いちばん多く出た"
+                              f"{plan.time_from[t]}の時刻で数えます。分けたい時は、上の欄でどれかを［新しい勤務］にしてください")
     return plan
 
 
@@ -751,7 +767,9 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
         n0 = narrowed[0]
         mine0, miss0 = narrowed_info[n0]
         nm = lambda s: getattr(by_sym.get(s), "name", s)   # noqa: E731
-        more = f"ほか{len(narrowed) - 1}人も、{month}月に入った勤務の種類だけにしています。" if len(narrowed) > 1 else ""
+        others = narrowed[1:]
+        listed = "・".join(others[:5]) + ("など" if len(others) > 5 else "")
+        more = f"ほか{len(others)}人（{listed}さん）も、{month}月に入った勤務の種類だけにしています。" if others else ""
         staff_evidence = (f"{n0}さんは{month}月に{'・'.join(nm(s) for s in mine0)}だけだったので、来月もその勤務だけで組みます。"
                           + more + f"ほかの勤務も入れる時は「{n0}さんは{nm(miss0[0])}も」のように一言で")
 
@@ -820,15 +838,17 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
                 f"（変える時は、作った後に「全員、公休は月{mode + 1}日」のように一言で）")
     outliers = {nm: v for nm, v in rests.items() if v != mode}
     long_rest = {nm: v for nm, v in rests.items() if mode > 0 and v > mode and v >= mode * LONG_REST_RATIO}
-    rest_notes = [f"{nm}さんは2行（兼務）あったので、1人にまとめました" for nm in pasted.merged]
-    rest_notes += [f"{nm}さん 公休{v}日（ほかの人は{mode}日）。月の途中から入った人や長く休んだ人なら、"
+    merge_notes = [f"{nm}さんは2行（兼務）あったので、1人にまとめました（同じ日に両方の行に記号がある時は1行目の記号）"
+                   for nm in pasted.merged]
+    rest_notes = [f"{nm}さん 公休{v}日（ほかの人は{mode}日）。月の途中から入った人や長く休んだ人なら、"
                   f"作った後に一言で直してください（例「{nm}さん、公休は{mode}日」）" for nm, v in long_rest.items()]
     add("公休の数", "count", "operational", {"shifts": ["公"], "min": mode, "max": mode},
         f"公休は{len(rests)}人中{hit}人が{mode}日" + note,
         who=[nm for nm, v in rests.items() if v == mode] if outliers else None)
     for nm, v in outliers.items():
         add(f"公休の数（{nm}さん）", "count", "operational", {"shifts": ["公"], "min": v, "max": v},
-            f"{nm}さんの公休は{v}日" + note, who=[nm])
+            f"{nm}さんの公休は{month}月に{v}日（ほかの人は{mode}日）。{nmo}月も{v}日で作ります"
+            f"（変える時は、作った後に「{nm}さん、公休は月{v + 1}日」のように一言で）", who=[nm])
 
     # 夜勤→明け・明けは夜勤の翌日だけ・明け→公。明けは「明けの種類（kind ake）の記号」ならどれでも
     ake_syms = [s.symbol for s in by_sym.values() if s.kind == "ake"]
@@ -884,7 +904,7 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     return Proposal(year=year, month=month, table=table, shift_types=shift_types, units=units,
                     staff=staff, rules=rules, unknown_symbols=unknown, same_as=same,
                     problems=problems, suggestions=suggestions, raw=pasted.table, staff_evidence=staff_evidence,
-                    long_rest=long_rest, rest_mode=mode, rest_notes=rest_notes,
+                    long_rest=long_rest, rest_mode=mode, rest_notes=rest_notes, merge_notes=merge_notes,
                     paste_symbols=_paste_symbols(pasted, same), paste_merged=_paste_merged(pasted, same))
 
 

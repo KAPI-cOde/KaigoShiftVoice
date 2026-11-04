@@ -1772,6 +1772,7 @@ function renderSetup2(box) {
       row.appendChild(el("span", "", "始まり")); row.appendChild(si);
       row.appendChild(el("span", "", "長さ")); row.appendChild(hi); row.appendChild(el("span", "", "時間"));
       if (!s.start) row.appendChild(el("span", "small", "時刻を入れると、次の勤務までの間を数えます"));
+      else if ((pv.symbol_time_from || {})[s.symbol]) row.appendChild(el("span", "small", "（シフト記号表の " + pv.symbol_time_from[s.symbol] + " の時刻）"));
       row.dataset.sym = s.symbol;
       box.appendChild(row);
     });
@@ -1782,6 +1783,7 @@ function renderSetup2(box) {
     box.appendChild(el("label", "", "貼った表の記号を、こう読みました"));
     box.appendChild(el("div", "ln", pv.reading.join("、")));
   }
+  (pv.merge_notes || []).forEach(function (t) { var mn = el("div", "small", t); mn.style.marginTop = "10px"; box.appendChild(mn); });   // 兼務のまとめは警告ではない（赤にしない）
   (pv.rest_notes || []).slice(0, 3).forEach(function (t) { var rn = el("div", "rv-err", t); rn.style.marginTop = "10px"; box.appendChild(rn); });
   if ((pv.rest_notes || []).length > 3) { var rm = el("div", "small", "ほか" + (pv.rest_notes.length - 3) + "人"); rm.style.marginTop = "4px"; box.appendChild(rm); }
   if (pv.staff_evidence) { var se = el("div", "small", pv.staff_evidence); se.style.marginTop = "10px"; box.appendChild(se); }

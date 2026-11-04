@@ -129,11 +129,12 @@ def preview_out(pasted: Pasted, prop: Proposal) -> dict:
         "reading": _reading(pasted, prop), "units": list(prop.units),
         "blank_as_rest": pasted.blank_as_rest, "skipped": pasted.skipped,
         "problems": list(prop.problems), "suggestions": dict(prop.suggestions),
-        "staff_evidence": prop.staff_evidence, "rest_notes": list(prop.rest_notes),
+        "staff_evidence": prop.staff_evidence, "rest_notes": list(prop.rest_notes), "merge_notes": list(prop.merge_notes),
         "symbol_lines": list(prop.symbol_plan.lines) if prop.symbol_plan else [],
         "symbol_guessed": sorted(prop.symbol_plan.suggestions) if prop.symbol_plan else [],
         # 記号表の時刻を入れた勤務（画面の時刻の欄の説明で名前を挙げる）
         "symbol_times": [s["name"] for s in prop.shift_types if prop.symbol_plan and s["symbol"] in prop.symbol_plan.times],
+        "symbol_time_from": dict(prop.symbol_plan.time_from) if prop.symbol_plan else {},   # 勤務 → 時刻を取った記号
     }
 
 

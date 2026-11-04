@@ -43,7 +43,8 @@ def test_兼務の2行は1人にまとめて知らせる():
     want = [(a or b or "公") for a, b in zip(*mine)]
     assert p.table["田中"] == want                         # 日ごとに、片方が空ならもう片方の記号。違えば1行目
     prop = infer(p, 2026, 11, plan_symbols(p, SYMBOLS).answers)
-    assert f"{p.merged[0]}さんは2行（兼務）あったので、1人にまとめました" in prop.rest_notes
+    assert any(t.startswith(f"{p.merged[0]}さんは2行（兼務）あったので、1人にまとめました") for t in prop.merge_notes)
+    assert not any("兼務" in t for t in prop.rest_notes)   # 警告（赤）の知らせには入れない
 
 
 def test_名前の重なりは標準様式でなければ今までどおり止める():
@@ -143,7 +144,7 @@ def test_画面の受け口は記号表の読み取りを返す():
     out = preview_out(*_parse_setup({**data, "answers": ans})[:2])
     timed = {s["symbol"]: (s["start"], s["hours"]) for s in out["shift_types"] if s["timed"]}
     assert timed["早"] == ("07:00", 9)
-    assert any("兼務" in t for t in out["rest_notes"])
+    assert any("兼務" in t for t in out["merge_notes"])
     plain = preview_out(*_parse_setup({"text": form(), "year": 2026, "month": 11})[:2])
     assert plain["symbol_lines"] == [] and plain["suggestions"].get("a") is None   # 記号表が無ければ今までどおり
 
@@ -202,3 +203,13 @@ def test_様式で氏名の見出しが無ければ止める():
     text = (FX / "standard_form_gh30.tsv").read_text(encoding="utf-8").replace("(10) 氏　名", "(10) 従業者")
     with pytest.raises(ParseError, match="氏名"):
         parse_paste(text)
+
+
+def test_同じ勤務にまとまる記号はそう言い時刻の出どころを残す():
+    legend = "記号\t始業時刻\t終業時刻\nc\t9:00\t18:00\nd\t8:30\t17:30\na\t7:00\t16:00\n"
+    days = ["c"] * 8 + ["d"] * 4 + ["a"] * 8 + ["公"] * 10
+    pasted = parse_paste("氏名\t" + "\t".join(str(d) for d in range(1, 31)) + "\n"
+                         + "\n".join(f"{n}\t" + "\t".join(days[i:] + days[:i]) for i, n in enumerate(["上田", "森川", "北村"])))
+    plan = plan_symbols(pasted, legend)
+    assert plan.time_from["日"] == "c" and plan.time_from["早"] == "a"
+    assert any(x.startswith("c・d は") or x.startswith("c・dは") for x in plan.lines), plan.lines
