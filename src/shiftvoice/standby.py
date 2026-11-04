@@ -287,7 +287,7 @@ def rest_moves(facility: Facility, staff: list[Staff], rules: list[Rule], month:
     # 当番に入れる人は入れるままにする（前の電話で勤務に入った当番の日は、もう入れないので見ない）
     duty = [(L["def"], n, int(k)) for L in month.layers.values() if isinstance(L, dict) and "def" in L and "assign" in L
             for k, names in L["assign"].items() for n in names
-            if (n, int(k)) != (helper, day) and n in base and eligible(L["def"], month, base, n, int(k))]
+            if (n, int(k)) not in ((helper, day), (requester, day)) and n in base and eligible(L["def"], month, base, n, int(k))]
     ra0 = dict(month.rest_adjust)
     ra_more = {**ra0, requester: ra0.get(requester, 0) + 1}    # 休む人の公休が1日多い（移すだけ）
     ra_less = {**ra0, helper: ra0.get(helper, 0) - 1}          # 待機の人の休みをまだ移していない（休む人の埋め合わせだけ）

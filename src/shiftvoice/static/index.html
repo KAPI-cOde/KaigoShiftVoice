@@ -203,6 +203,7 @@
     .grid td.glow, .grid td.diff { background: none !important; font-weight: 400; }
     .grid td.off, .grid th.off { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .grid tr { break-inside: avoid; }
+    .grid .acc, .grid .mark, .legend .glowkey { display: none !important; }   /* 画面だけの書き込み（引き受けの回数・〇月から夜勤も・黄色の凡例）は紙に出さない */
   }
   footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
 </style>
@@ -316,8 +317,9 @@ function renderLegend() {
   items = items.filter(function (x) { return x[1] !== "有給"; }).concat(leave);
   var t = items.map(function (x) { return x[0] + "＝" + x[1]; }).join("　");
   if (multiUnit()) t += "　／　" + unitNames().join("・") + "はユニット";
-  t += "　／　黄色＝いま直ったマス";
-  document.getElementById("legend").textContent = t;
+  var lg = document.getElementById("legend");
+  lg.textContent = t;
+  lg.appendChild(el("span", "glowkey", "　／　黄色＝いま直ったマス"));   // 印刷では隠す（紙に黄色は出ない）
 }
 
 function renderTable() {
@@ -1841,10 +1843,15 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
 });
 
 // 表の持ち出し（2026-11-04）。コピーは /api/table.tsv を取ってクリップボードへ。使えない時は選べる文字の欄を出す
+var copyNoteTimer = null;
 function showCopyNote(text, tsv) {
   var box = document.getElementById("copynote");
   box.textContent = "";
   box.appendChild(document.createTextNode(text));
+  if (copyNoteTimer) clearTimeout(copyNoteTimer);
+  if (tsv === null || tsv === undefined) {   // コピーできた知らせは8秒で消す（ほかの操作の後まで残っていた）
+    copyNoteTimer = setTimeout(function () { box.textContent = ""; }, 8000);
+  }
   if (tsv !== null) {
     var ta = document.createElement("textarea");
     ta.value = tsv; ta.readOnly = true;
