@@ -1,0 +1,18 @@
+{
+  "name": "KaigoShiftVoice",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && ~/.local/bin/uv sync",
+  "postAttachCommand": "~/.local/bin/uv run shiftvoice demo --no-open",
+  "forwardPorts": [8765],
+  "portsAttributes": {
+    "8765": {
+      "label": "KaigoShiftVoice",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["README.md"]
+    }
+  }
+}

@@ -188,6 +188,19 @@ def load_dotenv(path: Path) -> None:
         os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
+def codespaces_host(port: int) -> str | None:
+    """GitHub Codespaces の中で動いている時だけ、その Codespace の転送先の名前（<Codespace の名前>-<番号>.<転送の領域>）を返す。
+    Codespaces では、画面はこの名前で届く（Host と Origin）。ほかの時は None（今までどおり 127.0.0.1 と localhost だけ）。
+    受けるのは、この Codespace のこの番号の名前1つだけ（Codespaces の転送は、既定で持ち主だけが開ける）。"""
+    if os.environ.get("CODESPACES") != "true":
+        return None
+    name = os.environ.get("CODESPACE_NAME", "")
+    domain = os.environ.get("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "")
+    if not name or not domain:
+        return None
+    return f"{name}-{port}.{domain}"
+
+
 WEEKDAY_JA = {"sun": "日", "mon": "月", "tue": "火", "wed": "水", "thu": "木", "fri": "金", "sat": "土"}
 
 
@@ -251,13 +264,19 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
             self.wfile.write(body)
 
         def _local(self) -> bool:
-            """手元からだけ受ける。Host と Origin が 127.0.0.1 か localhost（DNS の付け替えと、ほかのサイトからの送信を止める）。"""
+            """手元からだけ受ける。Host と Origin が 127.0.0.1 か localhost（DNS の付け替えと、ほかのサイトからの送信を止める）。
+            GitHub Codespaces の中で動く時だけ、その Codespace の転送先の名前1つも受ける（codespaces_host）。"""
             port = self.server.server_address[1]
             ok = {f"127.0.0.1:{port}", f"localhost:{port}"}
+            origins = {f"http://{h}" for h in ok}
+            fwd = codespaces_host(port)
+            if fwd:
+                ok = ok | {fwd}
+                origins = origins | {f"https://{fwd}"}
             if self.headers.get("Host") not in ok:
                 return False
             origin = self.headers.get("Origin")
-            return origin is None or origin in {f"http://{h}" for h in ok}
+            return origin is None or origin in origins
 
         def _voice(self, ctype: str):
             """声（16kHz・モノラルの float32 の並び）を文字にして、文字の一言と同じ流れに入れる。声は外へ送らない。"""
