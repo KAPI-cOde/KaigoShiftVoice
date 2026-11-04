@@ -1480,6 +1480,18 @@ function renderResult() {
   var ad = el("div", "adopt");
   if (adopted) {
     ad.appendChild(el("div", "done", R.month + "月の表にしました"));
+    // 採った翌月を開く（印刷・Excel へ貼る・一言の直しは、開いた月で使う。2026-11-04 敵対レビュー）
+    var ob = el("button", "", R.month + "月の表を開く（印刷・Excel へ貼る）"); ob.type = "button";
+    ob.addEventListener("click", function () {
+      var cur = (FACS.filter(function (f) { return f.current; })[0] || {}).id;
+      ob.disabled = true;
+      post("facilities/open", { id: cur }).then(function (res) {
+        if (res.error) { ob.disabled = false; ad.appendChild(el("div", "rv-err", res.error)); return; }
+        resetForFacility(res.state, "");
+        loadFacilities();
+      }).catch(function () { ob.disabled = false; });
+    });
+    ad.appendChild(ob);
   } else {
     var ab = el("button", "primary big", R.month + "月はこれで作る"); ab.type = "button";
     ab.addEventListener("click", function () {

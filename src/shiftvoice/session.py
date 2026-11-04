@@ -1044,7 +1044,7 @@ class Session:
             "can_undo": bool(m.history),
             "distributed": m.distributed,
             "layers": {k: {"name": v["def"]["name"], "assign": v["assign"], "rule_id": v["rule_id"]}
-                       for k, v in m.layers.items()},
+                       for k, v in m.layers.items() if isinstance(v, dict) and "def" in v},   # 翌月の案（_plans・_adopted）は当番でない
             "accepted": accepted_counts(self.store.acceptances(), self.ym, self._today(), include_returned=True),
             "accepted_items": self._accepted_items(m),
             "last_said": m.history[-1]["said"] if m.history else None,
