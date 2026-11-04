@@ -627,6 +627,8 @@ class Session:
             cover = a.id.startswith(COVER_ID)
             label = (f"{a.layer}で穴埋め" if cover else "配った後の直しで勤務" if a.layer == "fix"
                      else f"{names.get(a.layer, '待機当番')}で穴埋め")
+            if a.moved_to:   # 公休を移した日（案の返事の行「11/1 引き受け（休みは10日へ）」とそろえる）
+                label += f"（休みは{int(a.moved_to[8:10])}日へ）"
             out.append({"staff": a.staff, "date": a.date, "label": label, "cover": cover})
         return out
 
