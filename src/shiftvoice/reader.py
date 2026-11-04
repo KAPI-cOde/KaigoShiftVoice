@@ -17,7 +17,7 @@ MAX_TOKENS = 400
 
 TYPES = ("day_off", "set_cell", "avoid_cell", "move", "swap", "forbid_sequence", "pair_apart",
          "count_limit", "coverage", "weekday_pref", "consecutive_limit", "rest_after_night", "around_off",
-         "leave_count", "weigh", "explain", "custom", "staff_info", "cancel", "none", "unclear")
+         "leave_count", "weigh", "explain", "custom", "staff_info", "cancel", "cover", "none", "unclear")
 
 
 class ReadError(Exception):
@@ -43,6 +43,7 @@ SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係で�
 - staff_info 職員の情報の変更（できる勤務など）。staff, from_month, can_add(記号の並び), can_remove
 - leave_count 有給の日数の頼み（日付は任せる）。staff, count(日数。言っていなければ null), reason
 - cancel 前の頼みの取り消し（「やっぱりいらない」）。staff, days(取り消す日だけ。日を言っていなければ null), shift(取り消す勤務の記号。休みなら 公)。「そのままで」「触らないで」の日と人は書かない
+- cover すでに起きた穴埋めの報告（急な休みなどで足りない所に、人が残業した・残ってくれた・早く来てくれた。「埋めた」と言っていなくてもよい。表は変えずに記録だけ）。staff, day(その日。今日・昨日なら null), how(埋め方の短い言葉。「残業」「早出」など), reason
 - swap / pair_apart / rest_after_night / around_off / weigh / explain / custom はその名前の type だけ書き、summary に一言
 - none 頼みがない。unclear 読めない時は question に聞き返しの1文
 
@@ -53,6 +54,7 @@ reason は一言にある理由の言葉を短く抜き出す（言い換えな�
 曜日を言った頼み（「木曜は」「土日は」）は日付の型にしない。人の頼みは weekday_pref、勤務の人数の頼みは coverage にする。
 表に無い当番や仕組み（待機・呼び出し・オンコールなど、勤務の記号に無い物）を作る一言は、人数を言っていても coverage にせず、ほかの型に分けず custom 1件だけにする。
 move の from_day は、元の日を言っていなければ null（手元で表から補う）。
+cover は、人が残った・早く来たなど、もう済んだ穴埋めを言った時だけにする。これからの頼み（「〜だと助かる」「〜にして」）は日付の型、お礼だけで人を言っていない一言は none。
 
 例
 一言「職員03さん、8日は通院で休み」

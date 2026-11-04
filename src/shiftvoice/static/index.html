@@ -71,6 +71,8 @@
   .grid tr.standby td.name small { font-size: 10px; margin-left: 4px; }
   .grid tr.standby td.cell { overflow: hidden; white-space: nowrap; }
   .grid .acc { font-size: 10px; margin-left: 4px; font-weight: 700; }
+  .accrows { margin-top: 8px; font-size: 12px; }
+  .accrows .acchead { font-weight: 700; }
   .card .explain { border: 0; }
   .card .sim .note { font-size: 10px; color: #555; }
   .card .explain div.box { border: 1px solid #000; border-radius: 3px; padding: 1px 6px; margin: 2px 0; display: inline-block; }
@@ -192,6 +194,7 @@
     <h2 id="tabletitle">表</h2>
     <div id="tablewrap"></div>
     <div class="legend" id="legend"></div>
+    <div class="accrows" id="accrows"></div>
     <div id="why"></div>
     <div class="said" id="said"></div>
     <div class="reply" id="reply"></div>
@@ -370,6 +373,23 @@ function renderTable() {
   });
   t.appendChild(tb);
   wrap.appendChild(t);
+}
+
+// 引き受けの記録の行（「田村さん　11/8 待機当番で穴埋め・11/14 残業で穴埋め」）。表のマスが変わらない残業・早出などの
+// 記録がある月だけ出す（待機の引き受けは表の名前の横の回数で見えるので、それだけの月は今までどおり出さない）
+function renderAccRows() {
+  var box = document.getElementById("accrows");
+  box.textContent = "";
+  var items = (S && S.accepted_items) || [];
+  if (!items.some(function (x) { return x.cover; })) return;
+  box.appendChild(el("div", "acchead", S.month + "月の引き受けの記録"));
+  var by = {}, order = [];
+  items.forEach(function (x) {
+    if (!by[x.staff]) { by[x.staff] = []; order.push(x.staff); }
+    var m = /^\d+-(\d+)-(\d+)/.exec(x.date) || [];
+    by[x.staff].push(parseInt(m[1], 10) + "/" + parseInt(m[2], 10) + " " + x.label);
+  });
+  order.forEach(function (n) { box.appendChild(el("div", "", n + "さん　" + by[n].join("・"))); });
 }
 
 function fmtAt(at) {
@@ -773,6 +793,19 @@ function renderReplyBody(r) {
     box.appendChild(ob);
     return;
   }
+  if (r.kind === "cover_offer") {  // 残業・早出などでの穴埋め。表は変えず、［記録する］で引き受けの記録に足す
+    box.appendChild(el("div", "offer", r.message || ""));
+    box.appendChild(el("div", "offer2", "表のマスは変えません。翌月の表を作る時に、引き受けの1回として数えます"));
+    var cvb = el("div", "btns");
+    [["記録する", "accept", "primary"], ["やめる", "cancel", ""]].forEach(function (p) {
+      var b = el("button", p[2], p[0]);
+      b.type = "button";
+      b.addEventListener("click", function () { sendOffer(p[1], r.uid); });
+      cvb.appendChild(b);
+    });
+    box.appendChild(cvb);
+    return;
+  }
   if (r.kind === "fix_offer") {  // 配った後のほかの直し。［これで直す］まで表は変えない
     box.appendChild(el("div", "offer", r.message || ""));
     var fb = el("div", "btns");
@@ -953,6 +986,7 @@ function renderAll() {
   renderKey();
   renderDist();
   renderLegend();
+  renderAccRows();
   renderTopbar();
   renderTable();
   renderCards();
@@ -975,7 +1009,7 @@ function handle(res, isUndo) {
   });
   S = res.state;
   moveOpen = false;
-  offerR = r && (r.kind === "standby_offer" || r.kind === "fix_offer") ? r : null;
+  offerR = r && (r.kind === "standby_offer" || r.kind === "fix_offer" || r.kind === "cover_offer") ? r : null;
   if (offerR) (r.changes || []).forEach(function (c) { glowCells[c.staff + "|" + c.day] = true; });
   ask = r && (r.kind === "ask_period" || r.kind === "ask_replace") ? r : null;
   if (r && r.kind === "applied") {
@@ -1717,7 +1751,8 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
       return { day: m.day, kind: m.kind, line: m.line, parts: m.parts, label: m.label, warn: m.warn,
                changes: m.changes, message: m.message, summary: m.summary };
     });
-    offerR = o.duty ? { kind: "standby_offer", uid: of.id, changes: o.changes || [],
+    offerR = o.cover ? { kind: "cover_offer", uid: of.id, changes: [], message: o.message }
+           : o.duty ? { kind: "standby_offer", uid: of.id, changes: o.changes || [],
                message: o.message || ("その日の待機の" + o.duty + "さんに頼む案です（" + (o.changes || []).length + "マス）"),
                summary: o.summary || ("公休　" + pr(o.requester) + "　" + pr(o.duty)),
                extra: { duty: o.duty, requester: o.requester, day: o.day, moves: shownMoves, pick: o.pick || 0,

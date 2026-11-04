@@ -49,6 +49,18 @@ _REPLACE_ONLY = {"replace": re.compile(_FILLER + r"置き換え(?:る|て|ます
                  "add": re.compile(_FILLER + r"別に足(?:す|して|します)(?:ください|ね|よ)?")}
 
 
+COVER_ID = "a-cover-"   # 残業・早出などでの穴埋めの記録の ID の頭（待機の記録「a-発言ID」と見分ける）
+
+
+def _days_ago(text: str) -> int:
+    """日を言っていない穴埋めの報告が、今日から何日前のことか（「昨日」は1、「おととい」は2、ほかは今日）。"""
+    if re.search(r"おととい|一昨日", text):
+        return 2
+    if re.search(r"昨日|昨夜|ゆうべ", text):
+        return 1
+    return 0
+
+
 def period_answer(text: str) -> str | None:
     """「毎月ですか、今月だけですか」への答えそのものなら "rule" / "once"、そうでなければ None。"""
     return read_answer(text) if _PERIOD_ONLY.fullmatch(_NOISE.sub("", text)) else None
@@ -280,6 +292,8 @@ class Session:
             return Reply("ask", u["id"], str(e))
         if p.kind == "cancel":
             return self._cancel(u, p)
+        if p.kind == "cover":
+            return self._cover_offer(u, p)
         if p.kind == "cells" and p.replace_from and not m.distributed:
             r = self._replace_offer(u, p, m)
             if r is not None:
@@ -539,9 +553,82 @@ class Session:
         m.distributed = True
         self.store.save_month(m)
 
+    def _today(self) -> str:
+        """引き受けを数える基準日（デモ設定。無ければ今日の日付）。"""
+        return self.base_date or self.now().date().isoformat()
+
     def _accepted(self, name: str) -> int:
-        base = self.base_date or self.now().date().isoformat()
-        return accepted_counts(self.store.acceptances(), self.ym, base, include_returned=True).get(name, 0)
+        return accepted_counts(self.store.acceptances(), self.ym, self._today(), include_returned=True).get(name, 0)
+
+    # 残業・早出などでの穴埋めを記録する（表は変えない）
+    def _cover_dup(self, staff: str, date: str, uid: str, items=None) -> bool:
+        """同じ人・同じ日の引き受けの記録（待機・配った後の直し・残業のどれでも）がもうあるか。この発言の記録は数えない。"""
+        items = self.store.acceptances() if items is None else items
+        return any(a.staff == staff and a.date == date and a.id != f"{COVER_ID}{uid}" for a in items)
+
+    def _cover_offer(self, u: dict, p: Proposal) -> Reply:
+        """すでに起きた穴埋め（「田村さんが残業して、遅番の穴を埋めてくれた」）。表のマスは変えず、確かめのカードを出す。
+        ［記録する］で引き受けの記録に足し、翌月の返す計算でも1回として数える（同僚の介護員の答え 2026-11-04）。
+        日を言っていなければ今日（基準日）、「昨日」なら前の日。開いている月の外の日と、まだ来ていない日は記録せずに聞く。
+        同じ人・同じ日の記録がもうあれば、足さずにそう言う。"""
+        c, uid = p.covers[0], u["id"]
+        today = dt.date.fromisoformat(self._today())
+        d = (today - dt.timedelta(days=_days_ago(u["text"])) if c["day"] is None
+             else dt.date(self.year, self.month, c["day"]))
+        md = f"{d.month}月{d.day}日"
+        msg = None
+        if (d.year, d.month) != (self.year, self.month):
+            msg = (f"{md}は{self.month}月の表の外なので、記録できません。{self.month}月の日なら「14日は」のように"
+                   "日を付けて言ってください。表も記録も変えていません")
+        elif d > today:
+            msg = f"{md}はまだ先です。何日のことか教えてください。表も記録も変えていません"
+        elif self._cover_dup(c["staff"], d.isoformat(), uid):
+            msg = f"{c['staff']}さんの{md}の引き受けは、もう記録があります。記録は増やしていません"
+        if msg:
+            self.store.resolve_pending(self.year, self.month, uid)
+            return Reply("ask", uid, msg)
+        label = f"{c['staff']}さん {md} {c['how']}で穴埋め"
+        offer = {"cover": {"staff": c["staff"], "date": d.isoformat(), "how": c["how"]}, "summary": label,
+                 "message": f"{label} → 引き受けとして記録します"}   # 開き直した時も同じ文で出す
+        self.store.update_pending(self.year, self.month, uid, status="offer", offer=offer)
+        return Reply("cover_offer", uid, offer["message"], summary=label, extra={"cover": offer["cover"]})
+
+    def _commit_cover(self, u: dict) -> Reply:
+        """［記録する］。引き受けの記録に1件足す。表と帳面は変えない。案を出した後に同じ人・同じ日の記録が入っていたら足さない。
+        保存の順は 記録 → 月の戻す履歴（［ひとつ戻す］で記録を消すため）→ 未反映の発言。何度呼んでも1件。"""
+        uid, c = u["id"], u["offer"]["cover"]
+        md = f"{int(c['date'][5:7])}月{int(c['date'][8:10])}日"
+        items = self.store.acceptances()
+        if self._cover_dup(c["staff"], c["date"], uid, items):
+            self.store.resolve_pending(self.year, self.month, uid)
+            return Reply("ask", uid, f"{c['staff']}さんの{md}の引き受けは、もう記録があります。記録は増やしていません")
+        aid = f"{COVER_ID}{uid}"
+        if not any(a.id == aid for a in items):
+            self.store.save_acceptances(items + [Acceptance(
+                id=aid, staff=c["staff"], date=c["date"], layer=c["how"], op_id=uid,
+                tx_rev=self.store.ledger().rev, note=u["text"])])                # 1 引き受けの記録
+        m = self.store.month(self.year, self.month)
+        if not any(h.get("op_id") == uid for h in m.history):
+            m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": u["text"],
+                              "acceptance_id": aid})
+            self.store.save_month(m)                                         # 2 戻す履歴（表は変えない）
+        self.store.resolve_pending(self.year, self.month, uid)               # 3 未反映の発言
+        msg = f"{c['staff']}さんの引き受けとして記録しました（{md} {c['how']}で穴埋め）。表のマスはそのままです"
+        return Reply("applied", uid, msg, summary=msg)
+
+    def _accepted_items(self, m) -> list[dict]:
+        """画面の引き受けの記録の行。この月の、今日（基準日）までの記録。待機は当番の名前、残業などは埋め方で言う。"""
+        today = self._today()
+        names = {k: v["def"]["name"] for k, v in m.layers.items() if isinstance(v, dict) and "def" in v}
+        out = []
+        for a in sorted(self.store.acceptances(), key=lambda a: (a.date, a.staff)):
+            if a.date[:7] != self.ym or a.date > today:
+                continue
+            cover = a.id.startswith(COVER_ID)
+            label = (f"{a.layer}で穴埋め" if cover else "配った後の直しで勤務" if a.layer == "fix"
+                     else f"{names.get(a.layer, '待機当番')}で穴埋め")
+            out.append({"staff": a.staff, "date": a.date, "label": label, "cover": cover})
+        return out
 
     def _standby_offer(self, u: dict, p, m) -> Reply | None:
         offs = [r for r in p.rules if r["kind"] == "cell" and r["params"] == {"in": ["公"]}]
@@ -650,13 +737,16 @@ class Session:
 
     def accept(self, uid: str, pick: int | None = None) -> Reply:
         """［了承をもらって直す］（待機の人に頼む案）と［これで直す］（配った後のほかの直し）。
-        待機の案の時だけ引き受けの記録が増える（17章 A23 の13）。案を作った後に表か帳面が変わっていたら、
+        待機の案の時だけ引き受けの記録が増える（17章 A23 の13。残業などの穴埋めの［記録する］も、ここから
+        _commit_cover へ回る）。案を作った後に表か帳面が変わっていたら、
         古い案で上書きせずに作り直す（Astra 2026-11-02 の指摘1）。
         pick は［休みを移す日を変える］で選んだ候補の番号（0 がおすすめ。待機の案だけ。省くと案に書いた候補）。"""
         u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
         if u is None or u.get("status") != "offer":
             return Reply("error", uid, "了承をもらう案が見つかりません")
         o = u["offer"]
+        if o.get("cover") is not None:   # 穴埋めの記録。表を持たない案なので、下の作り直しの確かめには通さない
+            return self._commit_cover(u)
         m = self.store.month(self.year, self.month)
         led = self.store.ledger()
         if o.get("cancel") is not None and not o.get("replace"):
@@ -873,8 +963,10 @@ class Session:
 
     def cancel(self, uid: str) -> Reply:
         """［やめる］。頼みを取り下げる（表も記録も変えない）。"""
+        u = next((x for x in self.store.pending(self.year, self.month) if x["id"] == uid), None)
+        cover = bool(u and (u.get("offer") or {}).get("cover"))
         self.store.resolve_pending(self.year, self.month, uid)
-        return Reply("ask", uid, "やめました。表は変えていません")
+        return Reply("ask", uid, "やめました。記録は増やしていません" if cover else "やめました。表は変えていません")
 
     # 画面へ渡す
     def restore(self, rule_id: str) -> Reply:
@@ -949,8 +1041,8 @@ class Session:
             "distributed": m.distributed,
             "layers": {k: {"name": v["def"]["name"], "assign": v["assign"], "rule_id": v["rule_id"]}
                        for k, v in m.layers.items()},
-            "accepted": accepted_counts(self.store.acceptances(), self.ym,
-                                        self.base_date or self.now().date().isoformat(), include_returned=True),
+            "accepted": accepted_counts(self.store.acceptances(), self.ym, self._today(), include_returned=True),
+            "accepted_items": self._accepted_items(m),
             "last_said": m.history[-1]["said"] if m.history else None,
             "symbols": [{"symbol": st.symbol, "name": st.name} for st in fac.shift_types],
             "absence_sim": self.store.absence_sim(self.year, self.month),

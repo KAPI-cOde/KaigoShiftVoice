@@ -34,5 +34,11 @@
  "職員11さん、今月は夜勤0で。あ、毎月じゃなくて、今月だけね": "{\"items\":[{\"type\":\"count_limit\",\"staff\":[\"職員11\"],\"shift\":\"夜\",\"min\":null,\"max\":0,\"until_day\":null,\"strength\":\"operational\",\"reason\":null}]}",
  "職員02さん、木曜は子どもの送りがあるから、12月いっぱい早番にしないでほしいって": "{\"items\":[{\"type\":\"weekday_pref\",\"staff\":\"職員02\",\"weekdays\":[\"thu\"],\"shift\":\"早\",\"avoid\":true,\"until_month\":12,\"reason\":\"子どもの送り\"}]}",
  "職員07さん、15日は必ず休み、16日もできれば休み、あとはできるだけ今のまま": "{\"items\":[{\"type\":\"day_off\",\"staff\":\"職員07\",\"days\":[15],\"strength\":\"fixed\",\"reason\":null},{\"type\":\"day_off\",\"staff\":\"職員07\",\"days\":[16],\"strength\":\"negotiable\",\"reason\":null}]}",
- "職員15さん、23日の祝日は日勤だと助かるって。できればでいいけど": "{\"items\":[{\"type\":\"set_cell\",\"staff\":\"職員15\",\"days\":[23],\"shift\":\"日\",\"strength\":\"negotiable\",\"reason\":\"23日の祝日\"}]}"
+ "職員15さん、23日の祝日は日勤だと助かるって。できればでいいけど": "{\"items\":[{\"type\":\"set_cell\",\"staff\":\"職員15\",\"days\":[23],\"shift\":\"日\",\"strength\":\"negotiable\",\"reason\":\"23日の祝日\"}]}",
+ "14日は職員09さんが2時間残って埋めてくれた": "{\"items\":[{\"type\":\"cover\",\"staff\":\"職員09\",\"day\":14,\"how\":\"残業\",\"reason\":null}]}",
+ "職員15さんが残業して、遅番の穴を埋めてくれた": "{\"items\":[{\"type\":\"cover\",\"staff\":\"職員15\",\"day\":null,\"how\":\"残業\",\"reason\":null}]}",
+ "今日の夜、職員10さんが早く来てくれて助かった": "{\"items\":[{\"type\":\"cover\",\"staff\":[\"職員10\"],\"day\":null,\"how\":\"早出\",\"reason\":\"今日の夜に早く来てくれて助かった\"}]}",
+ "昨日、職員16さんが1時間早く来て、早番の穴を埋めてくれた": "{\"items\":[{\"type\":\"cover\",\"staff\":\"職員16\",\"day\":null,\"how\":\"早出\",\"reason\":\"早番の穴を埋めた\"}]}",
+ "8日、職員15さんが残業で日勤の穴を埋めてくれたよ": "{\"items\":[{\"type\":\"cover\",\"staff\":[\"職員15\"],\"day\":8,\"how\":\"残業\",\"reason\":null}]}",
+ "職員02さんが残って、夜勤の穴を埋めてくれた": "{\"items\":[{\"type\":\"cover\",\"staff\":\"職員02\",\"day\":null,\"how\":\"残業\",\"reason\":\"夜勤の穴を埋めた\"}]}"
 }

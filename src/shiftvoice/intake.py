@@ -4,6 +4,7 @@
 - cells 今月だけの頼み（日付つき）。マスだけが変わり、札にしない。帳面には今月だけ（once）で入れる
 - rule  決まり。札が1枚増える。毎月か今月だけかを言っていなければ聞く（期限つきは聞かない）
 - staff 職員の情報。名簿の行に印。言われた月から効く
+ほかに、すでに起きた穴埋め（残業・早出など）の報告 cover がある。表も帳面も変えず、引き受けの記録に足す候補にする
 """
 from __future__ import annotations
 
@@ -31,6 +32,7 @@ class Proposal:
     reason: str | None = None
     summary: str = ""
     replace_from: list[str] | None = None   # 言い直し（「AさんじゃなくてBさん」）で、前の頼みを外すかもしれない人
+    covers: list[dict] = field(default_factory=list)   # 穴埋めの記録の候補 {staff, day（言っていなければ None）, how}
 
 
 class Clarify(Exception):
@@ -82,6 +84,19 @@ def _flex(v, default: str) -> str:
 
 def _who(names: list[str] | None) -> str:
     return "・".join(f"{n}さん" for n in names) if names else "全員"
+
+
+NOBODY_COVER = "誰が埋めてくれたか読み取れませんでした。表も記録も変えていません。名前を入れて、もう一度言ってください"
+
+
+def _how(v) -> str:
+    """埋め方を短い名前にそろえる（引き受けの記録の layer に入れ、画面に「残業で穴埋め」と出す）。"""
+    s = str(v or "").strip()
+    if "早" in s:
+        return "早出"
+    if not s or "残" in s or "延長" in s:
+        return "残業"
+    return s[:8]
 
 
 def _leave_sym(facility: Facility) -> str | None:
@@ -237,7 +252,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             raise Clarify("この形の頼みは、まだ扱えません。別の言い方で言ってください")
     kinds = {"cells" if it["type"] in DATE_TYPES else "staff" if it["type"] == "staff_info"
              else "layer" if it["type"] == "layer_def" else "cancel" if it["type"] == "cancel"
-             else "rule" for it in real}
+             else "cover" if it["type"] == "cover" else "rule" for it in real}
     if len(kinds) > 1:
         raise Clarify("頼みが混ざっています。1つずつ言ってください")
     kind = kinds.pop()
@@ -449,6 +464,27 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 p.staff_changes.append({"staff": n, "from": f"{year:04d}-{fm:02d}", "can_add": add,
                                         "can_remove": rem, "said": text})
             sums.append(f"{_who(who)} {fm}月から" + "・".join(facility.shift(s).name for s in add) + "もできる")
+        elif t == "cover":
+            # すでに起きた穴埋め（残業・早出など）。表も帳面も変えず、引き受けの記録の候補にする。人が無ければ
+            # ここで聞き返す（下の「誰の頼みか」の守りは p.rules しか見ない）。1人・1日ずつ（まとめては聞き返す）。
+            # 日を言っていなければ None のまま返す（今日は session が基準日で決める）
+            who = _names(it.get("staff"), names)
+            if not who:
+                raise Clarify(NOBODY_COVER)
+            if len(who) != 1 or len(real) != 1:
+                raise Clarify("1人ずつ言ってください。表も記録も変えていません")
+            v = it.get("day")
+            if v in (None, []) and it.get("days"):   # 日付の型と同じ書き方（days）で返した時
+                v = it["days"]
+            day = None
+            if v not in (None, []):
+                ds = _days(v, month)
+                if len(ds) != 1:
+                    raise Clarify("1日ずつ言ってください。表も記録も変えていません")
+                day = ds[0]
+            how = _how(it.get("how"))
+            p.covers.append({"staff": who[0], "day": day, "how": how})
+            sums.append(f"{who[0]}さん {how}で穴埋め")
     # 一言に名簿の人が出ているのに、返事が人を省いて「全員」に効く形なら、当てずに聞き返す（レビュー b の指摘。
     # 「岡田さん、15と16は休み」が全員の休みになる道を塞ぐ）
     # 人が出ているかは、伏せる処理と同じ見方（名前・呼び方・名前の頭）で見る（再レビュー b の指摘）
@@ -494,8 +530,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         if any(w in text for w in REPHRASE_WORDS) and len(others) == 1 and len(p.rules) == 1 \
                 and len(p.rules[0].get("who") or []) == 1:
             p.replace_from = others
-    elif kind == "cancel":
-        p.scope = "once"   # 取り消しは前の頼みを外すだけ。聞かない
+    elif kind in ("cancel", "cover"):
+        p.scope = "once"   # 取り消しは前の頼みを外すだけ、穴埋めは記録するだけ。聞かない
     elif kind in ("rule", "layer"):
         p.scope = "rule" if p.until else read_period(text)
     else:  # 職員の情報は言われた月から。聞かない
