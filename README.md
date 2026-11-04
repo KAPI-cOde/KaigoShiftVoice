@@ -89,11 +89,12 @@
 | 表に無い当番の欄を組み立てる | Claude Sonnet 5.5 の Messages API（当番の定義を JSON で返させる。上限1500トークン） | 型に収まらない一言から新しい仕組みを組み立てるのは、読み取りより難しいため | `src/shiftvoice/reader.py`（SonnetBuilder）、`tests/fixtures/builds.json`、`tests/test_act2.py::test_d1_standby_by_words` |
 | 途中で切れた返事を使わない | 返事の止まった理由（stop_reason）を見て、end_turn 以外は読み取りの失敗にする | 切れた JSON で表を変えないため | `src/shiftvoice/reader.py`、`tests/test_t2.py::test_t2_14_cut_reply_then_retry` |
 | 名前を外へ出さない | Claude へ送る前に名簿の名前を「職員01」に伏せ、返事で戻す（Claude の機能ではなくアプリの側の守り） | 職員の実名を送らずに読み取りを使うため | `src/shiftvoice/names.py`、`tests/test_utterance.py::test_r9_no_names_sent` |
-| 開発の設計と検収 | Claude Code（メインの Claude が設計・検収、Sonnet・Haiku のサブエージェントに画面と CI の点検を任せる） | 判断を1か所に集め、量の多い作業だけを任せるため | `docs/development.md`、`.github/workflows/p1.yml`、`tools/check_public.py` |
-| 差分の見落としを減らす | Claude Code のサブエージェントに、役を分けて差分を読ませる（壊す側・使う人・個人情報） | 書いた側と同じ目で確かめると、同じ見落としが残るため | `docs/goal-progress.md`、`docs/development.md`（敵対レビューの使い方） |
-| 使う人の目で確かめる | Claude Code のサブエージェントに、使う人の役（介護主任・ユニットのリーダー・介護を知らない審査員）で画面の写真を読ませ、まっさらな取得から README どおりに動かさせる | 作った本人は狙いを知っているので、迷う所に気づけないため | `docs/development.md`（はじめて見る人の目と、審査員の目で回したこと） |
+| 開発の設計と検収 | Claude Code（メインの Claude が設計・検収、Sonnet・Haiku のサブエージェントに画面と CI の点検を任せる） | 判断を1か所に集め、量の多い作業だけを任せるため | `CLAUDE.md`（Claude Code への決まり）、`.claude/settings.json` と `.claude/hooks/check-public.sh`（ファイルを書くたびに公開の点検を回す）、`docs/development.md`、`.github/workflows/p1.yml`、`tools/check_public.py` |
+| 差分の見落としを減らす | Claude Code のサブエージェントに、役を分けて差分を読ませる（壊す側・使う人・個人情報） | 書いた側と同じ目で確かめると、同じ見落としが残るため | `.claude/agents/adversarial-reviewer.md`（起きやすさ×影響を付ける）、`.claude/agents/privacy-reviewer.md`、`docs/goal-progress.md`、`docs/development.md`（敵対レビューの使い方） |
+| 使う人の目で確かめる | Claude Code のサブエージェントに、使う人の役（介護主任・ユニットのリーダー・介護を知らない審査員）で画面の写真を読ませ、まっさらな取得から README どおりに動かさせる | 作った本人は狙いを知っているので、迷う所に気づけないため | `.claude/agents/facility-reader.md`、`.claude/agents/fresh-clone-tester.md`、`.claude/skills/fresh-clone-check/SKILL.md`、`docs/development.md`（はじめて見る人の目と、審査員の目で回したこと） |
+| 画面とデモ動画を確かめる | Claude Code のサブエージェントに、画面を見えないブラウザで撮って自分で見て直させ、デモ動画の仮の通しを審査の配点で採点させる | 画面と動画は、文字の報告だけでは崩れに気づけないため | `.claude/agents/screen-checker.md`、`.claude/skills/screen-check/SKILL.md`、`.claude/agents/demo-judge.md`、`.claude/skills/demo-video-draft/SKILL.md` |
 
-開発は Claude Code を中心に進めました。メインの Claude が設計と検収を受け持ち、画面は Sonnet のサブエージェントが作って見えないブラウザで撮って確かめ、CI の点検は Haiku のサブエージェントが作りました。区切りごとに別の系統のモデルに敵対レビューをさせ、指摘には起きやすさと影響の点を付けて、線を超えた物だけを直しています。コミットの前には手元のフックが実在の名前と鍵の形を止めます。詳しくは [docs/development.md](docs/development.md)（役割の分け方・敵対レビューで直した物・試行錯誤で変えたこと）にまとめました。
+開発は Claude Code を中心に進めました。メインの Claude が設計と検収を受け持ち、画面は Sonnet のサブエージェントが作って見えないブラウザで撮って確かめ、CI の点検は Haiku のサブエージェントが作りました。区切りごとに別の系統のモデルに敵対レビューをさせ、指摘には起きやすさと影響の点を付けて、線を超えた物だけを直しています。コミットの前には手元のフックが実在の名前と鍵の形を止め、Claude Code がファイルを書くたびに `.claude/settings.json` のフックが公開の点検（`tools/check_public.py`）を回します。Claude Code の設定（`CLAUDE.md`、`.claude/` の役・スキル・フック）もこのリポジトリに入れています。詳しくは [docs/development.md](docs/development.md)（役割の分け方・敵対レビューで直した物・試行錯誤で変えたこと）にまとめました。
 
 ### ほかの当番も、言葉から組み立てられるか
 
