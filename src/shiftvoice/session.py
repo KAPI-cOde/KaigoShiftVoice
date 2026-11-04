@@ -26,7 +26,7 @@ from .model import Acceptance
 from .resolve import changed_cells, resolve
 from .rules import same_slot
 from .review import history as _history
-from .standby import ASK_WIDER, NO_MOVE, assign, duty_days, fix_absence, use_move
+from .standby import ASK_WIDER, NO_MOVE, assign, duty_days, fix_absence, oncall_layer, use_move
 from .store import Store
 
 JST = dt.timezone(dt.timedelta(hours=9))
@@ -390,6 +390,8 @@ class Session:
                                             .get("standby_pins", {})).items()}
             for r in added:
                 d = r.params["def"]
+                if d["id"] in m.layers and m.layers[d["id"]]["def"].get("name") != d["name"]:   # 別の当番と ID が重なる時
+                    d = r.params["def"] = {**d, "id": f'{d["id"]}-{len(m.layers) + 1}'}
                 m.layers[d["id"]] = {"def": d, "rule_id": r.id,
                                      "assign": assign(d, fac, self.store.staff_on(self.year, self.month),
                                                       m, m.table, pins=pins)}
@@ -637,7 +639,7 @@ class Session:
         if len(offs) != 1 or len(p.rules) != 1 or len(offs[0]["who"] or []) != 1 or len(offs[0]["when"]) != 1:
             return None
         name, day = offs[0]["who"][0], offs[0]["when"][0]
-        layer = next((L for L in m.layers.values() if day in duty_days(L["def"], m)), None)
+        layer = oncall_layer(m, day)   # 勤務の中で受け持つ係（入浴係など）は休みの電話に使わない
         if layer is None:
             return None
         fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)

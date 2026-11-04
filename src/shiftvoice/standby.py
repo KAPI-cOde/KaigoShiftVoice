@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import hashlib
 import time
 
 from ortools.sat.python import cp_model
@@ -70,7 +71,23 @@ def validate_def(d: dict, facility: Facility) -> dict:
     counters = d.get("counters") or out["counters"]
     out["counters"] = [{"id": str(c.get("id")), "carry_to_next_month": bool(c.get("carry_to_next_month", False))}
                        for c in counters if isinstance(c, dict) and c.get("id")]
+    # 欄の ID。待機の当番は今までどおり standby（撮影の状態と前提がこの ID を使う）。ほかの当番・係は名前から作り、
+    # 待機当番と入浴係のように2つ足しても上書きしない（2026-11-04、入浴係を本物の Claude で足して見つけた）
+    if not out["name"].startswith("待機"):
+        out["id"] = "duty-" + hashlib.sha1(out["name"].encode("utf-8")).hexdigest()[:6]
     return out
+
+
+def is_oncall(d: dict) -> bool:
+    """休みの人から選ぶ当番（待機など。休みの電話を受ける）か。勤務の人から選ぶ係（入浴係など）は違う。"""
+    return "公" in (d.get("own_shift_on_duty_day") or {}).get("in", [])
+
+
+def oncall_layer(month: Month, day: int) -> dict | None:
+    """休みの電話の日に効く、休みの人から選ぶ当番の欄。勤務の中で受け持つ係（入浴係など）は休みの電話に使わない。"""
+    return next((L for L in month.layers.values()
+                 if isinstance(L, dict) and "def" in L and is_oncall(L["def"]) and day in duty_days(L["def"], month)),
+                None)
 
 
 def explain(d: dict) -> list[str]:
@@ -79,7 +96,8 @@ def explain(d: dict) -> list[str]:
     days = {"土日": "土日"}.get(jp, f"{jp}曜") + ("と祝日" if d["days"]["holidays"] else "")
     own = "・".join(d["own_shift_on_duty_day"]["in"])
     own_jp = {"公": "公休"}.get(own, own)
-    lines = [days, f"{own_jp}の人から{d['per_day']}人", "連絡を受ける当番（出勤は本人の了承の後）"]
+    lines = [days, f"{own_jp}の人から{d['per_day']}人",
+             "連絡を受ける当番（出勤は本人の了承の後）" if is_oncall(d) else "その日の勤務の中で受け持つ係"]
     if any(c.get("carry_to_next_month") for c in d["counters"]):
         lines.append("引き受けた回数を翌月へ")
     return lines
