@@ -553,6 +553,10 @@ class Session:
         """表を配った（ここから先の休みの電話は、待機の人に頼む直しになる）。"""
         m = self.store.month(self.year, self.month)
         m.distributed = True
+        # 配った時の表を残す。主任が「配った表と違う表を印刷してしまう」のを恐れるので、配った表から何マス直したかを
+        # 画面と印刷の紙に出す（2026-11-04 受け止めの主任役が2回挙げた）
+        m.dist_table = {n: list(r) for n, r in (m.table or {}).items()}
+        m.dist_at = self.now().isoformat(timespec="minutes")
         self.store.save_month(m)
 
     def _today(self) -> str:
@@ -1051,7 +1055,29 @@ class Session:
             "symbols": [{"symbol": st.symbol, "name": st.name} for st in fac.shift_types],
             "absence_sim": self.store.absence_sim(self.year, self.month),
             "returned_note": self._returned_note(m),
+            "returned_people": self._returned_people(m),
+            "dist_at": m.dist_at,
+            "dist_changed": (sum(a != b for n, row in (m.table or {}).items()
+                                 for a, b in zip(row, m.dist_table.get(n, row)))
+                             if m.distributed and m.dist_table is not None else None),
         }
+
+    def _returned_people(self, m) -> dict[str, str]:
+        """返す案を採った月の、返した人ごとの1行（名前の横に出す。例「有給 0→1日・連勤 5→4日」）。
+        採った後の表では黄色が消えるので、誰に何を返したかをここで見せる（2026-11-04 受け止めの2人）。"""
+        plans = m.layers.get("_plans")
+        if m.layers.get("_adopted") != "give" or not isinstance(plans, dict) or not plans.get("acc_ids"):
+            return {}
+        out = {}
+        for p in plans.get("people") or []:
+            parts = []
+            if p.get("leave_after", 0) > p.get("leave_before", 0):
+                parts.append(f"有給 {p['leave_before']}→{p['leave_after']}日")
+            if p.get("run_after", 0) < p.get("run_before", 0):
+                parts.append(f"連勤 {p['run_before']}→{p['run_after']}日")
+            if parts:
+                out[p["name"]] = "・".join(parts)
+        return out
 
     def _returned_note(self, m) -> str:
         """前の月に引き受けた人へ有給と短い連勤を返す案を採った月だけ、表の題の下に出す1行。"""

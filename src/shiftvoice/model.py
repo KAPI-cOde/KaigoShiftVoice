@@ -138,6 +138,8 @@ class Month:
     distributed: bool = False         # 配った後か（配った後の一言は少ないマスで直す）
     rest_adjust: dict[str, int] = field(default_factory=dict)  # 公休の足し引き（頼んだ人 +1・呼ばれた待機の人 −1）
     support: dict[str, str] = field(default_factory=dict)      # 応援 "名前/日" → その日だけ入るユニット
+    dist_table: dict[str, list[str]] | None = None   # 配った時の表（配った表から何マス直したかを画面と印刷で言う）
+    dist_at: str | None = None                        # 配った時刻（"2026-11-04T21:30"）
 
     @property
     def days(self) -> int:
@@ -153,7 +155,8 @@ class Month:
         return {"year": self.year, "month": self.month, "holidays": self.holidays,
                 "prev_tail": self.prev_tail, "table": self.table, "layers": self.layers,
                 "rev": self.rev, "built_rev": self.built_rev, "history": self.history,
-                "distributed": self.distributed, "rest_adjust": self.rest_adjust, "support": self.support}
+                "distributed": self.distributed, "rest_adjust": self.rest_adjust, "support": self.support,
+                "dist_table": self.dist_table, "dist_at": self.dist_at}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Month":
@@ -162,7 +165,7 @@ class Month:
                    table=d.get("table"), layers=d.get("layers", {}), rev=d.get("rev"),
                    built_rev=d.get("built_rev"), history=list(d.get("history", [])),
                    distributed=d.get("distributed", False), rest_adjust=dict(d.get("rest_adjust", {})),
-                   support=dict(d.get("support", {})))
+                   support=dict(d.get("support", {})), dist_table=d.get("dist_table"), dist_at=d.get("dist_at"))
 
 
 @dataclass

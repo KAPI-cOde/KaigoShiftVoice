@@ -203,8 +203,10 @@
     .grid td.glow, .grid td.diff { background: none !important; font-weight: 400; }
     .grid td.off, .grid th.off { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .grid tr { break-inside: avoid; }
-    .grid .acc, .grid .mark, .legend .glowkey { display: none !important; }   /* 画面だけの書き込み（引き受けの回数・〇月から夜勤も・黄色の凡例）は紙に出さない */
+    .grid .acc, .grid .mark, .legend .glowkey { display: none !important; }
+    .printonly { display: block !important; font-size: 10px; margin: 0 0 4px; }   /* 画面だけの書き込み（引き受けの回数・〇月から夜勤も・黄色の凡例）は紙に出さない */
   }
+  .printonly { display: none; }
   footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
 </style>
 </head>
@@ -216,6 +218,7 @@
     <div id="banner"></div>
     <div id="diffs"></div>
     <h2 id="tabletitle">表</h2>
+    <div id="printnote" class="printonly"></div>
     <div id="returnednote" class="small" style="display:none"></div>
     <div id="tablewrap"></div>
     <div class="legendrow"><div class="legend" id="legend"></div><div class="exportlinks" id="exportlinks"><button type="button" class="linkish" id="copytsv">表をコピー（Excel に貼る）</button><button type="button" class="linkish" id="printtable">印刷</button></div></div>
@@ -369,6 +372,8 @@ function renderTable() {
     });
     var accN = (S.accepted || {})[st.name];
     if (accN && Object.keys(S.layers || {}).length) nm.appendChild(el("span", "acc", S.month + "月の引き受け " + accN + "回"));
+    var back = (S.returned_people || {})[st.name];   // 返す案を採った月。誰に何を返したか（印刷には出ない）
+    if (back) nm.appendChild(el("span", "acc", back));
     tr.appendChild(nm);
     var row = S.table[st.name] || [];
     for (var d2 = 1; d2 <= S.days; d2++) {
@@ -806,6 +811,7 @@ function renderReplyBody(r) {
       note.appendChild(moveParts(cur));
       box.appendChild(note);
       if ((cur.parts || []).some(function (p) { return p.warn; })) box.appendChild(el("div", "q2", "赤＝その人の負担が増える所"));
+      box.appendChild(el("div", "q2", "待機＝その日休みの人の中から決めておく、急な休みの時に最初に頼む人"));
     } else {
       // 今月の中に移せる日が無い時だけ、今までの形（公休が1日減る）。動くマスを日本語の1行で
       var nm = {}; (S && S.shift_names || []).forEach(function (x) { nm[x[0]] = x[1]; });
@@ -947,7 +953,11 @@ function renderDist() {
   var w = document.getElementById("distwrap");
   w.textContent = "";
   if (!S) return;
-  if (S.distributed) { w.textContent = "配った後"; return; }
+  if (S.distributed) {
+    w.textContent = "配った後" + (S.dist_changed === null || S.dist_changed === undefined ? ""
+      : S.dist_changed ? "（配った表から" + S.dist_changed + "マス直した）" : "（配った表のまま）");
+    return;
+  }
   var b = el("button", "", "配った");
   b.title = "表を職員に配った後は、休みの電話の直しを、待機の人の了承や［これで直す］で確かめてから表に入れます";
   b.type = "button";
@@ -1869,6 +1879,21 @@ function showCopyNote(text, tsv) {
     ta.focus(); ta.select();
   }
 }
+// 印刷の紙の上の1行。いつ印刷したかと、配った表との関係（配った表と違う表を印刷してしまわないように）
+function printNote() {
+  var box = document.getElementById("printnote");
+  if (!box || !S) return;
+  var now = new Date();
+  var t = "印刷 " + (now.getMonth() + 1) + "月" + now.getDate() + "日 " + now.getHours() + ":" + ("0" + now.getMinutes()).slice(-2) + "。";
+  if (!S.distributed) t += "まだ配っていない表です";
+  else {
+    var at = S.dist_at ? parseInt(S.dist_at.slice(5, 7), 10) + "月" + parseInt(S.dist_at.slice(8, 10), 10) + "日 " + S.dist_at.slice(11, 16) : "";
+    var head = "配った表" + (at ? "（" + at + "）" : "");
+    t += S.dist_changed ? head + "から" + S.dist_changed + "マス直した表です" : head + "と同じ表です";
+  }
+  box.textContent = t;
+}
+window.addEventListener("beforeprint", printNote);
 // コピーの知らせに足す文。施設の書き方に戻した記号（取り込んだ施設だけ）と、最後に入る係の行（係がある月だけ）
 function copyExtra(restored, merged) {
   var out = "";
@@ -1908,7 +1933,7 @@ document.getElementById("copytsv").addEventListener("click", function () {
     } else fallback();
   }, function () { showCopyNote("表を取れませんでした。もう一度押してください", null); });
 });
-document.getElementById("printtable").addEventListener("click", function () { window.print(); });
+document.getElementById("printtable").addEventListener("click", function () { printNote(); window.print(); });
 </script>
 </body>
 </html>

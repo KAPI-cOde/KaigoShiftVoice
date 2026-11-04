@@ -214,7 +214,9 @@ class NextFlow:
                               "tail": m.prev_tail,
                               "acc_ids": [x.id for x in acc],
                               # 採った月の表の題の下の1行で、実際に返した物と引き受けの月を言うため
-                              "stage": list(gb.stage), "acc_months": sorted({x.date[:7] for x in acc})}
+                              "stage": list(gb.stage), "acc_months": sorted({x.date[:7] for x in acc}),
+                              "people": [{k: p[k] for k in ("name", "leave_before", "leave_after", "run_before", "run_after")}
+                                         for p in gb.people]}
         self.store.save_month(m)
         return out
 
