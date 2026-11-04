@@ -1,6 +1,7 @@
 @echo off
-rem ダブルクリックで KaigoShiftVoice を開く（Windows）。止める時はこの窓を閉じるか Ctrl+C。
 chcp 65001 >nul
+rem ダブルクリックで KaigoShiftVoice を開く（Windows）。止める時はこの窓を閉じるか Ctrl+C。
+rem 文字コードを UTF-8 にする行（chcp）は、日本語の行より前に置く（日本語の Windows は切り替える前の行を CP932 で読むため）
 cd /d "%~dp0"
 
 where uv >nul 2>&1
