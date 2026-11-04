@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .model import Facility, Month, Rule, Staff
 from .solver import SolveResult, solve_month
@@ -35,6 +35,9 @@ class StagedResult:
         return sum(s["seconds"] for s in self.stages)
 
 
+# 体の目安（次の勤務までの間が短い並びの罰）を外して作った時の知らせ。ルールは段1のまま全部守っている
+SHORT_REST_NOTE = "時間内に、次の勤務までの間まで整えきれなかったので、間の目安を外して作りました（ルールは全部守っています）"
+
 STAGE_NOTE = {
     2: "本人の希望を守ったままでは作れなかったので、希望を外せる形で作りました（運用の都合は守っています）",
     3: "運用の都合を外せる形で作りました（本人の希望は守っています）",
@@ -55,6 +58,18 @@ def solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], mont
     r = run(1)
     if r.status == "ok":
         return StagedResult(r, stages)
+    # 体の目安（次の勤務までの間が短い並びの罰）を入れた施設で、段1が時間内に見つからない時は、ルールを緩める前に
+    # 目安を外して段1で作り直す。ルールを守るのが先（2026-11-04、職員48人の試算で、目安のせいで段3へ下がり
+    # 運用の都合を外していた。目安なしの表を出発点に磨く2段の作り方も試したが、48人では磨ききれず、32人では遅くなった）
+    quality = facility.settings.get("quality", {})
+    if r.status == "timeout" and quality.get("short_rest"):
+        lite = replace(facility, settings={**facility.settings, "quality": {**quality, "short_rest": 0}})
+        r2 = solve_month(lite, staff, rules, month, stage=1, **kw)
+        stages.append({"stage": 1, "status": r2.status, "seconds": round(r2.seconds, 3), "without": "short_rest"})
+        if r2.status == "ok":
+            return StagedResult(r2, stages, note=SHORT_REST_NOTE)
+        facility = lite   # 目安なしでも段1で作れない時は、目安を外したまま今までの段の順へ
+        r = r2
     if r.status == "infeasible":
         order = [2, 3, 4]
     else:  # 時間切れは段3だけ。希望を外す段（2・4）へは進まない
