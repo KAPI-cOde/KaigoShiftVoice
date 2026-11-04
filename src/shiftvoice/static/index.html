@@ -375,13 +375,13 @@ function renderTable() {
   wrap.appendChild(t);
 }
 
-// 引き受けの記録の行（「田村さん　11/8 待機当番で穴埋め・11/14 残業で穴埋め」）。表のマスが変わらない残業・早出などの
-// 記録がある月だけ出す（待機の引き受けは表の名前の横の回数で見えるので、それだけの月は今までどおり出さない）
+// 引き受けの記録の行（「小島さん　11/1 待機当番で穴埋め（休みは10日へ）・11/14 …」）。記録がある月はいつも出す
+// （2026-11-04。台本の1分50秒で小島さんの記録3行を見せるため。前は残業・早出の記録がある月だけ出していた）
 function renderAccRows() {
   var box = document.getElementById("accrows");
   box.textContent = "";
   var items = (S && S.accepted_items) || [];
-  if (!items.some(function (x) { return x.cover; })) return;
+  if (!items.length) return;
   box.appendChild(el("div", "acchead", S.month + "月の引き受けの記録"));
   var by = {}, order = [];
   items.forEach(function (x) {

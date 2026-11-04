@@ -18,6 +18,7 @@ def main() -> None:
     d.add_argument("--reset", action="store_true", help="置き場を初めの状態に戻す")
     d.add_argument("--voice", action="store_true", help="声の入口を使う（uv run --extra voice。初回は約2.4GB を取得）")
     d.add_argument("--no-open", action="store_true", help="ブラウザを自動で開かない")
+    d.add_argument("--base-date", help="引き受けを数える基準の日 YYYY-MM-DD（撮影用。11月末の状態から撮る時は 2026-11-30。省くと今日）")
     st = sub.add_parser("state", help="撮り直し用に、動かす用の置き場を名前を付けて保存する・戻す（サーバーを止めてから）")
     st.add_argument("action", choices=["save", "load", "list"])
     st.add_argument("name", nargs="?", help="例 start（11月1日の操作の前）・end（11月末）")
@@ -43,6 +44,10 @@ def _demo(args, lock) -> None:
     _ask_key()
     _backup(Path(args.data))
     session, has_key = demo_session(Path(args.data), reset=args.reset)
+    if args.base_date:   # 撮影の物語の日付で数える（今日が11月の途中だと、11月末の状態の14日・22日の引き受けが数えられないため）
+        import datetime as _dt
+        _dt.date.fromisoformat(args.base_date)
+        session.base_date = args.base_date
     if not has_key:
         print("ANTHROPIC_API_KEY がありません。表は見られますが、一言の読み取りは動きません（README の鍵の入れ方）")
     voice = None
