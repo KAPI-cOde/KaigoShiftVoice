@@ -66,6 +66,9 @@ def main(argv: list[str]) -> int:
     if sr:
         print(f"短い並び（{sr['line']}時間未満） {year}年{mon}月 {sr['before']}件 → {ny}年{nm}月 {sr['after']}件"
               + (f"（時刻の無い勤務 {sr['untimed']}）" if sr["untimed"] else ""))
+    # 貼った月と違う所（画面に赤で出る物）も出す。短い並びが減っても、夜勤が0人の夜などができていないかを見るため
+    for d in c.diffs:
+        print("違う所", d["text"])
     return 0 if c.next_table_made else 1
 
 

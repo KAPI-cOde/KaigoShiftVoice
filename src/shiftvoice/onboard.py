@@ -807,6 +807,26 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
             add(f"{names[sym]}の人数（上限）", "coverage", "negotiable",
                 {"shifts": [sym], "scope": scope, "op": "<=", "n": hi},
                 f"{month}月の{names[sym]}は日によって{where}{lo}〜{hi}人。いちばん多い日の{hi}人を上限にした")
+    # ユニットごとに0人の日がある勤務は、施設全体の人数も守る。夜勤を2人でユニットを順に回す表では、ユニットごとの
+    # 夜勤は0人の日があるので下限が付かず、翌月は施設全体で夜勤0人の夜ができていた（国の記載例の特養。2026-11-05）
+    if each:
+        for sym in ordinary:
+            if min(cover[sym]) > 0:
+                continue
+            tot = [sum(1 for row in table.values() if row[d] == sym) for d in range(n)]
+            lo, hi = min(tot), max(tot)
+            if lo == hi and lo > 0:
+                add(f"{names[sym]}の人数（施設全体）", "coverage", "fixed",
+                    {"shifts": [sym], "scope": "all", "op": "==", "n": lo},
+                    f"{month}月は毎日、施設全体で{names[sym]}が{lo}人")
+            elif lo < hi:
+                if lo > 0:
+                    add(f"{names[sym]}の人数（施設全体の下限）", "coverage", "fixed",
+                        {"shifts": [sym], "scope": "all", "op": ">=", "n": lo},
+                        f"{month}月の{names[sym]}は日によって施設全体で{lo}〜{hi}人。いちばん少ない日の{lo}人を下限にした")
+                add(f"{names[sym]}の人数（施設全体の上限）", "coverage", "negotiable",
+                    {"shifts": [sym], "scope": "all", "op": "<=", "n": hi},
+                    f"{month}月の{names[sym]}は日によって施設全体で{lo}〜{hi}人。いちばん多い日の{hi}人を上限にした")
     # 土日祝と平日の人数の違いはルールにしない（足すと表を作る計算が10倍ほど重くなった。2026-11-03）。
     # 違いは作った後の画面に赤で出し、一言（「土日の日勤は1人に」）で直す
     # 夜勤の回数。夜勤をした人の回数の幅を、夜勤に入れる人の月の回数にする（ひだまりの「夜勤の回数」と同じ形）
