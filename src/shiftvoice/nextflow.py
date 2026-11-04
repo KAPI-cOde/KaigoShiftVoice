@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import calendar
+from dataclasses import replace
 
 from .build import month_rules
 from .giveback import _months_back, accepted_counts, build_pair
@@ -158,7 +159,11 @@ class NextFlow:
         ym = f"{self.year:04d}-{self.month:02d}"
         fac, staff = self.store.facility(), self.store.staff_on(self.ny, self.nm)
         window = gb_settings(fac)["window_months"]
-        items = self.store.acceptances()
+        target = f"{self.ny:04d}-{self.nm:02d}"
+        # 作る月に返した印のある記録は、作り直す時はまだ返していない扱いで数える。採った後に作り直しても、
+        # 同じ引き受けを数えて返す案を作れる（印は採る時に付け直す。2026-11-05 敵対レビュー 3×8。前は
+        # 「引き受けた人はいません」になり、採り直すと返していない表に置き換わり、印だけが残った）
+        items = [replace(x, returned_in=None) if x.returned_in == target else x for x in self.store.acceptances()]
         counts = accepted_counts(items, ym, base_date, window)
         dec = self.store.month(self.ny, self.nm)
         gb = build_pair(fac, staff, month_rules(self.store, self.ny, self.nm, with_premise=False), dec, counts)
@@ -233,12 +238,16 @@ class NextFlow:
         m.table = plans[plan]
         m.built_rev = self.store.ledger().rev
         m.layers["_adopted"] = plan
-        if plan == "give":  # 返した引き受けに印を付ける（返さない案を採ったら、次の月へ持ち越す）
-            ids = set(plans.get("acc_ids") or [])
-            items = self.store.acceptances()
-            for x in items:
-                if x.id in ids:
-                    x.returned_in = f"{self.ny:04d}-{self.nm:02d}"
-            self.store.save_acceptances(items)
+        # 返した引き受けに印を付ける。返さない案を採ったら、その月に前に付けた印も外して次の月へ持ち越す
+        # （採り直した時に、前に採った案の印が残らないように）
+        target = f"{self.ny:04d}-{self.nm:02d}"
+        ids = set(plans.get("acc_ids") or []) if plan == "give" else set()
+        items = self.store.acceptances()
+        for x in items:
+            if x.id in ids:
+                x.returned_in = target
+            elif x.returned_in == target:
+                x.returned_in = None
+        self.store.save_acceptances(items)
         self.store.save_month(m)
         return {"ok": True, "plan": plan}
