@@ -345,6 +345,7 @@ def rest_moves(facility: Facility, staff: list[Staff], rules: list[Rule], month:
         # 休む人がどうなるかから言う）
         return {"day": d2, "kind": kind, "makeup": make[0] if make else None, "table": t, "changes": ch,
                 "support": sup, "rest_adjust": ra, "rest": rest, "keys": keys,
+                "longer": {n: b1[n][1] for n in longer}, "requester": requester, "n_ch": len(ch), "n_names": len(names),
                 "line": "。".join([f"{head}（{len(ch)}マス）"] + [x for x, _ in notes]),
                 "parts": ([{"text": other, "warn": False}] if other else []) + [{"text": x, "warn": w} for x, w in notes],
                 "warn": bool(neg or up or longer)}
@@ -384,4 +385,25 @@ def rest_moves(facility: Facility, staff: list[Staff], rules: list[Rule], month:
     out = sorted(best, key=lambda c: c["keys"])[:limit]
     for i, c in enumerate(out):
         c["label"] = "おすすめ" if i == 0 else ""
+        c["vs_first"] = _vs_first(out[0], c) if i else ""
     return out
+
+
+def _vs_first(first: dict, c: dict) -> str:
+    """1つ目より負担が多い所を言う（画面の候補の添え書き）。負担が同じなら「1つ目と負担は同じ」。
+    並べる時の鍵の、電話の日に近い順の手前までを見る（keys の6つ目まで）。"""
+    a, b = first["keys"], c["keys"]
+    out = []
+    if b[0] > a[0]:
+        out.append(f"相談できるルールの外れが{b[0] - a[0]}件多い")
+    if b[1] > a[1]:
+        out.append(f"{c['requester']}さんの公休が元の日数でなくなる")
+    if b[2] > a[2]:
+        out.append(f"変わるマスが{b[2] - a[2]}つ多い")
+    if b[3] > a[3]:
+        out.append(f"関わる人が{b[3] - a[3]}人多い")
+    if b[4] > a[4]:
+        out.append(f"短い並びが{b[4] - a[4]}つ多い")
+    if b[5] > a[5]:
+        out.extend(f"{n}さんの連勤が{d}日になる" for n, d in c["longer"].items() if d > first["longer"].get(n, 0))
+    return "、".join(out) if out else "1つ目と負担は同じ"

@@ -35,7 +35,7 @@ READ_FAILED = "読み取りに失敗しました。表もルールも変えて�
 ANSWER_FIRST = "先に上の質問に答えてください（毎月／今月だけ）"
 ANSWER_FIRST_REPLACE = "先に上の質問に答えてください（置き換える／別に足す）"
 # 休みを移す日の候補のうち、画面へ送る物（表の中身・足し引き・応援は送らない）
-MOVE_SHOWN = ("day", "kind", "line", "parts", "label", "warn", "changes", "message", "summary")
+MOVE_SHOWN = ("day", "kind", "line", "parts", "label", "warn", "changes", "message", "summary", "vs_first")
 
 # 聞き返しへの答えそのもの。句読点と空白を除いた全文が「相づち＋答えの言葉1つ＋言い終わり」の時だけ答えにする。
 # 中身の言葉が1字でも残る一言は答えにしない。前は文の中の「毎月」を拾い、「連勤は4日までにしよう。毎月」を
@@ -665,7 +665,7 @@ class Session:
         who = f"待機ではない、その日休みの{helper}さん" if wider else f"その日の待機の{helper}さん"
 
         def message(changes) -> str:
-            return f"{who}に頼む案です（{len(changes)}マス）"
+            return f"{who}に頼む案です（表で変わるのは{len(changes)}マス）"
 
         def summary(rest, moved_to) -> str:
             if moved_to:
@@ -674,7 +674,7 @@ class Session:
                     f"{helper}さん {rest[helper][0]}日 → {rest[helper][1]}日")
 
         moves = [{"day": mv["day"], "kind": mv["kind"], "makeup": mv["makeup"], "line": mv["line"],
-                  "parts": mv["parts"], "label": mv["label"], "warn": mv["warn"], "table": mv["table"],
+                  "parts": mv["parts"], "label": mv["label"], "vs_first": mv.get("vs_first", ""), "warn": mv["warn"], "table": mv["table"],
                   "changes": mv["changes"], "rest": mv["rest"], "rest_adjust": mv["rest_adjust"],
                   "support": mv["support"], "message": message(mv["changes"]), "summary": summary(mv["rest"], mv["day"])}
                  for mv in r.get("moves") or []]
@@ -789,7 +789,7 @@ class Session:
         return Reply("applied", uid, f"{o['duty']}さんの了承をもらって直しました{moved}", changes=o["changes"],
                      summary=f"{self.month}月の引き受け {before_n}回 → {after_n}回",
                      extra={"duty": o["duty"], "accepted": [before_n, after_n], "moved_to": o.get("moved_to"),
-                            "note": "引き受け＝了承をもらって表を直した回数",
+                            "note": "引き受け＝休みの日に頼まれて入った回数。翌月の表で、有給と短い連勤で報います",
                             "records": [x["line"] for x in self._records(o["duty"])]})
 
     def _commit_offer(self, u: dict, led, m) -> None:
@@ -1050,4 +1050,13 @@ class Session:
             "last_said": m.history[-1]["said"] if m.history else None,
             "symbols": [{"symbol": st.symbol, "name": st.name} for st in fac.shift_types],
             "absence_sim": self.store.absence_sim(self.year, self.month),
+            "returned_note": self._returned_note(m),
         }
+
+    def _returned_note(self, m) -> str:
+        """前の月に引き受けた人へ有給と短い連勤を返す案を採った月だけ、表の題の下に出す1行。"""
+        plans = m.layers.get("_plans")
+        if m.layers.get("_adopted") != "give" or not isinstance(plans, dict) or not plans.get("acc_ids"):
+            return ""
+        prev = 12 if self.month == 1 else self.month - 1
+        return f"{prev}月に引き受けた人に、有給と短い連勤を返した{self.month}月の表です"

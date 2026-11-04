@@ -216,6 +216,7 @@
     <div id="banner"></div>
     <div id="diffs"></div>
     <h2 id="tabletitle">表</h2>
+    <div id="returnednote" class="small" style="display:none"></div>
     <div id="tablewrap"></div>
     <div class="legendrow"><div class="legend" id="legend"></div><div class="exportlinks" id="exportlinks"><button type="button" class="linkish" id="copytsv">表をコピー（Excel に貼る）</button><button type="button" class="linkish" id="printtable">印刷</button></div></div>
     <div id="copynote" class="exportnote"></div>
@@ -326,6 +327,9 @@ function renderTable() {
   var wrap = document.getElementById("tablewrap");
   wrap.textContent = "";
   document.getElementById("tabletitle").textContent = S.month + "月の表";
+  var rn = document.getElementById("returnednote");
+  rn.textContent = S.returned_note || "";
+  rn.style.display = S.returned_note ? "" : "none";
   var cardGlow = {};
   if (selected) {
     var c = S.cards.filter(function (x) { return x.id === selected; })[0];
@@ -763,6 +767,7 @@ function renderReplyBody(r) {
     if (moveOpen && moves.length > 1) {
       // ［休みを移す日を変える］。決めるのは「どの日へ移すか」の1つだけ。候補を1行ずつ、おすすめに印
       box.appendChild(el("div", "offer", (ex.duty ? ex.duty + "さんの" : "") + "休みを移す日を選んでください"));
+      box.appendChild(el("div", "q2", "負担の少ない順。負担が同じ時は、電話の日に近い日を先にしています"));
       var list = el("div", "mvlist");
       moves.forEach(function (m, i) {
         var row = el("button", "mvrow" + (i === pick ? " on" : ""));
@@ -770,13 +775,14 @@ function renderReplyBody(r) {
         row.appendChild(el("span", "mvday", m.day + "日へ（" + (m.changes || []).length + "マス）"));
         var tx = el("span", "mvtext");
         tx.appendChild(moveParts(m));
+        if (i > 0 && m.vs_first) tx.appendChild(el("div", "q2", m.vs_first));
         row.appendChild(tx);
         if (m.label) row.appendChild(el("span", "mvlabel", m.label));
         row.addEventListener("click", function () { sendMove(r.uid, i); });
         list.appendChild(row);
       });
       box.appendChild(list);
-      box.appendChild(el("div", "q2", "短い並び＝次の勤務までが14時間より短い並び（遅番の次の日の早番など）"));
+      box.appendChild(el("div", "q2", "短い並び＝次の勤務までが14時間より短い並び（遅番の次の日の早番など）。赤＝その人の負担が増える所"));
       var back = el("div", "btns"); back.style.marginTop = "8px";
       var bk = el("button", "", "戻る"); bk.type = "button";
       bk.addEventListener("click", function () { moveOpen = false; renderReply(r); });
@@ -799,6 +805,7 @@ function renderReplyBody(r) {
       var note = el("div", "mvnote");
       note.appendChild(moveParts(cur));
       box.appendChild(note);
+      if ((cur.parts || []).some(function (p) { return p.warn; })) box.appendChild(el("div", "q2", "赤＝その人の負担が増える所"));
     } else {
       // 今月の中に移せる日が無い時だけ、今までの形（公休が1日減る）。動くマスを日本語の1行で
       var nm = {}; (S && S.shift_names || []).forEach(function (x) { nm[x[0]] = x[1]; });
@@ -821,7 +828,7 @@ function renderReplyBody(r) {
   }
   if (r.kind === "cover_offer") {  // 残業・早出などでの穴埋め。表は変えず、［記録する］で引き受けの記録に足す
     box.appendChild(el("div", "offer", r.message || ""));
-    box.appendChild(el("div", "offer2", "表のマスは変えません。翌月の表を作る時に、引き受けの1回として数えます"));
+    box.appendChild(el("div", "offer2", "表のマスは変えません。翌月の表を作る時に、引き受けの1回として数えます（引き受けた人に、翌月の表で有給と短い連勤で報いるための記録です）"));
     var cvb = el("div", "btns");
     [["記録する", "accept", "primary"], ["やめる", "cancel", ""]].forEach(function (p) {
       var b = el("button", p[2], p[0]);
@@ -1721,7 +1728,8 @@ function renderSetup2(box) {
   var timedTypes = pv.shift_types.filter(function (s) { return s.timed; });
   if (timedTypes.length) {
     SU.times = SU.times || {};
-    box.appendChild(el("label", "", "勤務の時刻（次の勤務までの間を数えるのに使います）"));
+    box.appendChild(el("label", "", "勤務の時刻（遅番の次の日の早番のような、次の勤務までの間が短い並びを避けるために使います）"));
+    box.appendChild(el("div", "small", "見本の時刻が入っています。施設の時刻に直してください。分からなければ、そのままで大丈夫です。夜勤と明けは、夜勤の後の休みのルールで扱うので聞きません"));
     timedTypes.forEach(function (s) {
       var t = SU.times[s.symbol] || (SU.times[s.symbol] = { start: String(s.start || ""), hours: String(s.hours || "") });
       var row = el("div", "su-time");
@@ -1815,11 +1823,11 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
     // 開き直した時も、案に書いた文と候補（選んだ休みを移す日）で出す。文の無い前の案だけ今までの形で作る
     var shownMoves = (o.moves || []).map(function (m) {
       return { day: m.day, kind: m.kind, line: m.line, parts: m.parts, label: m.label, warn: m.warn,
-               changes: m.changes, message: m.message, summary: m.summary };
+               changes: m.changes, message: m.message, summary: m.summary, vs_first: m.vs_first || "" };
     });
     offerR = o.cover ? { kind: "cover_offer", uid: of.id, changes: [], message: o.message }
            : o.duty ? { kind: "standby_offer", uid: of.id, changes: o.changes || [],
-               message: o.message || ("その日の待機の" + o.duty + "さんに頼む案です（" + (o.changes || []).length + "マス）"),
+               message: o.message || ("その日の待機の" + o.duty + "さんに頼む案です（表で変わるのは" + (o.changes || []).length + "マス）"),
                summary: o.summary || ("公休　" + pr(o.requester) + "　" + pr(o.duty)),
                extra: { duty: o.duty, requester: o.requester, day: o.day, moves: shownMoves, pick: o.pick || 0,
                         no_move: o.no_move || null } }
@@ -1864,7 +1872,7 @@ document.getElementById("copytsv").addEventListener("click", function () {
     var fallback = function () { showCopyNote("自動でコピーできませんでした。下の文字を選んでコピーし、Excel の表の左上のマスに貼ってください", tsv); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(tsv).then(function () {
-        showCopyNote("コピーしました。Excel の表の左上のマスに貼ってください", null);
+        showCopyNote("コピーしました。Excel の表の左上のマスに貼ってください。貼るのは記号の文字だけで、色は入りません。待機当番の行も最後に入ります", null);
       }, fallback);
     } else fallback();
   }, function () { showCopyNote("表を取れませんでした。もう一度押してください", null); });

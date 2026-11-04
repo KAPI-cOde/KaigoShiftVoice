@@ -70,7 +70,7 @@ def test_move_keeps_rest_days(act2):
     d = mv[0]["day"]
     assert 1 < d <= 30 and t0["小島"][d - 1] != "公"
     assert r.summary == f"小島さん 公休9日のまま（休みは{d}日へ移す）"
-    assert r.message == "その日の待機の小島さんに頼む案です（4マス）"
+    assert r.message == "その日の待機の小島さんに頼む案です（表で変わるのは4マス）"
     assert len(r.changes) == 4 and {c["staff"] for c in r.changes} == {"青木", "小島"}
     a = s.accept(r.uid)
     assert a.kind == "applied" and a.summary == "11月の引き受け 0回 → 1回"
