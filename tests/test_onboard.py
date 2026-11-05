@@ -421,6 +421,75 @@ def test_短い勤務と一緒にたまに入った会議はふだんの勤務�
     assert not any("会" in row for row in nxt.values())
 
 
+def december_paste(part: dict[str, list[int]]) -> str:
+    """2026年12月（31日。1日は火曜）の表。常勤の7人は早・早・日・遅・遅・公・公を回し、パートの落合さんは part
+    （記号 → 入った日の番号。0が1日）の日だけ勤務して、ほかの日は公休。"""
+    week = ["早", "早", "日", "遅", "遅", "公", "公"] * 6
+    rows = {nm: week[k:k + 31] for nm, k in (("青木", 0), ("石田", 1), ("上野", 2), ("江口", 3), ("小川", 4),
+                                               ("加藤", 5), ("岡田", 6))}
+    rows["落合"] = ["公"] * 31
+    for sym, days in part.items():
+        for d in days:
+            rows["落合"][d] = sym
+    return "氏名\t" + "\t".join(str(d) for d in range(1, 32)) + "".join(
+        f"\n{nm}\t" + "\t".join(r) for nm, r in rows.items())
+
+
+def test_短い勤務4種類を4日と3日ずつ使い分けるパートの人も翌月その勤務で(tmp_path):
+    # 朝4日・昼3日・夕方3日・入浴3日（勤務の日13日）。4分の1の線では3日の記号が届かず、届いた朝の4日だけでは半分に届かないので、
+    # 4つとも頼まれた時だけになり、翌月は早番・日勤・遅番に入っていた（Astra の指摘 2026-11-05 2×8）。4分の1の線で何も残らない
+    # 人は、2回以上入った新しい勤務を全部合わせて半分以上なら、全部をふだんの勤務にする
+    part = {"朝": [0, 7, 14, 21], "昼": [2, 9, 16], "夕": [3, 10, 17], "浴": [6, 13, 20]}
+    mine = set(part)
+    ans = {"朝": {"name": "朝の勤務", "kind": "work"}, "昼": {"name": "昼の勤務", "kind": "work"},
+           "夕": {"name": "夕方の勤務", "kind": "work"}, "浴": {"name": "入浴の勤務", "kind": "work"}}
+    pr = infer(parse_paste(december_paste(part)), 2026, 12, ans)
+    st = {s["symbol"]: s for s in pr.shift_types}
+    assert pr.problems == []
+    for sym in mine:
+        assert "on_request_only" not in st[sym], sym
+    assert {s["name"]: set(s["can"]) for s in pr.staff}["落合"] == mine
+    times = {"朝": {"start": "07:00", "hours": 2.5}, "昼": {"start": "10:00", "hours": 4},
+             "夕": {"start": "16:00", "hours": 4}, "浴": {"start": "13:00", "hours": 3}}
+    c = create_facility(pr, tmp_path / "p", name="試験", next_year=2027, next_month=1, answers=ans, times=times)
+    nxt = Store(tmp_path / "p").month(2027, 1).table
+    assert c.next_table_made and c.stage_note is None, c.stage_note
+    assert set(nxt["落合"]) <= mine | {"公"} and set(nxt["落合"]) & mine     # 早番・日勤・遅番は入らない
+
+
+def test_会議を頼まれた時だけと答えると会議は外し残りの短い勤務はふだんの勤務(tmp_path):
+    # 回数だけでは、パートの人の「夕方の短い勤務」と「会議」を見分けられないので、会議は作成者に［会議・研修など（頼まれた時だけ）］
+    # と答えてもらう（occasional）。答えた記号は数の線に関わらずいつも頼まれた時だけにし、その人の勤務の日からも外す。朝8日・夕方3日・
+    # 会議2日の人は、会議を外した11日で見て朝と夕方がふだんの勤務になる。直す前は会議も数に入って13日になり、夕方の3日が4分の1に
+    # 届かず、頼まれた時だけになっていた（夕方2日だと、会議を外した10日でも4分の1に届かないので、3日にした）
+    part = {"朝": [d for d in range(31) if d % 7 in (3, 6)], "夕": [4, 11, 18], "会": [1, 25]}   # 金・月の朝で8日
+    text = december_paste(part)
+    assert [parse_paste(text).table["落合"].count(s) for s in ("朝", "夕", "会", "公")] == [8, 3, 2, 18]
+    ans = {"朝": {"name": "朝の勤務", "kind": "work"}, "夕": {"name": "夕方の勤務", "kind": "work"},
+           "会": {"name": "会議", "kind": "work", "occasional": True}}
+    pr = infer(parse_paste(text), 2026, 12, ans)
+    st = {s["symbol"]: s for s in pr.shift_types}
+    assert pr.problems == []
+    assert "on_request_only" not in st["朝"] and "on_request_only" not in st["夕"]
+    assert st["会"]["on_request_only"] is True and st["会"]["name"] == "会議" and st["会"]["kind"] == "work"
+    assert {s["name"]: set(s["can"]) for s in pr.staff}["落合"] == {"朝", "夕"}
+    c = create_facility(pr, tmp_path / "p", name="試験", next_year=2027, next_month=1, answers=ans,
+                        times={"朝": {"start": "07:00", "hours": 2.5}, "夕": {"start": "16:00", "hours": 4}})
+    nxt = Store(tmp_path / "p").month(2027, 1).table
+    assert c.next_table_made and c.stage_note is None, c.stage_note
+    assert "朝" in nxt["落合"] and set(nxt["落合"]) <= {"朝", "夕", "公"}
+    assert not any("会" in row for row in nxt.values())
+
+
+def test_数の線でふだんの勤務になる記号も頼まれた時だけと答えればそうなる():
+    # 数の線より、作成者の答えを先にする。落合さんが8日入った朝は、数の線ならふだんの勤務になるが、頼まれた時だけと答えれば
+    # 頼まれた時だけ
+    text = december_paste({"朝": [d for d in range(31) if d % 7 in (3, 6)]})
+    ans = {"朝": {"name": "朝の勤務", "kind": "work", "occasional": True}}
+    st = {s["symbol"]: s for s in infer(parse_paste(text), 2026, 12, ans).shift_types}
+    assert st["朝"]["on_request_only"] is True
+
+
 def test_貼り付け6_明けは明(tmp_path):
     p = parse_paste(paste(6))
     assert p.aliases.get("明け") == "明" and p.table == parse_paste(SAMPLE.read_text(encoding="utf-8")).table

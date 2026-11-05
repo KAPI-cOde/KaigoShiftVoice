@@ -189,6 +189,16 @@ def test_選び直した答えで時刻と行を作る():
     assert "f＝新しい勤務（10:00〜16:00）" in chosen.lines and "b＝新しい勤務（11:00〜20:00）" in chosen.lines
 
 
+def test_頼まれた時だけと答えた記号は記号表の行でもそう読む():
+    # 画面で［会議・研修など（頼まれた時だけ）］を選んだ記号を、記号表から読んだ行で「新しい勤務」と言っていた
+    legend = "記号\t始業時刻\t終業時刻\na\t7:00\t16:00\nm\t13:00\t15:00\n"
+    days = ["m"] * 2 + ["a"] * 18 + ["公"] * 10
+    pasted = parse_paste("氏名\t" + "\t".join(str(d) for d in range(1, 31)) + "\n"
+                         + "\n".join(f"{n}\t" + "\t".join(days[i:] + days[:i]) for i, n in enumerate(["青木", "石田", "上野"])))
+    plan = plan_symbols(pasted, legend, {"m": {"name": "会議", "kind": "work", "occasional": True}})
+    assert "m＝頼まれた時だけの勤務（13:00〜15:00）" in plan.lines, plan.lines
+
+
 def test_ふつうの表の見出しはセルの1行目でも読む():
     # 前の版で読めた「所属（改行）(ユニット)」の見出し。改行をつないで照らすだけだと、ユニットが黙って消えた
     text = (FX / "pastes" / "19.tsv").read_text(encoding="utf-8")

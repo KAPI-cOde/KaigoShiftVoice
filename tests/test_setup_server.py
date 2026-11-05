@@ -188,3 +188,37 @@ def test_プレビューは途中入職の人の知らせと空欄の名前を�
     code, pv = call(base, "/api/setup/preview", paste_body(text=text))
     assert code == 200 and len(pv["rest_notes"]) == 1 and pv["rest_notes"][0].startswith("木下さん 公休")
     assert any(r.startswith("空欄") and "木下さん" in r for r in pv["reading"])
+
+
+def test_会議を頼まれた時だけと答えた記号はサーバーの取り込みでも通る(srv):
+    """画面の［会議・研修など（頼まれた時だけ）］は、kind work に occasional true を付けて送る。朝8日・夕方3日・会議2日の
+    パートの人は、会議が頼まれた時だけになり、朝と夕方はふだんの勤務になる（直す前は、会議まで数に入って夕方が頼まれた時だけ
+    になっていた）。作った翌月の表に会議は入らない。"""
+    base, _, _ = srv
+    week = ["早", "早", "日", "遅", "遅", "公", "公"] * 6
+    rows = {nm: week[k:k + 31] for nm, k in (("青木", 0), ("石田", 1), ("上野", 2), ("江口", 3), ("小川", 4),
+                                               ("加藤", 5), ("岡田", 6))}
+    part = ["公"] * 31   # 2026年12月1日は火曜。金・月の朝で8日、土の夕方3日、会議2日
+    for d in range(31):
+        part[d] = "朝" if d % 7 in (3, 6) else "夕" if d in (4, 11, 18) else "会" if d in (1, 25) else "公"
+    rows["落合"] = part
+    text = "氏名\t" + "\t".join(str(d) for d in range(1, 32)) + "".join(
+        f"\n{nm}\t" + "\t".join(r) for nm, r in rows.items())
+    answers = {"朝": {"name": "朝の勤務", "kind": "work"}, "夕": {"name": "夕方の勤務", "kind": "work"},
+               "会": {"name": "会議", "kind": "work", "occasional": True}}
+    body = {"text": text, "year": 2026, "month": 12, "answers": answers}
+    code, pv = call(base, "/api/setup/preview", body)
+    assert code == 200 and pv["problems"] == [], pv
+    st = {s["symbol"]: s for s in pv["shift_types"]}
+    assert st["会"]["on_request_only"] is True and st["会"]["name"] == "会議"
+    assert st["朝"]["on_request_only"] is False and st["夕"]["on_request_only"] is False
+    times = {"朝": {"start": "07:00", "hours": "2.5"}, "夕": {"start": "16:00", "hours": "4"},
+             "会": {"start": "13:00", "hours": "2"}}
+    code, out = call(base, "/api/setup/create", dict(body, name="会議の家（架空）", times=times, drop_rules=[]))
+    assert code == 200 and out["ok"] and not out["existing"], out
+    table = out["state"]["table"]
+    assert (out["year"], out["month"]) == (2027, 1)
+    assert "朝" in table["落合"] and set(table["落合"]) <= {"朝", "夕", "公"}
+    assert not any("会" in row for row in table.values())
+    code, back = call(base, "/api/facilities/open", {"id": "hidamari"})   # ほかの試験のために、デモの施設へ戻す
+    assert code == 200

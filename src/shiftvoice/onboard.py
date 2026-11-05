@@ -599,7 +599,9 @@ def plan_symbols(pasted: Pasted, text: str, answers: dict | None = None) -> Symb
             f"（{_clock_label(info['start'])}〜"
             f"{'24:00' if info['end'] in (0, 1440) and info['start'] > 0 else _clock_label(info['end'])}）")
         if target is None and a is not None:
-            plan.lines.append(f"{sym}＝新しい勤務{when}")
+            # 画面で［会議・研修など（頼まれた時だけ）］を選んだ記号は、そう読む（「新しい勤務」と言わない）
+            label = "頼まれた時だけの勤務" if isinstance(a, dict) and a.get("occasional") else "新しい勤務"
+            plan.lines.append(f"{sym}＝{label}{when}")
             continue
         if target is None:
             plan.lines.append(f"{sym}＝まだ決めていません{when}。短い勤務などは上の欄で選んでください")
@@ -643,14 +645,16 @@ def _rule(rid: str, name: str, kind: str, flex: str, params: dict, evidence: str
 
 def _answer_type(sym: str, a, regular: bool) -> dict | None:
     """知らない記号の答え（名前と種類）から勤務の種類を作る。答えが足りない・おかしければ None。
-    新しい勤務は、ふだんの勤務（regular。決め方は infer）なら翌月も置き、そうでなければ頼まれた時だけ置く。"""
+    新しい勤務は、ふだんの勤務（regular。決め方は infer）なら翌月も置き、そうでなければ頼まれた時だけ置く。
+    画面で［会議・研修など（頼まれた時だけ）］を選んだ答え（kind work に occasional true）は、数に関わらずいつも
+    頼まれた時だけ置く。回数だけでは、パートの人の夕方の短い勤務2日と会議2日を見分けられないため（2026-11-05）。"""
     if not isinstance(a, dict) or a.get("kind") not in ANSWER_KINDS or not str(a.get("name", "")).strip():
         return None
     st = {"symbol": sym, "name": str(a["name"]).strip(), "kind": a["kind"]}
     if a["kind"] == "work":
         if a.get("next_is_ake"):
             st["next_is_ake"] = True
-        if not regular:
+        if not regular or a.get("occasional"):
             st["on_request_only"] = True
     elif a["kind"] != "ake":
         st["on_request_only"] = True
@@ -666,15 +670,24 @@ def _own_shifts(table: dict[str, list[str]], unknown: list[str], answers: dict) 
     2026-11-05）。合わせるのを4分の1以上の物だけにするのは、朝8日・夕方2日・会議2日の人の会議まで合わせてふだんの勤務に
     なり、翌月その人に頼まれていない会議が入ったため（Astra の指摘 2026-11-05）。朝・昼・夕を4日ずつ、朝8日・夕方4日は
     今どおり全部を置く。出張・会議など、人の勤務のうちたまにしか無い物は当たらない。1回だけの物も当てない（長く休んだ人が
-    1回だけ出た会議を、翌月のふだんの勤務にしないため）。"""
-    new = {s for s in unknown if isinstance(answers.get(s), dict) and answers[s].get("kind") == "work"}
+    1回だけ出た会議を、翌月のふだんの勤務にしないため）。
+    4分の1の線で何も残らない人は、その人が2回以上入った新しい勤務を全部合わせて、その人の勤務の日の半分以上を占めれば、
+    それらを全部置く。短い勤務4種類を4・3・3・3日（勤務13日）使う人は、3日の記号が4分の1に届かず、届いた4日だけでは半分に
+    届かないので、全部が頼まれた時だけになり、翌月は早番・日勤・遅番に入っていた（Astra の指摘 2026-11-05 2×8）。
+    画面で［会議・研修など（頼まれた時だけ）］と答えた記号（occasional）は、新しい勤務にも、その人の勤務の日にも数えない
+    （いつも頼まれた時だけ。_answer_type）。会議の日を外して見るので、朝8日・夕方3日・会議2日の人は朝と夕方が残る。"""
+    new = {s for s in unknown if isinstance(answers.get(s), dict) and answers[s].get("kind") == "work"
+           and not answers[s].get("occasional")}
     work = new | {s["symbol"] for s in _template() if s["kind"] == "work"}
     out: set[str] = set()
     for row in table.values():
         days = [c for c in row if c in work]
-        mine = {s: k for s, k in Counter(c for c in days if c in new).items() if k >= 2 and k * 4 >= len(days)}
+        twice = {s: k for s, k in Counter(c for c in days if c in new).items() if k >= 2}
+        mine = {s: k for s, k in twice.items() if k * 4 >= len(days)}
         if mine and sum(mine.values()) * 2 >= len(days):
             out |= set(mine)
+        elif twice and sum(twice.values()) * 2 >= len(days):
+            out |= set(twice)
     return out
 
 
@@ -736,7 +749,8 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
 
     # 知らない記号の答えから勤務の種類を作る（明けの種類の記号は、夜勤の翌日の見方に先に要る）
     # 新しい勤務は、貼った月の半分以上の日に出たか、その人が2回以上入り、その人の勤務の日の4分の1以上を占める新しい勤務を
-    # 合わせてその人の勤務の日の半分以上を占めれば（_own_shifts）、ふだんの勤務にする
+    # 合わせてその人の勤務の日の半分以上を占めれば（それで何も残らない人は、2回以上の新しい勤務を全部合わせて半分以上なら。
+    # _own_shifts）、ふだんの勤務にする。頼まれた時だけと答えた記号（occasional）は、いつも頼まれた時だけ
     unknown = [s for s in pasted.unknown_symbols if s not in same]
     own = _own_shifts(table, unknown, answers)
     answered: dict[str, dict] = {}

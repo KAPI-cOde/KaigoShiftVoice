@@ -1727,6 +1727,7 @@ function buildAnswers() {
     if (a.choice.indexOf("same:") === 0) out[sym] = { same_as: a.choice.slice(5) };
     else if (a.choice === "night") out[sym] = { name: (a.name || "").trim() || "夜勤（" + sym + "）", kind: "work", next_is_ake: true };
     else if (a.choice === "rest") out[sym] = { same_as: "公" };
+    else if (a.choice === "occasional") out[sym] = { name: (a.name || "").trim() || sym + "の勤務", kind: "work", occasional: true };   // 会議・研修など。いつも頼まれた時だけ
     else out[sym] = { name: (a.name || "").trim() || sym + "の勤務", kind: "work" };
   });
   return out;
@@ -1767,6 +1768,7 @@ function renderSetup2(box) {
       var onight = el("option", "", "夜勤（次の日は明け）"); onight.value = "night"; sel.appendChild(onight);
       var orest = el("option", "", "休み"); orest.value = "rest"; sel.appendChild(orest);
       var onew = el("option", "", "新しい勤務"); onew.value = "new"; sel.appendChild(onew);
+      var oocc = el("option", "", "会議・研修など（頼まれた時だけ）"); oocc.value = "occasional"; sel.appendChild(oocc);
       sel.value = a.choice;
       sel.addEventListener("change", function () { a.choice = sel.value; refreshPreview(); });
       row.appendChild(sel);
@@ -1776,8 +1778,9 @@ function renderSetup2(box) {
         row.appendChild(el("span", "small", pv.suggestions[sym] === "same:明"
           ? "（いつも夜勤の翌日に出ているので、明けと思われます）" : "（翌日が明けなので、夜勤と思われます）"));
       }
-      if (a.choice === "new" || a.choice === "night") {
-        var ni = el("input"); ni.type = "text"; ni.placeholder = a.choice === "night" ? "名前（例 宿直）" : "名前（例 半休）"; ni.value = a.name;
+      if (a.choice === "new" || a.choice === "night" || a.choice === "occasional") {
+        var ni = el("input"); ni.type = "text"; ni.value = a.name;
+        ni.placeholder = a.choice === "night" ? "名前（例 宿直）" : a.choice === "occasional" ? "名前（例 会議）" : "名前（例 半休）";
         ni.addEventListener("input", function () { a.name = ni.value; });
         row.appendChild(ni);
       }
