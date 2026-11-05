@@ -15,8 +15,8 @@ from dataclasses import dataclass, field
 from .model import WEEKDAYS, Facility, Month, Staff
 from .period import read_period
 
-DATE_TYPES = ("day_off", "set_cell", "avoid_cell", "move")
-NOT_YET = ("swap", "pair_apart", "rest_after_night", "around_off", "weigh",
+DATE_TYPES = ("day_off", "set_cell", "avoid_cell", "move", "swap")
+NOT_YET = ("pair_apart", "rest_after_night", "around_off", "weigh",
            "explain", "custom")
 FLEX_OK = ("fixed", "operational", "wish", "negotiable")
 
@@ -308,6 +308,107 @@ def _weekday_off(items: list[dict], text: str) -> list[dict]:
              "avoid": it["type"] == "avoid_cell", "until_month": None, "reason": it.get("reason")}]
 
 
+# 入れ替えた2つのマスの強さ。2つのマスは1つの約束の両側なので、片方だけ守られると、同じ勤務に2人・誰もいない勤務が
+# できる。本人の希望（wish）は、段1では外せないが、段1で作れない時（その人の曜日の希望とぶつかる時など）に1つずつ外れ、
+# 片方だけの入れ替えが残る（2026-11-05、斉藤さんの「水曜は早番に入れない」とぶつかる11日の入れ替えで、杉山さんだけが
+# 日勤になり、久保さんが早番に回った）。移す（move）の2つのマスと同じく、動かせない（fixed）にして、全部入るか、
+# 全部入らないかにする
+SWAP_FLEX = "fixed"
+SWAP_SAME = "表もルールも変えていません"
+
+
+def _swap(it: dict, text: str, facility: Facility, staff: list[Staff], month: Month, names: set[str],
+          rules: list | None) -> tuple[list[dict], str]:
+    """2人の勤務の入れ替え（「小川さんと加藤さんの22日、入れ替えて」）。その日の今の表から2人の勤務を取り、
+    取り替えたマスの頼み（1人1日に1件）にする。決まりで決められない所は、黙って直さずに聞き返す。
+    - 2人でない・日が無い・その日の2人が同じ勤務
+    - 一言に出てくる勤務の名前（「小川さんの22日の遅番と」）が、2人のその日の勤務に無い。思い違いのまま取り替えると、
+      言った人が思っていない勤務になるので、表の勤務を見せて聞く（2026-11-05、別の系統の AI が表を見ずに書いた2件は、
+      どちらも表と違っていた）。読み取りに人ごとの勤務を書かせる案は、「1日休みで」の日を読めなくした（本物の Haiku で
+      8回とも。前の指示文では8回とも1日）ので、一言の言葉で見る。指示文は、前からの「type だけ書く」行をそのままにして
+      「swap は staff と days も書く」と足しただけにし、例は置かない。入れ替えを別の行に出したり例を足したりすると、
+      ほかの一言「28の夜勤、29の明け、そこ外して両方公休に」の読み違いが、14回中1回から6回中5回〜14回中14回に増えた
+      （足しただけの形は14回中0回。2026-11-06）
+    - 明けは前の日の夜勤とひと続き、研修・有給は本人の予定なので、入れ替えない
+    - 相手の勤務に入れない人（夜勤に入れない人など）。表を作り直しても守れない
+    - 休みと勤務の入れ替えで、2人の公休の数が変わる。どの日で休みを返すかは決まりで決まらない。2つの日を言って
+      数が変わらなければ（「3日と22日、入れ替えて」）入れ替える
+    - 前に頼まれた、同じ人・同じ日のマスの頼みとぶつかる。どちらを残すかは決まりで決まらない
+    夜勤の入れ替えは、言われた日のマスだけを頼みにする。翌日の明けとその後の休みは、帳面の動かせない並びのルール
+    （夜勤の翌日は明け・明けは夜勤の翌日だけ・明けの翌日は公休）に沿って、表を直す時に一緒に動く。移す（move）と
+    同じ作りで、明けの後の決まりが施設ごとに違っても、その施設のルールで直るため"""
+    who = list(dict.fromkeys(_names(it.get("staff"), names) or []))
+    if len(who) != 2:
+        raise Clarify(f"入れ替える2人を教えてください。{SWAP_SAME}")
+    if it.get("days") in (None, []):
+        raise Clarify(f"{_who(who)}の、何日の勤務を入れ替えるか教えてください。{SWAP_SAME}")
+    ds = sorted(set(_days(it.get("days"), month)))
+    table = month.table or {}
+    if any(w not in table for w in who):
+        raise Clarify(f"表にない人がいるので、入れ替えられません。{SWAP_SAME}")
+    a, b = who
+    cell = {(w, d): table[w][d - 1] for w in who for d in ds}
+
+    def nm(sym: str) -> str:
+        return facility.shift(sym).name
+
+    def now(days: list[int]) -> str:
+        return "、".join(f"{a}さんの{d}日は{nm(cell[a, d])}、{b}さんは{nm(cell[b, d])}" for d in days)
+
+    # 名前が1文字の勤務（取り込みで作る施設にありうる）は「22日」などに紛れるので見ない
+    if {st.symbol for st in facility.shift_types if len(st.name or "") >= 2 and st.name in text} - set(cell.values()):
+        raise Clarify(f"表では、{now(ds)}です。言われた勤務と違うので、{SWAP_SAME}。人と日を確かめて、もう一度言ってください")
+    days = [d for d in ds if cell[a, d] != cell[b, d]]
+    if not days:
+        what = f"2人とも{nm(cell[a, ds[0]])}" if len(ds) == 1 else "2人とも同じ勤務"
+        raise Clarify(f"{a}さんと{b}さんの{'・'.join(map(str, ds))}日は、{what}です。入れ替えても表は変わりません。{SWAP_SAME}")
+    for d in days:
+        for w in who:
+            st = facility.shift(cell[w, d])
+            if st.kind == "ake":
+                prev = f"前の日（{d - 1}日）" if d > 1 else "前の日"
+                raise Clarify(f"{w}さんの{d}日は{st.name}です。{st.name}は前の日の勤務とひと続きなので、{prev}で言ってください。"
+                              f"{SWAP_SAME}")
+            if st.on_request_only:
+                raise Clarify(f"{w}さんの{d}日は{st.name}です。{st.name}は本人の予定なので入れ替えられません。"
+                              f"1人ずつ、その日の勤務を言ってください。{SWAP_SAME}")
+    ym = f"{month.year:04d}-{month.month:02d}"
+    can = {s.name: s.can_on(ym) for s in staff if s.name in who}
+    for d in days:
+        for w, other in ((a, b), (b, a)):
+            st = facility.shift(cell[other, d])
+            if st.kind == "work" and st.symbol not in can.get(w, []):
+                raise Clarify(f"{w}さんは{st.name}に入れないので、{d}日の入れ替えはできません。{SWAP_SAME}")
+    for st in facility.shift_types:
+        if st.kind not in ("rest", "leave"):
+            continue
+        na = sum(1 for d in days if cell[a, d] == st.symbol)
+        nb = sum(1 for d in days if cell[b, d] == st.symbol)
+        if na != nb:
+            gain, lose = (a, b) if nb > na else (b, a)
+            n = abs(na - nb)
+            raise Clarify(f"表では、{now(days)}です。入れ替えると、{gain}さんの{st.name}が{n}日増え、{lose}さんの{st.name}が"
+                          f"{n}日減るので、{SWAP_SAME}。休みを返す日も決まっていれば、その日も入れて言ってください")
+    for r in rules or []:
+        if r.kind != "cell" or not r.when or r.meta.get("carry"):
+            continue
+        for d in days:
+            for w, other in ((a, b), (b, a)):
+                sym = cell[other, d]
+                if d in r.when and w in (r.who or []) and \
+                        (("in" in r.params and sym not in r.params["in"]) or sym in r.params.get("not_in", [])):
+                    raise Clarify(f"{w}さんの{d}日には、前からの「{r.name}」があります。入れ替えるとぶつかるので、{SWAP_SAME}。"
+                                  "先にそちらを取り消してから言ってください")
+    out = []
+    for d in days:
+        for w, other in ((a, b), (b, a)):
+            out.append({"name": f"{w}さん {d}日 {nm(cell[other, d])}（{other}さんと入れ替え）", "kind": "cell",
+                        "flex": SWAP_FLEX, "params": {"in": [cell[other, d]]}, "who": [w], "when": [d],
+                        "meta": {"swap_with": other}})
+    detail = f"（{a}さん {nm(cell[b, days[0]])}・{b}さん {nm(cell[a, days[0]])}）" if len(days) == 1 else ""
+    return out, f"{a}さんと{b}さんの{'・'.join(map(str, days))}日を入れ替え{detail}"
+
+
 def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[Staff],
                 month: Month, leave_caps: dict[str, int] | None = None, rules: list | None = None) -> Proposal:
     """leave_caps は人ごとの有給の上限（帳面の回数の決まりから。日数のない有給の頼みに使う。13章）。
@@ -375,6 +476,12 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                             "params": {"not_in": [sym]}, "who": who, "when": [a], "meta": {"moved_to": b}})
             p.rules.append({"name": f"{_who(who)} {b}日 {sname}（{a}日から移す）", "kind": "cell",
                             "flex": "fixed", "params": {"in": [sym]}, "who": who, "when": [b], "meta": {"moved_from": a}})
+        elif t == "swap":
+            if len(real) != 1:   # 同じ人・同じ日の別の頼みと重なると、どちらを当てるか決まらない
+                raise Clarify(f"入れ替えは、ほかの頼みと分けて1つずつ言ってください。{SWAP_SAME}")
+            rs, s = _swap(it, text, facility, staff, month, names, rules)
+            p.rules.extend(rs)
+            sums.append(s)
         elif t == "forbid_sequence":
             who = _names(it.get("staff"), names)
             a = _sym(it.get("first"), facility)
