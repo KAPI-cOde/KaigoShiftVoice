@@ -39,11 +39,19 @@ class Clarify(Exception):
     """聞き返す（表も帳面も変えない）。"""
 
 
+# 名前の無い一言（「私、13日の日勤、有給に」）に、Claude が人の欄へ入れることがある埋め草（2026-11-05、本物の Haiku で
+# 「職員不明」）。名簿にない人ではなく、誰の頼みか分からないと聞く
+NOBODY = re.compile(r"^(職員)?(不明|未定|未指定|NN|ＮＮ|XX|ＸＸ|〇〇|○○)(さん)?$|^(本人|自分|私|わたし|僕|俺|話者|依頼者)$")
+WHO_UNKNOWN = "誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください"
+
+
 def _names(v, staff_names: set[str]) -> list[str] | None:
     if v is None:
         return None
     vs = [v] if isinstance(v, str) else list(v)
     bad = [x for x in vs if x not in staff_names]
+    if bad and all(NOBODY.match(str(x).strip()) for x in bad):
+        raise Clarify(WHO_UNKNOWN)
     if bad:
         raise Clarify(f"名簿にない人がいます（{'・'.join(bad)}）。名簿から選んでください")
     return vs
@@ -193,6 +201,18 @@ def _tidy(items: list[dict], month: Month, text: str = "") -> list[dict]:
             hits = [i + 1 for i, x in enumerate(row or []) if x == it.get("shift") and i + 1 != it.get("to_day")]
             if len(hits) == 1:
                 it = {**it, "from_day": hits[0]}
+        if t == "move" and it.get("from_day") is not None and it.get("from_day") == it.get("to_day"):
+            # 「14日の遅番、早番に変えて」を、元と先が同じ日の移す（研修の日を動かす形）と読むことがある（本物の Haiku で
+            # 4回に3回。2026-11-05）。元と先が同じでは「14日は遅番でない」と「14日は遅番」がぶつかり、表が作れない。
+            # 同じ人・同じ日の別の頼みがあれば移すだけを捨て、無ければ何の勤務にするかを聞く
+            d, st = it["from_day"], it.get("staff")
+            if not any(x is not it and x.get("type") in ("set_cell", "day_off", "avoid_cell")
+                       and key(x.get("staff")) == key(st) and d in (x.get("days") or []) for x in items):
+                st = st[0] if isinstance(st, list) and len(st) == 1 else st
+                who = f"{st}さんの" if isinstance(st, str) and st else ""
+                out.append({"type": "unclear",
+                            "question": f"{who}{d}日を、どの勤務にしますか。表もルールも変えていません"})
+            continue
         out.append(it)
     return out
 
@@ -520,8 +540,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         for w in re.findall(r"([ぁ-ゖァ-ヺー一-龥々]{1,6}?)(?:さん|くん|ちゃん)", text))
     if cells_nobody or (per_nobody and (not everyone or (said and not both))) \
             or (said and not everyone and rules_nobody):
-        raise Clarify("誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください"
-                      + ("" if cells_nobody else "（全員のルールなら「全員」と付けてください）"))
+        raise Clarify(WHO_UNKNOWN + ("" if cells_nobody else "（全員のルールなら「全員」と付けてください）"))
     if kind == "cells":
         p.scope = "once"
         # 言い直し（「赤坂さんじゃなくて井上さん、10日が休みで」）。読み取りは新しい人の頼みだけを返すので、

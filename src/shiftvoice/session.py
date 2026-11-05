@@ -19,7 +19,7 @@ from .intake import Clarify, Proposal, to_proposal
 from .ledger import Ledger
 from .model import Rule
 from .names import Masker
-from .period import read_answer
+from .period import read_answer, resolve_relative_days
 from .reader import ReadError
 from .giveback import accepted_counts
 from .model import Acceptance
@@ -233,6 +233,8 @@ class Session:
                        f"{wrong}さんは名簿にいません。名簿から選んでください")
             return Reply("ask", u["id"], msg, extra={"ask_name": {"wrong": wrong, "candidates": cands,
                                                                   "roster": [x.name for x in staff]}})
+        # 「明日」「来週の水曜」などは、表の月の日付に置き換えてから送る（Claude には今日の日付を渡していないため）
+        masked = resolve_relative_days(masked, self.now().date(), self.year, self.month)
         sent = masked if getattr(self.reader, "calls_claude", True) else None
         self._sent[u["id"]] = sent
         self.store.update_pending(self.year, self.month, u["id"], sent_text=sent)

@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import datetime as dt
 import re
 
 NEG_RULE = r"毎月(じゃ|では|でな)"
@@ -40,3 +41,42 @@ def read_answer(text: str) -> str | None:
     if re.search(r"(毎月|ずっと|これから|いつも)", t):
         return "rule"
     return None
+
+
+WEEKDAYS = "月火水木金土日"
+# 「明日香」「明日美」のような名前の頭を日付にしない
+_NAME_TAIL = "香美菜奈花子実海"
+
+
+def resolve_relative_days(text: str, today: dt.date, year: int, month: int) -> str:
+    """「明日」「あさって」「来週の水曜」「今度の日曜」などを、表の月の「〇日」に置き換える（Claude へ送る前に手元で）。
+    現場の人は日付より「明日の早番」「来週の水曜」と言うことが多い（2026-11-05、作者の書いた言い方と、別の系統の AI が
+    書いた30件のうち4件で、Claude が日付を読めずに聞き返した）。決まりは次のとおり。
+    - 週は月曜から。今週の〜曜・来週の〜曜・再来週の〜曜。今度の〜曜・次の〜曜は、今日より後のいちばん近いその曜日
+    - 曜日は「曜」が付く時だけ（「次の日」は翌日の意味で、日曜ではない）
+    - 置き換えた日が表の月の外なら置き換えない（Claude が聞き返す）。すぐ後に日付が言われている時（「明日の30日」）も
+      置き換えない。「今日」は置き換えない（その日の出来事を記録する一言に使うため）"""
+    def day(d: dt.date) -> str | None:
+        return f"{d.day}日" if (d.year, d.month) == (year, month) else None
+
+    def put(pattern: str, when) -> None:
+        nonlocal text
+        def rep(m):
+            got = day(when(m))
+            return got if got else m.group(0)
+        text = re.sub(pattern, rep, text)
+
+    explicit = r"(?!の?[0-9０-９]+日)"
+    put(r"(?:明後日|あさって)" + explicit, lambda m: today + dt.timedelta(days=2))
+    put(r"(?:明日(?![" + _NAME_TAIL + r"])|あした)" + explicit, lambda m: today + dt.timedelta(days=1))
+    monday = today - dt.timedelta(days=today.weekday())
+
+    def week(m):
+        wd = WEEKDAYS.index(m.group(2))
+        which = m.group(1)
+        if which in ("今度", "次"):
+            ahead = (wd - today.weekday()) % 7 or 7
+            return today + dt.timedelta(days=ahead)
+        return monday + dt.timedelta(days=wd + {"今週": 0, "来週": 7, "再来週": 14}[which])
+    put(r"(再来週|来週|今週|今度|次)の?([" + WEEKDAYS + r"])曜日?" + explicit, week)
+    return text

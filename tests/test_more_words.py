@@ -21,6 +21,8 @@ from shiftvoice.rules import expand, with_overrides
 from shiftvoice.session import Session
 from shiftvoice.store import Store
 
+from shiftvoice.period import resolve_relative_days
+
 from conftest import FIXED_NOW
 
 SAMPLE = Path(__file__).resolve().parents[1] / "data" / "samples" / "komorebi-2026-11.tsv"
@@ -56,11 +58,13 @@ def _session(place, said: dict[str, list[dict]]) -> Session:
     store = place["store"]
     masker = Masker(store.staff(), store.facility())
     replies = {}
+    y, m = place["ym"]
     for text, items in said.items():
         items = [{k: (masker.to_code.get(v, v) if k == "staff" and isinstance(v, str) else v) for k, v in it.items()}
                  for it in items]
-        replies[masker.mask(text)[0]] = json.dumps({"items": items}, ensure_ascii=False)
-    y, m = place["ym"]
+        # 送る文と同じに、伏せた後で「今度の日曜」なども表の月の日付に置き換える（session._read）
+        sent = resolve_relative_days(masker.mask(text)[0], FIXED_NOW.date(), y, m)
+        replies[sent] = json.dumps({"items": items}, ensure_ascii=False)
     s = Session(store, y, m, RecordedReader(replies), now=lambda: FIXED_NOW)
     s.open()
     return s
