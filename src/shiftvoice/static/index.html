@@ -19,12 +19,12 @@
   .grid th.name, .grid td.name { width: 190px; text-align: left; padding: 0 6px; white-space: nowrap; overflow: hidden; border-right: 1px solid #000; }
   .grid thead th { height: 38px; font-weight: 400; line-height: 1.2; }
   .grid thead th small { display: block; font-size: 10px; }
-  .grid .off { background: #eee; }
+  .grid th.off { background: #eee; }
   .grid tr.firstrow td { border-top: 2px solid #000; }
   .grid .unit { font-size: 11px; margin-right: 6px; }
   .grid .mark { font-size: 10px; margin-left: 4px; font-weight: 700; }
   .grid td.cell { transition: background-color 1.2s ease; }
-  .grid td.glow { background: #fff3a0; font-weight: 700; }
+  .grid td.glow { background: #fff3a0; font-weight: 700; box-shadow: inset 0 0 0 2px #d4a800; }
 
   .said { margin-top: 10px; min-height: 22px; }
   .said p { margin: 0 0 2px; }
@@ -130,7 +130,7 @@
   .rv-card .ext { margin-top: 12px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
   .rv-card .ext input { font: inherit; border: 1px solid #000; border-radius: 3px; padding: 5px 8px; }
   .rv-card .ext input.chtext { flex: 1; min-width: 0; }
-  .legend { margin-top: 6px; font-size: 11px; color: #444; }
+  .legend { margin-top: 6px; font-size: 11px; color: #444; word-break: keep-all; }   /* 「東・西はユニット」などを語の途中で折らず、項目の間の空きでだけ折る */
   .q2 { font-size: 12px; color: #444; margin-top: 4px; }
   .hint { margin-top: 8px; font-size: 12px; color: #444; line-height: 1.6; }
   .btns select { font: inherit; font-size: 13px; border: 1px solid #000; border-radius: 3px; padding: 6px 8px; background: #fff; }
@@ -145,10 +145,20 @@
   .res-main { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; font-size: 30px; font-weight: 700; margin: 8px 0 2px; }
   .res-sub { font-size: 13px; }
   .res-line2 { font-size: 15px; margin: 8px 0 12px; }
-  .grid td.hol { background: #eee; }
   .grid td.nightoff { font-weight: 700; }
-  .grid td.diff { background: #fff3a0; }
-  .grid th.off { background: #eee; }
+  .grid td.diff { background: #fff3a0; box-shadow: inset 0 0 0 2px #d4a800; }
+  /* 勤務の種類のごく薄い地の色（文字は黒のまま）。早と日は緑、遅は橙、夜と明けは藍、有給は灰、公休は白。
+     黄色（いま直ったマス・返さない案から変わったマス）と赤（負担が増えた所）は、勤務の色に使わない */
+  .grid td.k-early { background: #d6ede0; }
+  .grid td.k-day { background: #ecf5ef; }
+  .grid td.k-late { background: #fbe2cd; }
+  .grid td.k-night { background: #d9ddf3; }
+  .grid td.k-ake { background: #eceef9; }
+  .grid td.k-leave { background: #e8e8e8; }
+  .grid td.k-rest { background: #fff; }
+  /* 土日祝の列（見出しは灰色）。マスは勤務の色の上から少しだけ暗くする */
+  .grid td.cell.off, .grid td.cell.hol { box-shadow: inset 0 0 0 99px rgba(0, 0, 0, .045); }
+  .grid td.cell.glow, .grid td.cell.diff { background: #fff3a0; box-shadow: inset 0 0 0 2px #d4a800; }
   .ppl div { margin-bottom: 3px; }
   .warn { color: #c0392b; }
   #res-side { font-size: 13px; }
@@ -201,13 +211,15 @@
     .grid .name { width: 110px; }
     .grid th, .grid td { height: 20px; }
     .grid td.glow, .grid td.diff { background: none !important; font-weight: 400; }
+    .grid td.k-early, .grid td.k-day, .grid td.k-late, .grid td.k-night, .grid td.k-ake, .grid td.k-leave { background: none !important; }   /* 紙は今どおり白黒（土日祝の列だけ灰色） */
+    .grid td { box-shadow: none !important; }
     .grid td.off, .grid th.off { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .grid tr { break-inside: avoid; }
     .grid .acc, .grid .mark, .legend .glowkey { display: none !important; }
     .printonly { display: block !important; font-size: 10px; margin: 0 0 4px; }   /* 画面だけの書き込み（引き受けの回数・〇月から夜勤も・黄色の凡例）は紙に出さない */
   }
   .printonly { display: none; }
-  .legend .glowkey { white-space: nowrap; }   /* 「黄色＝いま直ったマス」を途中で折り返さない */
+  .legend .glowkey, .legend .unitkey { white-space: nowrap; }   /* 「黄色＝いま直ったマス」を途中で折り返さない */
   footer { max-width: 1440px; margin: 0 auto; padding: 12px 20px 16px; font-size: 11px; }
 </style>
 </head>
@@ -287,6 +299,27 @@ function symName(sym) {
   return s ? s.name : sym;
 }
 
+// マスの地の色の種類（早・日・遅・夜・明・公・有）。似た勤務は同じ色（研修は日勤、明けは夜勤の薄い色）。
+// 取り込みで増えた記号は、勤務の種類と始まりの時刻で決める。時刻の線は取り込みで記号を決める時と同じ
+// （8時より前は早、10時以降に始まり19時以降に終わるのは遅、日をまたぐ勤務と夜勤の翌日が明けの勤務は夜）
+var TONE = { "早": "early", "日": "day", "研": "day", "遅": "late", "夜": "night", "明": "ake", "公": "rest", "有": "leave" };
+function toneOf(sym) {
+  if (!sym) return "";
+  if (TONE[sym]) return TONE[sym];
+  var s = ((S && S.symbols) || []).filter(function (x) { return x.symbol === sym; })[0];
+  if (!s || !s.kind) return "";
+  if (s.kind !== "work") return { ake: "ake", rest: "rest", leave: "leave" }[s.kind] || "";
+  if (s.next_is_ake) return "night";
+  var m = /^(\d{1,2}):(\d{2})/.exec(s.start || "");
+  if (!m) return "day";
+  var st = parseInt(m[1], 10) * 60 + parseInt(m[2], 10), en = st + (Number(s.hours) || 0) * 60;
+  if (en >= 24 * 60) return "night";
+  if (st < 8 * 60) return "early";
+  if (st >= 10 * 60 && en >= 19 * 60) return "late";
+  return "day";
+}
+function toneCls(sym) { var t = toneOf(sym); return t ? " k-" + t : ""; }
+
 // ルールで光らせるマス
 function ruleCells(card) {
   var out = {};
@@ -320,10 +353,13 @@ function renderLegend() {
   var items = (S.shift_names || []).map(function (x) { return [x[0], x[1] === "明け" ? "夜勤明け" : x[1]]; });
   var leave = items.filter(function (x) { return x[1] === "有給"; });
   items = items.filter(function (x) { return x[1] !== "有給"; }).concat(leave);
-  var t = items.map(function (x) { return x[0] + "＝" + x[1]; }).join("　");
-  if (multiUnit()) t += "　／　" + unitNames().join("・") + "はユニット";
   var lg = document.getElementById("legend");
-  lg.textContent = t;
+  lg.textContent = "";
+  items.forEach(function (x, i) {   // 1項目は途中で折らない（「有＝／有給」の所など）
+    if (i) lg.appendChild(document.createTextNode("　"));
+    lg.appendChild(el("span", "unitkey", x[0] + "＝" + x[1]));
+  });
+  if (multiUnit()) lg.appendChild(el("span", "unitkey", "　／　" + unitNames().join("・") + "はユニット"));   // 「東・西」の「・」の所で折らない
   lg.appendChild(el("span", "glowkey", "　／　黄色＝いま直ったマス"));   // 印刷では隠す（紙に黄色は出ない）
 }
 
@@ -383,6 +419,7 @@ function renderTable() {
       var wd2 = S.weekdays[d2 - 1];
       if (wd2 === "sat" || wd2 === "sun" || S.holidays.indexOf(d2) >= 0) td.className += " off";
       td.textContent = shown[key] !== undefined ? shown[key] : (row[d2 - 1] || "");
+      td.className += toneCls(td.textContent);   // 光る間に見せる前の記号も、その記号の色で
       if (glowCells[key] || cardGlow[key]) td.className += " glow";
       if (whyKey === key) td.className += " picked";
       (function (name, day) {
@@ -1459,7 +1496,7 @@ function renderResult() {
     tr.appendChild(nm);
     for (var d2 = 1; d2 <= b.days; d2++) {
       var sym = (give[n] || [])[d2 - 1] || "";
-      var cls = "cell";
+      var cls = "cell" + toneCls(sym);
       if (offDay(d2)) cls += " hol";
       // 光らせるのは返さない案から変わったマスだけ（引き受けた人の有給と、それに合わせて動いたマス）
       var bsym = base[n] ? (base[n][d2 - 1] || "") : sym;

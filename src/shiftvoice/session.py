@@ -1059,7 +1059,9 @@ class Session:
             "accepted": accepted_counts(self.store.acceptances(), self.ym, self._today(), include_returned=True),
             "accepted_items": self._accepted_items(m),
             "last_said": m.history[-1]["said"] if m.history else None,
-            "symbols": [{"symbol": st.symbol, "name": st.name} for st in fac.shift_types],
+            # 種類と時刻は、表のマスの地の色に使う（取り込みで増えた記号も、早・日・遅・夜などの色にそろえる）
+            "symbols": [{"symbol": st.symbol, "name": st.name, "kind": st.kind, "start": st.start,
+                         "hours": st.hours, "next_is_ake": st.next_is_ake} for st in fac.shift_types],
             "absence_sim": self.store.absence_sim(self.year, self.month),
             "returned_note": self._returned_note(m),
             "returned_people": self._returned_people(m),
