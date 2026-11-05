@@ -160,11 +160,15 @@ class Masker:
         return out
 
     def unmask(self, obj):
-        """返事（JSON の値）の 職員NN・ユニットN を名前に戻す。知らない番号は残す（手元で聞き返す）。"""
+        """返事（JSON の値）の 職員NN・ユニットN を名前に戻す。知らない番号は残す（手元で聞き返す）。
+        名前の無い一言に Claude が聞き返す時、伏せ方の言い方（「職員NN」「職員番号」）を書くことがあるので、
+        使う人の言葉（「〇〇さん」「名前」）に直す（2026-11-05、本物の Haiku の返事に出た）。"""
         if isinstance(obj, str):
             s = re.sub(r"職員\d{2}", lambda m: self.to_name.get(m.group(0), m.group(0)), obj)
             for u, code in self.unit_code.items():
                 s = s.replace(code, u)
+            s = re.sub(r"職員(?:NN|ＮＮ|nn|XX|ＸＸ|xx|○○|〇〇)(?:さん)?", "〇〇さん", s)
+            s = re.sub(r"職員(?:番号|ID|ＩＤ)", "名前", s)
             return s
         if isinstance(obj, list):
             return [self.unmask(x) for x in obj]

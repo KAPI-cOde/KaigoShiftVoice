@@ -22,6 +22,7 @@ from concurrent.futures import ProcessPoolExecutor
 from .build import month_rules
 from .rules import check_table, expand
 from .build import solve_staged
+from .solver import large_workers
 from .store import Store, atomic_write_json, read_json
 
 QUIET_MONTHS = 3   # 何か月続けて静かなら見直しに出すか（施設の設定 review.quiet_months で変えられる）
@@ -77,16 +78,16 @@ def _joint(out: dict, fac, staff, rules, m, dtime: float) -> None:
         s -= hit
 
 
-def _procs(fac, workers: int | None) -> int:
+def _procs(fac, staff, workers: int | None) -> int:
     """裏で並べるプロセスの数。指定（引数・施設の設定 quiet.workers）が無ければ CPU の数から決める。表の計算で
-    作業者を複数回す施設（30人を超える施設。設定 solve.interleave_workers）は、その数で割り、プロセス×作業者が
+    作業者を複数回す月（職員が30人を超える月。solver.large_workers）は、その数で割り、プロセス×作業者が
     CPU の数を大きく超えないようにする（8プロセス×8作業者で、事務用の PC が重くならないように。2026-11-05）。"""
     if workers:
         return workers
     if fac.settings.get("quiet", {}).get("workers"):
         return fac.settings["quiet"]["workers"]
     n = max(1, min(8, (os.cpu_count() or 2) - 2))
-    return max(1, n // (fac.settings.get("solve", {}).get("interleave_workers") or 1))
+    return max(1, n // max(1, large_workers(fac, staff)))
 
 
 def check_month(store: Store, year: int, month: int, *, workers: int | None = None,
@@ -109,9 +110,11 @@ def check_month(store: Store, year: int, month: int, *, workers: int | None = No
         else:
             todo.append((fac, staff, rules, m, rid, dtime))
     t = time.time()
-    n = _procs(fac, workers)
+    n = _procs(fac, staff, workers)
     if todo:
-        if n == 1:
+        # 1つずつでよい時はこのプロセスで回す。作業者を複数回す月は、1つでも別のプロセスにして優先度を下げる
+        # （サーバーの中で回すと、画面の一言の直しと同じ優先度で CPU を取り合うため）
+        if n == 1 and not large_workers(fac, staff):
             results = map(_one, todo)
         else:
             nice = getattr(os, "nice", None)   # Windows には無い（無ければ優先度を下げずに回す）

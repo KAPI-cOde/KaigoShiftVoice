@@ -224,14 +224,38 @@ def test_q16_no_scene_first_even_with_lower_ids(st):
 
 
 def test_q13_procs_divided_by_interleave_workers(st, monkeypatch):
-    """30人を超える施設（表の計算で作業者を8つ回す）は、裏で並べるプロセスを8で割る（8×8で PC が重くならないように）。"""
+    """職員が30人を超える月（表の計算で作業者を8つ回す）は、裏で並べるプロセスを8で割る（8×8で PC が重くならないように）。"""
     import shiftvoice.quiet as quiet
     monkeypatch.setattr(quiet.os, "cpu_count", lambda: 10)
-    fac = st.facility()
-    assert _procs(fac, None) == 8                 # 30人以下の施設は今までどおり
-    fac.settings.setdefault("solve", {})["interleave_workers"] = 8
-    assert _procs(fac, None) == 1
-    assert _procs(fac, 3) == 3                    # 引数で決めた時はそのまま
+    fac, staff = st.facility(), st.staff_on(2026, 11)
+    assert len(staff) == 16 and _procs(fac, staff, None) == 8   # 30人以下の施設は今までどおり
+    big = staff + staff[:15]                                     # 31人の月
+    assert _procs(fac, big, None) == 1
+    assert _procs(fac, big, 3) == 3                              # 引数で決めた時はそのまま
+
+
+def test_q15_large_month_runs_in_lower_priority_process(st, monkeypatch):
+    """作業者を8つ回す月は、プロセスが1つでも別のプロセスで、優先度を下げて回す（サーバーの中で回すと、画面の
+    一言の直しと同じ優先度で CPU を取り合う。Codex Astra のレビュー 2026-11-05）。"""
+    import shiftvoice.quiet as quiet
+    made = []
+
+    class FakePool:
+        def __init__(self, max_workers, **kw):
+            made.append((max_workers, kw.get("initializer")))
+
+        def map(self, f, xs):
+            return map(f, xs)
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(quiet, "ProcessPoolExecutor", FakePool)
+    monkeypatch.setattr(quiet.os, "cpu_count", lambda: 10)
+    monkeypatch.setattr(quiet, "large_workers", lambda fac, staff: 8)
+    q = check_month(st, 2026, 11, only=["r007"])
+    assert made == [(1, getattr(quiet.os, "nice", None))]
+    assert q["rules"]["r007"]["state"] == "needed"
 
 
 def test_q14_runs_without_os_nice(st, monkeypatch):

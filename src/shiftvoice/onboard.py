@@ -69,11 +69,6 @@ SETTING_KEYS = ("weights", "light_weight", "quality", "keep_weight", "resolve_qu
 SHORT_REST_WEIGHT = 100   # 2026-11-04 見本の施設Bで測って決めた
 SHORT_REST_HOURS = 14
 SOLVE_KEYS = ("workers", "seed", "max_deterministic_time", "resolve_max_deterministic_time")
-# 職員がこの人数を超える施設は、表を作る計算で、決まった順で複数の作業者を回す（設定 solve.interleave_workers）。
-# 1人で探すと、56〜100人の施設で時間内に段1の表が見つからず、運用の都合を外したり作れなかったりした（2026-11-05）
-LARGE_STAFF = 30
-INTERLEAVE_WORKERS = 8
-LARGE_DTIME = 40.0   # 作業者の合計の計算の量。20では短い並びが0〜2回残り、40で0回になった（32〜112人、この Mac で3〜19秒）
 ALWAYS_TYPES = ("公", "有", "研")   # 表に出ていなくても、頼まれた時に置けるよう勤務の種類に必ず入れる物
 LONG_REST_RATIO = 1.5   # 公休がいちばん多い日数のこの倍以上の人は、途中入職・長い休みかもしれない
 RATE_LINE = 0.9   # 夜明公の決まりを候補にする割合
@@ -1180,12 +1175,10 @@ def _short_id(name: str) -> str:
     return "f" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:7]
 
 
-def _settings(year: int, month: int, ny: int, nm: int, notes: list[str], staff: int = 0) -> dict:
+def _settings(year: int, month: int, ny: int, nm: int, notes: list[str]) -> dict:
+    # 職員が30人を超える月の作業者の数と計算の量は、設定に書かず solver.large_workers がその月の人数で決める
     src = read_json(SEED / "facility.json")["settings"]
     out: dict = {"solve": {k: src["solve"][k] for k in SOLVE_KEYS if k in src.get("solve", {})}}
-    if staff > LARGE_STAFF:   # 30人以下の施設は今までどおり1人で探す（表は変わらない）
-        out["solve"]["interleave_workers"] = INTERLEAVE_WORKERS
-        out["solve"]["max_deterministic_time"] = LARGE_DTIME
     for k in SETTING_KEYS:
         if k in src:
             out[k] = src[k]
@@ -1271,7 +1264,7 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
 
     notes: list[str] = []
     t0 = time.perf_counter()
-    settings = _settings(proposal.year, proposal.month, next_year, next_month, notes, staff=len(proposal.staff))
+    settings = _settings(proposal.year, proposal.month, next_year, next_month, notes)
     if proposal.paste_symbols:
         settings["paste_symbols"] = dict(proposal.paste_symbols)   # 持ち出す時に、施設の書き方へ戻す
     if proposal.paste_merged:

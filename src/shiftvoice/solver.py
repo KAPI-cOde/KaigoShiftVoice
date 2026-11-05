@@ -5,7 +5,7 @@
 - 決まりは rules.expand の場面ごとにスイッチを持つ。fixed は常に守る
 - 段1は 本人の希望（wish）と運用の都合（operational）も外せなくして解く。相談できる決まりは重みつきで外せる
 - 再現性のため、種・並列数・計算の量（max_deterministic_time）は施設の設定から取る。秒数では区切らない
-- 職員が30人を超える施設は、設定の interleave_workers の数の作業者を決まった順で回す（同じ入力なら同じ表）
+- その月の職員が30人を超える時は、作業者を8つ決まった順で回す（同じ入力なら同じ表。large_workers）
 """
 from __future__ import annotations
 
@@ -69,6 +69,22 @@ def _requested_leaves(rules: list[Rule], facility: Facility, days: int) -> dict[
                     for d in (r.when or []):
                         out.setdefault((w, d), set()).update(syms)
     return out
+
+
+# その月の職員がこの人数を超える時は、表を作る計算で、決まった順で複数の作業者を回す。1人で探すと、56〜100人の
+# 施設で時間内に段1の表が見つからず、運用の都合のルールを外したり作れなかったりした（2026-11-05、docs/measurements.md）
+LARGE_STAFF = 30
+INTERLEAVE_WORKERS = 8
+LARGE_DTIME = 40.0   # 作業者の合計の計算の量。20では短い並びが0〜2回残り、40で0回になった（32〜112人、この Mac で3〜19秒）
+
+
+def large_workers(facility: Facility, staff: list[Staff]) -> int:
+    """その月の職員が30人を超える時に回す作業者の数（施設の設定 solve.interleave_workers があればその数）。30人以下は0。
+    取り込んだ時の人数ではなく、その月の人数で決める（後から増えた施設・前の版で取り込んだ施設にも効き、
+    30人以下に減った施設は今までどおり1人で探す）。"""
+    if len(staff) <= LARGE_STAFF:
+        return 0
+    return int(facility.settings.get("solve", {}).get("interleave_workers") or INTERLEAVE_WORKERS)
 
 
 def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month, *,
@@ -221,18 +237,19 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     # 月ごとの種（撮影用に固定した一組。施設の設定 seed_by_month）。無ければ施設の種
     solver.parameters.random_seed = st.get("seed_by_month", {}).get(f"{month.year:04d}-{month.month:02d}",
                                                                     st.get("seed", 11))
-    iw = st.get("interleave_workers")
+    iw = large_workers(facility, staff)
+    dtime = st.get("max_deterministic_time", 30.0)
     if iw:
-        # 職員が30人を超える施設（取り込みの時に設定へ書く）は、決まった順で複数の作業者を回す。区切りの大きさも
-        # 決めるので、同じ入力なら同じ表になる。近くを探し直す作業者が入り、1人で探すより短い並びとルールの外れが
-        # 減る（2026-11-05 に測った。docs/measurements.md）。計算の量は作業者の合計で数える
+        # その月の職員が30人を超える時は、決まった順で複数の作業者を回す。区切りの大きさも決めるので、同じ入力なら
+        # 同じ表になる。近くを探し直す作業者が入り、1人で探すより短い並びとルールの外れが減る（2026-11-05 に測った。
+        # docs/measurements.md）。計算の量は作業者の合計で数えるので、表を作る時は LARGE_DTIME まで増やす
         solver.parameters.num_workers = iw
         solver.parameters.interleave_search = True
         solver.parameters.interleave_batch_size = iw
+        dtime = max(dtime, LARGE_DTIME)
     else:
         solver.parameters.num_workers = st.get("workers", 1)
-    solver.parameters.max_deterministic_time = (max_dtime if max_dtime is not None
-                                                else st.get("max_deterministic_time", 30.0))
+    solver.parameters.max_deterministic_time = max_dtime if max_dtime is not None else dtime
     t0 = time.perf_counter()
     code = solver.solve(m)
     secs = time.perf_counter() - t0

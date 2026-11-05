@@ -82,6 +82,33 @@ def test_t2_02_same_reading_name(sess):
     common(b, a)
 
 
+def test_t2_02_misheard_name_without_key(sess):
+    """鍵が無くても、名簿にない名前の聞き返しは出る（Claude を呼ぶ前に手元の名簿で聞く。README の審査員の方へ）。"""
+    from shiftvoice.server import NoKeyReader
+    sess.reader = NoKeyReader()
+    b = snap(sess)
+    r = sess.say("菊地さんの早番を4回までにして、毎月ね")
+    assert r.kind == "ask" and r.message == "菊地さんは名簿にいません。菊池さんですか"
+    unchanged(b, snap(sess))
+
+
+def test_t2_unclear_question_hides_mask_words(sess):
+    """名前の無い一言（作者のふだんの言い方「明日の早番　遅番にしてください」）に Claude が聞き返す時、
+    名前を伏せる内部の言い方（職員NN・職員番号）を画面に出さない（2026-11-05、本物の Haiku の返事に出た）。"""
+    text = "明日の早番　遅番にしてください"
+    q = ("どの職員を、どの日に、早番から遅番に変えますか？（職員番号と日付を教えてください。"
+         "例：職員03さんの明日の早番を遅番に）。対象の職員と日付（例：職員NNの○日〜○日）")
+    sess.reader = RecordedReader({text: json.dumps({"items": [{"type": "unclear", "question": q}]},
+                                                   ensure_ascii=False)})
+    b = snap(sess)
+    r = sess.say(text)
+    assert r.kind == "ask"
+    assert "職員NN" not in r.message and "職員番号" not in r.message
+    assert "（名前と日付を教えてください。例：上野さんの明日の早番を遅番に）" in r.message
+    assert "（例：〇〇さんの○日〜○日）" in r.message
+    unchanged(b, snap(sess))
+
+
 def test_t2_03_cancel_touches_nobody_else(sess):
     """取り消しは岡田さんの15日の休みの指定だけを外す。16日と加藤さんの研修は残る。表のマスは動かさない。"""
     sess.say("岡田さん、15と16は法事で休み")
