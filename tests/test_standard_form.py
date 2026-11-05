@@ -8,7 +8,8 @@ import pytest
 
 from conftest import FIXED_NOW, REPLIES
 from shiftvoice.interval import count_short
-from shiftvoice.onboard import ParseError, create_facility, infer, parse_paste, parse_symbol_table, plan_symbols
+from shiftvoice.onboard import (OnboardError, ParseError, create_facility, infer, parse_paste, parse_symbol_table,
+                                plan_symbols)
 from shiftvoice.reader import RecordedReader
 from shiftvoice.server import _parse_setup, preview_out, table_tsv
 from shiftvoice.session import Session
@@ -223,3 +224,132 @@ def test_同じ勤務にまとまる記号はそう言い時刻の出どころ�
     plan = plan_symbols(pasted, legend)
     assert plan.time_from["日"] == "c" and plan.time_from["早"] == "a"
     assert any(x.startswith("c・d は") or x.startswith("c・dは") for x in plan.lines), plan.lines
+
+
+# ---- 夜勤を日をまたいで2つの記号で書き、公休を×で書く表（新潟市の記入例の形。表と名前は作り話）----
+# 16時間の夜勤を1日目「準（17:00〜24:00）」、2日目「夜（0:00〜9:00）」と書く。別名で「夜」を夜勤の始まりと読むと、
+# 準→夜のつながりを短い並びに数え、翌月の表も夜勤を取り違えていた（2026-11-05）
+
+CYCLE = ["準", "夜", "×", "早", "日1", "遅1", "日1", "×"]
+NIGHT2_NAMES = ["篠原", "杉山", "田村", "千葉", "小島", "斉藤", "菊池", "落合"]
+NIGHT2_SYMBOLS = ("No\t記号\t始業時刻\t終業時刻\t休憩\t勤務時間\n"
+                  "1\t早\t7:00\t16:00\t1:00\t8\n2\t日1\t8:30\t17:30\t1:00\t8\n3\t遅1\t10:00\t19:00\t1:00\t8\n"
+                  "4\t準\t17:00\t0:00\t0:00\t7\n5\t夜\t0:00\t9:00\t1:00\t8\n6\t公\t公休\n")
+
+
+PART = ["日1", "日1", "×", "日1", "×", "日1", "日1"]   # 日勤だけの人（公休の人数が日によって変わる）
+
+
+def night2_paste(days=31):
+    head = "職種\t氏名\t" + "\t".join(str(d) for d in range(1, days + 1))
+    rows = [f"介護職員\t{nm}\t" + "\t".join(CYCLE[(d + k) % 8] for d in range(days)) for k, nm in enumerate(NIGHT2_NAMES)]
+    rows.append("介護職員\t久保\t" + "\t".join(PART[d % 7] for d in range(days)))
+    return "\n".join([head] + rows) + "\n"
+
+
+def screen_answer(sym, choice):
+    """画面（index.html の buildAnswers）が、おすすめの選び方から作って送る答え。"""
+    if choice.startswith("same:"):
+        return {"same_as": choice[5:]}
+    if choice == "night":
+        return {"name": f"夜勤（{sym}）", "kind": "work", "next_is_ake": True}
+    if choice == "rest":
+        return {"same_as": "公"}
+    return {"name": f"{sym}の勤務", "kind": "work"}
+
+
+NIGHT2 = {"text": night2_paste(), "symbols": NIGHT2_SYMBOLS, "year": 2026, "month": 7}
+
+
+def test_夜勤を準と夜で書く表は_時刻が合わない夜を別名で決めずに聞き_明けを勧める():
+    out = preview_out(*_parse_setup(NIGHT2)[:2])
+    assert {"準", "夜", "×"} <= set(out["unknown_symbols"])            # 「夜」も、別名で夜勤の始まりと決めずに聞く
+    assert out["suggestions"]["夜"] == "same:明" and out["suggestions"]["準"] == "night"
+    assert out["suggestions"]["×"] == "rest"
+    assert out["suggestion_why"]["夜"] == "いつも準の翌日で、記号表では0:00〜9:00なので、明けと思われます"
+    assert out["suggestion_why"]["準"] == "翌日がいつも夜で、記号表では17:00〜24:00なので、夜勤と思われます"
+    assert out["suggestion_why"]["×"] == "×は休みと思われます"
+    assert "夜＝明け（0:00〜9:00）" in out["symbol_lines"] and "準＝夜勤（17:00〜24:00）" in out["symbol_lines"]
+    # 画面はおすすめを答えに入れて読み直す。おすすめと理由の一言は残る（画面が理由を出し続ける）
+    ans = {s: screen_answer(s, v) for s, v in out["suggestions"].items()}
+    again = preview_out(*_parse_setup({**NIGHT2, "answers": ans})[:2])
+    assert again["suggestions"] == out["suggestions"] and again["suggestion_why"] == out["suggestion_why"]
+    assert again["problems"] == [] and "夜→明け" in again["reading"] and "×→公休" in again["reading"]
+    assert "準＝夜勤（17:00〜24:00）" in again["symbol_lines"]           # 夜勤（次の日は明け）と答えても「新しい勤務」と言わない
+    rules = [r["name"] for r in again["rules"]]
+    assert {"夜勤（準）の翌日は明け", "明けは夜勤の翌日だけ", "明けの翌日は公休"} <= set(rules)
+
+
+def test_準と夜の表で作った翌月は準の翌日が明けで_持ち出すと施設の記号に戻る(tmp_path):
+    out = preview_out(*_parse_setup(NIGHT2)[:2])
+    ans = {s: screen_answer(s, v) for s, v in out["suggestions"].items()}
+    pasted, prop, _, _ = _parse_setup({**NIGHT2, "answers": ans})
+    assert prop.paste_symbols["明"] == "夜" and prop.paste_symbols["公"] == "×" and "準" not in prop.paste_symbols
+    times = {s["symbol"]: {"start": s["start"], "hours": s["hours"]} for s in preview_out(pasted, prop)["shift_types"] if s["timed"]}
+    c = create_facility(prop, tmp_path / "f", name="試験", next_year=2026, next_month=8, answers=ans, times=times)
+    assert c.next_table_made, c.stage_note
+    store = Store(tmp_path / "f")
+    st = {s.symbol: s for s in store.facility().shift_types}
+    assert st["準"].next_is_ake and "夜" not in st                     # アプリの夜勤（夜）は作らない。施設の夜は明け
+    aug = store.month(2026, 8).table
+    assert all(r[d + 1] == "明" for r in aug.values() for d in range(30) if r[d] == "準")
+    _, by = count_short(prop.table, [s.__dict__ if not hasattr(s, "model_dump") else s.model_dump() for s in st.values()], 14)
+    assert by and not any("夜勤" in k or "明け" in k for k in by), by   # 準→夜のつながりを短い並びに数えない
+    assert c.short_rest["before"] == sum(by.values())
+
+
+def test_時刻が合わない夜は答えないと作れず_夜勤と答えればアプリの夜勤_新しい勤務にはしない(tmp_path):
+    pasted = parse_paste(night2_paste(), NIGHT2_SYMBOLS)
+    assert pasted.asked == {"夜": "明"}
+    base = {"準": screen_answer("準", "night"), "×": {"same_as": "公"}, "日1": {"same_as": "日"}, "遅1": {"same_as": "遅"}}
+    pr = infer(pasted, 2026, 7, base)
+    assert "夜" not in {s["symbol"] for s in pr.shift_types}           # 答えるまで、アプリの夜勤として黙って数えない
+    with pytest.raises(OnboardError, match="夜"):
+        create_facility(pr, tmp_path / "a", name="試験", next_year=2026, next_month=8, answers=base)
+    # ［夜勤（次の日は明け）］と答えたら、アプリの夜勤と同じ（同じ記号の勤務を2つ作らない）
+    night = infer(pasted, 2026, 7, {**base, "準": {"same_as": "公"}, "夜": screen_answer("夜", "night")})
+    assert night.same_as["夜"] == "夜" and [s["symbol"] for s in night.shift_types].count("夜") == 1
+    # ［新しい勤務］は選び直してもらう
+    new = infer(pasted, 2026, 7, {**base, "夜": screen_answer("夜", "new")})
+    assert any("『夜』はアプリの夜勤と同じ書き方なので、新しい勤務にはできません" in p for p in new.problems)
+    assert [s["symbol"] for s in new.shift_types].count("夜") <= 1
+
+
+def test_夜勤を1つの記号で書く記号表なら_夜は今までどおり夜勤と読む():
+    cyc = ["夜", "明", "公", "早", "日"]
+    text = "氏名\t" + "\t".join(str(d) for d in range(1, 31)) + "\n" + "\n".join(
+        f"{nm}\t" + "\t".join(cyc[(d + k) % 5] for d in range(30)) for k, nm in enumerate(["青木", "石田", "上野", "江口", "小川"]))
+    for legend in ("記号\t始業時刻\t終業時刻\n夜\t16:30\t9:30\n早\t7:00\t16:00\n",     # 日をまたぐ1つの記号
+                   "記号\t始業時刻\t終業時刻\n夜\t17:00\t0:00\n明\t0:00\t9:00\n"):     # 夜が前半、明が後半
+        p = parse_paste(text, legend)
+        assert p.asked == {} and "夜" not in p.unknown_symbols and p.unknown_symbols == []
+
+
+def test_公休をバツで書く表は休みを勧めて理由を出す_決めるのは作成者(tmp_path):
+    week = ["早", "日", "遅", "×", "早", "日", "×"]
+    text = "氏名\t" + "\t".join(str(d) for d in range(1, 31)) + "\n" + "\n".join(
+        f"{nm}\t" + "\t".join((week * 5)[k:k + 30]) for k, nm in enumerate(["赤坂", "井上", "内田"]))
+    p = parse_paste(text)
+    assert p.unknown_symbols == ["×"]                                   # 別名にして黙って公休にしない
+    pr = infer(p, 2026, 11)
+    assert pr.suggestions == {"×": "rest"} and pr.suggestion_why == {"×": "×は休みと思われます"}
+    done = infer(p, 2026, 11, {"×": screen_answer("×", "rest")})       # 画面が休みを入れて読み直した後も、同じ勧めと理由
+    assert done.suggestions == {"×": "rest"} and done.suggestion_why == {"×": "×は休みと思われます"}
+    assert done.same_as == {"×": "公"} and done.problems == []
+    with pytest.raises(OnboardError, match="×"):
+        create_facility(pr, tmp_path / "x", name="試験", next_year=2026, next_month=12)
+    assert not (tmp_path / "x").exists()
+
+
+def test_取り込みの画面はアプリの側の言い方で聞き_選び方ごとの翌月を短く言う():
+    import re
+    h = HTML.read_text(encoding="utf-8")
+    assert "アプリがまだ知らない記号があります。何の勤務か選んでください" in h
+    assert "アプリがまだ知らない記号が\" + pv.unknown_symbols.length" in h
+    assert "（\" + why + \"）" in h and "pv.suggestion_why" in h            # おすすめのままの時、記号ごとの理由の一言を出す
+    i = h.index("su-symhelp")
+    helps = re.findall(r'"([^"]*＝[^"]*|休みの記号[^"]*)"', h[i:i + 700])
+    assert len(helps) == 3, helps
+    assert helps[0].startswith("新しい勤務＝翌月も") and "表を作る人が一言で頼んだ日だけ" in helps[1]
+    assert "［休み］か［有給と同じ］" in helps[2]
+    assert not any(":" in t or "：" in t or "札" in t for t in helps)

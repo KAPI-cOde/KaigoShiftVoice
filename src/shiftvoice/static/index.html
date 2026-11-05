@@ -182,6 +182,7 @@
   .su-rule .nm { font-weight: 700; }
   .su-rule .ev { font-size: 12px; }
   .su-sym { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .su-sym > span:first-child { white-space: nowrap; }
   .su-time { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 14px; }
   .su-time .tn { min-width: 8em; }
   .su-wrap .su-time input { font: inherit; font-size: 14px; border: 1px solid #000; border-radius: 3px; padding: 3px 6px; background: #fff; color: #000; }
@@ -1742,7 +1743,7 @@ function renderSetup2(box) {
   var pv = SU.pv;
   var nWork = pv.shift_types.filter(function (s) { return (s.kind === "work" || s.kind === "ake") && !s.on_request_only; }).length;
   box.appendChild(el("h1", "", pv.staff.length + "人" + (pv.unknown_symbols.length
-    ? "が見つかりました。知らない記号が" + pv.unknown_symbols.length + "つあります"
+    ? "が見つかりました。アプリがまだ知らない記号が" + pv.unknown_symbols.length + "つあります"
     : "・勤務" + nWork + "種類が見つかりました")));
   box.appendChild(el("div", "ln", pv.staff.join("・")));
   box.appendChild(el("label", "", "見つけたルール（貼った月の並びから見つけた物です。外すと、作る時に入れません。あとで一言で足せます）"));
@@ -1757,7 +1758,8 @@ function renderSetup2(box) {
     box.appendChild(row);
   });
   if (pv.unknown_symbols.length) {
-    box.appendChild(el("label", "", "知らない記号があります。何の勤務か選んでください"));
+    // 「知らない記号」だけだと、自分の記号が悪いのかと不安にさせた（受け止めのユニットリーダー役。2026-11-05）
+    box.appendChild(el("label", "", "アプリがまだ知らない記号があります。何の勤務か選んでください"));
     pv.unknown_symbols.forEach(function (sym) {
       var a = SU.answers[sym] || (SU.answers[sym] = { choice: "", name: "" });
       var row = el("div", "su-sym");
@@ -1772,7 +1774,10 @@ function renderSetup2(box) {
       sel.value = a.choice;
       sel.addEventListener("change", function () { a.choice = sel.value; refreshPreview(); });
       row.appendChild(sel);
-      if ((pv.symbol_guessed || []).indexOf(sym) >= 0 && pv.suggestions && a.choice === pv.suggestions[sym]) {
+      var why = (pv.suggestion_why || {})[sym];   // 記号ごとの理由（×は休み、明けの側の「夜」と、その前の日の記号）
+      if (why && pv.suggestions && a.choice === pv.suggestions[sym]) {
+        row.appendChild(el("span", "small", "（" + why + "）"));
+      } else if ((pv.symbol_guessed || []).indexOf(sym) >= 0 && pv.suggestions && a.choice === pv.suggestions[sym]) {
         row.appendChild(el("span", "small", "（記号表の時刻から読み取りました。違えば選び直せます）"));
       } else if (pv.suggestions && pv.suggestions[sym] && a.choice === pv.suggestions[sym]) {
         row.appendChild(el("span", "small", pv.suggestions[sym] === "same:明"
@@ -1786,6 +1791,12 @@ function renderSetup2(box) {
       }
       box.appendChild(row);
     });
+    // 選び方ごとに翌月どうなるか。「頼まれた時だけ」が誰に頼まれた時か、翌月どうなるかが分からなかった（受け止めのユニットリーダー役。2026-11-05）
+    var help = el("div", "small su-symhelp"); help.style.margin = "4px 0 2px";
+    ["新しい勤務＝翌月も、その記号に入っていた人の勤務として組みます（たまにしか無い物は、頼んだ日だけ）",
+     "会議・研修など＝アプリからは入れず、表を作る人が一言で頼んだ日だけ入れます",
+     "休みの記号（半日休・リフレッシュ休暇など）は、［休み］か［有給と同じ］を選びます"].forEach(function (t) { help.appendChild(el("div", "", t)); });
+    box.appendChild(help);
   }
   if (pv.symbol_lines && pv.symbol_lines.length) {
     box.appendChild(el("label", "", "シフト記号表から読み取った記号（違うときは上の欄で選び直せます）"));

@@ -20,6 +20,17 @@ from shiftvoice import onboard  # noqa: E402
 from shiftvoice.nextmonth import next_ym  # noqa: E402
 
 
+def answer_of(sym: str, choice: str) -> dict:
+    """画面のおすすめ（same:夜・night・rest など）を、画面が送る答えの形にする（index.html の buildAnswers と同じ）。"""
+    if choice.startswith("same:"):
+        return {"same_as": choice[5:]}
+    if choice == "night":
+        return {"name": f"夜勤（{sym}）", "kind": "work", "next_is_ake": True}
+    if choice == "rest":
+        return {"same_as": "公"}
+    return {"name": f"{sym}の勤務", "kind": "work"}
+
+
 def main(argv: list[str]) -> int:
     args = [a for a in argv if not a.startswith("--")]
     month = "2027-02"
@@ -30,10 +41,15 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
     year, mon = int(month[:4]), int(month[5:7])
-    pasted = onboard.parse_paste(Path(args[0]).read_text(encoding="utf-8"))
     symtext = Path(args[1]).read_text(encoding="utf-8") if len(args) > 1 else ""
+    # 画面と同じく、記号表があれば別名の読み方と時刻が合わない記号（明けの側の「夜」）も知らない記号として読む
+    pasted = onboard.parse_paste(Path(args[0]).read_text(encoding="utf-8"), symtext)
     plan = onboard.plan_symbols(pasted, symtext) if symtext else None
-    answers = dict(plan.answers) if plan else {}
+    # 画面は1回目の読み取りのおすすめ（記号表から読んだ物を先に、ほかの見つけ方の物も。×は休み）をそのまま答えに
+    # 入れてから作る。同じようにおすすめを答えにする
+    sugg = dict(onboard.infer(pasted, year, mon).suggestions)
+    sugg.update(plan.suggestions if plan else {})
+    answers = {sym: answer_of(sym, v) for sym, v in sugg.items()}
     times = dict(plan.times) if plan else {}
     new_shifts = []
     if plan:
@@ -41,6 +57,8 @@ def main(argv: list[str]) -> int:
         # 記号表の時刻を入れる（作成者がパートの勤務を遅番と同じにすることは、まず無いため）
         legend = onboard.parse_symbol_table(symtext)
         for sym in plan.undecided:
+            if sym in answers:
+                continue
             info = legend.get(sym)
             if info and "start" in info:
                 answers[sym] = {"name": f"{sym}の勤務", "kind": "work"}
@@ -53,7 +71,8 @@ def main(argv: list[str]) -> int:
     print(f"読んだ人数 {len(prop.staff)}人（兼務で1人にまとめた人 {len(pasted.merged)}人）、日数 {pasted.days}、"
           f"知らない記号 {len(pasted.unknown_symbols)}つ、記号表で決めた {len(plan.answers) if plan else 0}つ、"
           f"新しい勤務にした {new_shifts}、決められなかった "
-          f"{[x for x in plan.undecided if x not in new_shifts] if plan else pasted.unknown_symbols}")
+          f"{[x for x in plan.undecided if x not in new_shifts and x not in answers] if plan else [x for x in pasted.unknown_symbols if x not in answers]}")
+    print(f"おすすめのとおりに答えた {sugg}" + (f"、別名と時刻が合わず聞いた記号 {pasted.asked}" if pasted.asked else ""))
     if prop.problems:
         print("このままでは作れない理由", prop.problems)
     with tempfile.TemporaryDirectory() as tmp:

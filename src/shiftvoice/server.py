@@ -88,13 +88,17 @@ def _parse_setup(data: dict) -> tuple[Pasted, Proposal, int, int]:
         raise ParseError("貼る表の年と月を数字で入れてください")
     if not (2000 <= year <= 2100 and 1 <= month <= 12):
         raise ParseError("貼る表の年と月を確かめてください")
-    pasted = parse_paste(str(data.get("text") or ""))
+    # 記号表があれば、別名の読み方と時刻が合わない記号（明けの側の「夜」）も知らない記号として聞く
+    pasted = parse_paste(str(data.get("text") or ""), str(data.get("symbols") or ""))
     answers = data.get("answers")
     prop = infer(pasted, year, month, answers if isinstance(answers, dict) else None)
     plan = _symbol_plan(data, pasted)
     if plan:
         # 記号表から読んだおすすめ（画面が先に入れる）と、勤務の時刻の初めの値。ほかの見つけ方のおすすめより先にする
         prop.suggestions.update(plan.suggestions)
+        for sym in plan.suggestions:
+            prop.suggestion_why.pop(sym, None)   # 理由の一言も、おすすめと同じ見つけ方の物にする
+        prop.suggestion_why.update(plan.why)
         prop.symbol_plan = plan
         for st in prop.shift_types:
             t = plan.times.get(st["symbol"])
@@ -129,6 +133,7 @@ def preview_out(pasted: Pasted, prop: Proposal) -> dict:
         "reading": _reading(pasted, prop), "units": list(prop.units),
         "blank_as_rest": pasted.blank_as_rest, "skipped": pasted.skipped,
         "problems": list(prop.problems), "suggestions": dict(prop.suggestions),
+        "suggestion_why": dict(prop.suggestion_why),   # おすすめの理由の一言（画面はおすすめのままの時だけ出す）
         "staff_evidence": prop.staff_evidence, "rest_notes": list(prop.rest_notes), "merge_notes": list(prop.merge_notes),
         "symbol_lines": list(prop.symbol_plan.lines) if prop.symbol_plan else [],
         "symbol_guessed": sorted(prop.symbol_plan.suggestions) if prop.symbol_plan else [],

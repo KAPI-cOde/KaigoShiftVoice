@@ -52,6 +52,8 @@ SUMMARY_WORDS = ("計", "合計", "人数")
 SHIFT_WORDS = {"休み", "休暇", "出勤"}
 # 答えの kind
 ANSWER_KINDS = ("work", "rest", "leave", "ake")
+# 公休をこの記号で書く表（新潟市の記入例）。知らない記号のまま聞き、休みを勧める（別名にして黙って決めない）
+REST_MARK = "×"
 # 日本の祝日（2026-11〜2027-05）。表に無い月は空にして知らせる
 HOLIDAYS = {
     "2026-11": [3, 23],
@@ -99,6 +101,7 @@ class Pasted:
     blank_by: dict[str, int] = field(default_factory=dict)  # 名前 → 空欄を公にした数
     spelled: dict[str, dict[str, int]] = field(default_factory=dict)   # 読み替えた後の記号 → {貼った書き方（空欄は ""）: 回数}
     merged: list[str] = field(default_factory=list)         # 2行（兼務）あって1人にまとめた名前
+    asked: dict[str, str] = field(default_factory=dict)     # 記号表の時刻が別名の読み方と合わず、知らない記号にした書き方 → 時刻から読んだ勤務（夜→明）
 
 
 @dataclass
@@ -113,7 +116,8 @@ class Proposal:
     unknown_symbols: list[str] = field(default_factory=list)
     same_as: dict[str, str] = field(default_factory=dict)   # 答えで「既存の勤務と同じ」にした記号 → 先
     problems: list[str] = field(default_factory=list)       # このままでは作れない理由（一文ずつ）
-    suggestions: dict[str, str] = field(default_factory=dict)   # 知らない記号 → おすすめの選び方（same:夜 / night / same:明）
+    suggestions: dict[str, str] = field(default_factory=dict)   # 知らない記号 → おすすめの選び方（same:夜 / night / same:明 / rest）
+    suggestion_why: dict[str, str] = field(default_factory=dict)   # 知らない記号 → おすすめの理由の一言（画面に出す。無ければ画面の決まった一言）
     raw: dict[str, list[str]] | None = None                 # 貼ったままの表（答えで置き換える前）
     staff_evidence: str = ""                                # 人ごとの入れる勤務を貼った月に入った物だけにした根拠
     long_rest: dict[str, int] = field(default_factory=dict)  # 公休が最頻値の1.5倍以上の人 → 公休の日数
@@ -248,7 +252,10 @@ def _merge_rows(a: list[str], b: list[str]) -> list[str]:
     return [x if x or not y else y for x, y in zip(a, b)]
 
 
-def parse_paste(text: str) -> Pasted:
+def parse_paste(text: str, symbols: str = "") -> Pasted:
+    """symbols はシフト記号表の文字（任意）。あれば、別名で読む書き方のうち時刻が合わない物（明けの側の「夜」）を、
+    別名で決めずに知らない記号として残す（asked_symbols）。"""
+    asked = asked_symbols(symbols)
     text = _nfkc(text)
     delim = "\t" if "\t" in text else ","
 
@@ -438,11 +445,11 @@ def parse_paste(text: str) -> Pasted:
                 row.append("公")
                 spelled.setdefault("公", Counter())[""] += 1
                 continue
-            sym = ALIASES.get(c, c)
+            sym = c if c in asked else ALIASES.get(c, c)
             spelled.setdefault(sym, Counter())[c] += 1
             if sym != c:
                 aliases.setdefault(c, sym)
-            if sym not in _template_symbols() and sym not in unknown:
+            if (sym not in _template_symbols() or c in asked) and sym not in unknown:
                 unknown.append(sym)
             row.append(sym)
         table[name] = row
@@ -455,7 +462,8 @@ def parse_paste(text: str) -> Pasted:
     return Pasted(table=table, days=n, skipped=skipped, blank_as_rest=blank,
                   unknown_symbols=unknown, had_header=header is not None,
                   aliases=aliases, unit_of=unit_of, unit_list=unit_list, blank_by=blank_by,
-                  spelled={k: dict(v) for k, v in spelled.items()}, merged=merged_names)
+                  spelled={k: dict(v) for k, v in spelled.items()}, merged=merged_names,
+                  asked={c: t for c, t in asked.items() if c in unknown})
 
 
 # ---------------------------------------------------------------- 雛形
@@ -535,6 +543,41 @@ def parse_symbol_table(text: str) -> dict[str, dict]:
     return out
 
 
+NIGHT_SECOND_HALF = 5 * 60   # 夜勤を日をまたいで2つの記号で書く表の、後半の記号が始まる時刻（0時〜5時ごろ）
+
+
+def _ake_side(info: dict | None) -> bool:
+    """記号表の1行が、0時〜5時ごろに始まり日をまたがない勤務（夜勤の後半＝明けの側）か。"""
+    return bool(info) and "start" in info and info["start"] < NIGHT_SECOND_HALF and info["end"] > info["start"]
+
+
+def asked_symbols(symbols: str) -> dict[str, str]:
+    """シフト記号表の時刻が、アプリの別名の読み方と合わない書き方 → 時刻から読んだ勤務。別名で黙って決めずに、
+    知らない記号として作成者に聞く。いまは、夜勤と読む書き方（夜・夜勤・入）が明けの側の時刻の時だけ（明けと読む）。
+    新潟市の記入例は、16時間の夜勤を1日目「準（17:00〜24:00）」、2日目「夜（0:00〜9:00）」と書く。別名で「夜」を
+    夜勤の始まりと読むと、準→夜のつながりを短い並びに数え、翌月の表も夜勤を取り違えていた（2026-11-05）。
+    早番・日勤・遅番の時刻のずれでは聞かない（始まりの時刻での分け方は仮の物で、施設の呼び方を先にする）。"""
+    if not str(symbols or "").strip():
+        return {}
+    return {s: "明" for s, info in parse_symbol_table(symbols).items() if ALIASES.get(s, s) == "夜" and _ake_side(info)}
+
+
+def _span(info: dict) -> str:
+    """記号表の1行の時刻（17:00〜24:00 の形。終わりの 0:00 は 24:00）。"""
+    end = "24:00" if info["end"] in (0, 1440) and info["start"] > 0 else _clock_label(info["end"])
+    return f"{_clock_label(info['start'])}〜{end}"
+
+
+def _always_next(table: dict[str, list[str]], sym: str, step: int) -> str | None:
+    """sym の次の日（step=1）か前の日（step=-1）に、いつも（3回以上で9割以上）出ている記号。無ければ None。"""
+    near = [row[d + step] for row in table.values() for d, c in enumerate(row)
+            if c == sym and 0 <= d + step < len(row)]
+    if len(near) < 3:
+        return None
+    top, k = Counter(near).most_common(1)[0]
+    return top if k / len(near) >= RATE_LINE else None
+
+
 def _guess_target(info: dict) -> str | None:
     """記号表の1行から、アプリの勤務の記号を決める。決められなければ None。"""
     if info.get("rest"):
@@ -563,6 +606,7 @@ class SymbolPlan:
     time_from: dict[str, str] = field(default_factory=dict)      # 先の記号 → 時刻を取った記号表の記号
     lines: list[str] = field(default_factory=list)               # 画面に出す1行ずつ（a＝早番（7:00〜16:00））
     undecided: list[str] = field(default_factory=list)           # 決められなかった記号（作成者に聞く）
+    why: dict[str, str] = field(default_factory=dict)            # 知らない記号 → おすすめの理由の一言（別名と時刻が合わない記号と、その前の日の記号）
 
 
 def plan_symbols(pasted: Pasted, text: str, answers: dict | None = None) -> SymbolPlan:
@@ -583,8 +627,13 @@ def plan_symbols(pasted: Pasted, text: str, answers: dict | None = None) -> Symb
     order = {sym: i for i, sym in enumerate(table)}
     for sym in pasted.unknown_symbols:
         info = table.get(sym)
-        guess = _guess_target(info) if info else None
-        if guess is not None:
+        guess = pasted.asked.get(sym) or (_guess_target(info) if info else None)
+        if guess == "夜" and pasted.asked:
+            # 施設の「夜」を明けと読む表（asked_symbols）では、夜勤の始まりの記号をアプリの夜勤と同じにせず、
+            # 夜勤（次の日は明け）を勧める。同じにすると、アプリの表の「夜」が施設の表の「夜」の前の日に出て、見比べにくい
+            plan.answers[sym] = {"name": f"夜勤（{sym}）", "kind": "work", "next_is_ake": True}
+            plan.suggestions[sym] = "night"
+        elif guess is not None:
             plan.answers[sym] = {"same_as": guess}
             plan.suggestions[sym] = f"same:{guess}"
         elif info is not None:
@@ -593,14 +642,15 @@ def plan_symbols(pasted: Pasted, text: str, answers: dict | None = None) -> Symb
             plan.undecided.append(sym)
         if info is None:
             continue
-        a = given.get(sym)
-        target = (a.get("same_as") if isinstance(a, dict) else None) if a is not None else guess
-        when = "" if info.get("rest") else (
-            f"（{_clock_label(info['start'])}〜"
-            f"{'24:00' if info['end'] in (0, 1440) and info['start'] > 0 else _clock_label(info['end'])}）")
+        if sym in pasted.asked or plan.suggestions.get(sym) == "night":
+            plan.why[sym] = _asked_why(pasted, sym, info)
+        a = given.get(sym, plan.answers.get(sym))   # 答えが無ければ仮の答え
+        target = a.get("same_as") if isinstance(a, dict) else None
+        when = "" if info.get("rest") else f"（{_span(info)}）"
         if target is None and a is not None:
             # 画面で［会議・研修など（頼まれた時だけ）］を選んだ記号は、そう読む（「新しい勤務」と言わない）
-            label = "頼まれた時だけの勤務" if isinstance(a, dict) and a.get("occasional") else "新しい勤務"
+            label = ("頼まれた時だけの勤務" if isinstance(a, dict) and a.get("occasional")
+                     else "夜勤" if isinstance(a, dict) and a.get("next_is_ake") else "新しい勤務")
             plan.lines.append(f"{sym}＝{label}{when}")
             continue
         if target is None:
@@ -633,6 +683,18 @@ def plan_symbols(pasted: Pasted, text: str, answers: dict | None = None) -> Symb
             plan.lines.append(f"{'・'.join(syms)}は、同じ{names.get(t, t)}として読みます。次の勤務までの間は、いちばん多く出た"
                               f"{plan.time_from[t]}の時刻で数えます。分けたい時は、上の欄でどれかを［新しい勤務］にしてください")
     return plan
+
+
+def _asked_why(pasted: Pasted, sym: str, info: dict) -> str:
+    """別名と時刻が合わない記号（明けの側の「夜」）と、その前の日の夜勤の記号（準）を勧める理由の一言。
+    今ある「いつも夜勤の翌日に出ているので、明けと思われます」の形で、施設の記号と記号表の時刻で言う
+    （「夜勤の翌日」とだけ言うと、自分の「夜」が夜勤の施設には何のことか分からないため）。"""
+    when = f"記号表では{_span(info)}"
+    if sym in pasted.asked:
+        prev = _always_next(pasted.table, sym, -1)
+        return (f"いつも{prev}の翌日で、" if prev else "") + f"{when}なので、明けと思われます"
+    nxt = _always_next(pasted.table, sym, 1)
+    return (f"翌日がいつも{nxt}で、" if nxt in pasted.asked else "") + f"{when}なので、夜勤と思われます"
 
 
 # ---------------------------------------------------------------- 見つける
@@ -736,13 +798,20 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
         a = answers.get(sym)
         if isinstance(a, dict) and a.get("kind") == "rest" and not a.get("same_as"):
             a = answers[sym] = {"same_as": "公"}
+        if sym in _template_symbols() and isinstance(a, dict) and a.get("next_is_ake") and not a.get("same_as"):
+            # 記号表で聞き直した「夜」（asked_symbols）を［夜勤（次の日は明け）］と答えたら、アプリの夜勤と同じにする
+            # （同じ記号の勤務を2つ作らない）
+            a = answers[sym] = {"same_as": "夜"}
         if isinstance(a, dict) and a.get("same_as"):
             if a["same_as"] not in _template_symbols():
                 raise OnboardError(f"記号「{sym}」を同じにする先「{a['same_as']}」は、知らない勤務です")
             same[sym] = a["same_as"]
     table = {k: [same.get(c, c) for c in row] for k, row in pasted.table.items()}
     n = pasted.days
-    used = {s for row in table.values() for s in row}
+    # 記号表で聞き直した「夜」（アプリの記号と同じ書き方）を［〜と同じ］で答えていなければ、アプリの夜勤として数えない
+    # （まだ答えていない時に、黙って夜勤の始まりにしない）
+    tpl_open = {s for s in pasted.unknown_symbols if s not in same and s in _template_symbols()}
+    used = {s for row in table.values() for s in row} - tpl_open
 
     def days_with(sym: str) -> int:
         return sum(1 for d in range(n) if any(row[d] == sym for row in table.values()))
@@ -755,6 +824,8 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     own = _own_shifts(table, unknown, answers)
     answered: dict[str, dict] = {}
     for sym in unknown:
+        if sym in tpl_open:
+            continue   # アプリの記号と同じ書き方は、新しい勤務にしない（答えていれば下の problems で選び直しを頼む）
         st = _answer_type(sym, answers.get(sym), days_with(sym) * 2 >= n or sym in own)
         if st:
             answered[sym] = st
@@ -986,7 +1057,11 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
 
     problems = _problems(table, by_sym, rules, staff, month)
     problems += [p for p in _answer_problems(pasted, same, answers, month) if p not in problems]
+    tpl_names = {t["symbol"]: t["name"] for t in _template()}
+    problems += [f"『{s}』はアプリの{tpl_names[s]}と同じ書き方なので、新しい勤務にはできません。"
+                 f"［〜と同じ］か［休み］から選んでください" for s in sorted(tpl_open) if isinstance(answers.get(s), dict)]
     suggestions = {}
+    suggestion_why: dict[str, str] = {}
     nights = {"夜"} | set(night_syms)
     for sym in unknown:
         tot, ok = after(sym, ake_syms)
@@ -995,10 +1070,17 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
             suggestions[sym] = "same:夜" if "夜" in used else "night"
         elif "明" in used and len(prev) >= 3 and sum(1 for p in prev if p in nights) / len(prev) >= RATE_LINE:
             suggestions[sym] = "same:明"
+    # 公休を×で書く表（新潟市の記入例）は、×に休みを勧める（黙って決めない）。答えた後の読み取りでも同じおすすめを返し、
+    # 画面が理由の一言を出し続けるよう、答えで置き換えた記号も見る
+    for sym in pasted.unknown_symbols:
+        if sym == REST_MARK:
+            suggestions[sym] = "rest"
+            suggestion_why[sym] = f"{sym}は休みと思われます"
 
     return Proposal(year=year, month=month, table=table, shift_types=shift_types, units=units,
                     staff=staff, rules=rules, unknown_symbols=unknown, same_as=same,
-                    problems=problems, suggestions=suggestions, raw=pasted.table, staff_evidence=staff_evidence,
+                    problems=problems, suggestions=suggestions, suggestion_why=suggestion_why,
+                    raw=pasted.table, staff_evidence=staff_evidence,
                     long_rest=long_rest, rest_mode=mode, rest_notes=rest_notes, merge_notes=merge_notes,
                     paste_symbols=_paste_symbols(pasted, same), paste_merged=_paste_merged(pasted, same))
 
