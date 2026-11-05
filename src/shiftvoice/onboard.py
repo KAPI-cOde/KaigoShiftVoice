@@ -856,9 +856,18 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     nights = [sum(1 for x in row if x in night_syms) for row in table.values()]
     did = [k for k in nights if k > 0]
     if night_syms and did:
+        # 翌月の日数が多い時は、上限を日数に合わせて四捨五入で広げる（28日の2月に全員7回なら、31日の3月は7〜8回）。
+        # そのままだと、毎晩の人数と合わせきれずに運用の都合を外す段へ下がり、1人に夜勤が寄っていた（Codex の指摘
+        # 2026-11-05）。切り上げにすると30日→31日でも上限が1回増え、見本の施設の12月が変わったので四捨五入にした
+        ny_, nm_ = next_ym(year, month)
+        nd = calendar.monthrange(ny_, nm_)[1]
+        lo, hi = min(did), max(did)
+        note = f"{month}月に夜勤をした人は{lo}〜{hi}回"
+        if nd > n and int(hi * nd / n + 0.5) > hi:
+            hi = int(hi * nd / n + 0.5)
+            note += f"（{n}日の月）。{nm_}月は{nd}日なので上限を{hi}回にした"
         add("夜勤の回数（夜勤に入れる人）", "count", "operational",
-            {"shifts": list(night_syms), "min": min(did), "max": max(did), "capable_only": True},
-            f"{month}月に夜勤をした人は{min(did)}〜{max(did)}回")
+            {"shifts": list(night_syms), "min": lo, "max": hi, "capable_only": True}, note)
     # 記号の最初の1文字が同じ2つ（早1と早2など）は、合わせた人数が毎日同じなら、その合計も守る
     groups: dict[str, list[str]] = {}
     for sym in ordinary:
