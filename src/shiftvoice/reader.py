@@ -44,7 +44,7 @@ SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係で�
 - leave_count 有給の日数の頼み（日付は任せる）。staff, count(日数。言っていなければ null), reason
 - cancel 前の頼みの取り消し（「やっぱりいらない」）。staff, days(取り消す日だけ。日を言っていなければ null), shift(取り消す勤務の記号。休みなら 公)。「そのままで」「触らないで」の日と人は書かない
 - cover すでに起きた穴埋めの報告（急な休みなどで足りない所に、人が残業した・残ってくれた・早く来てくれた。「埋めた」と言っていなくてもよい。表は変えずに記録だけ）。staff, day(その日。今日・昨日なら null), how(埋め方の短い言葉。「残業」「早出」など), reason
-- swap / pair_apart / rest_after_night / around_off / weigh / explain / custom はその名前の type だけ書き、summary に一言。swap は staff(2人の並び) と days(日の数の並び) も書く
+- swap / pair_apart / rest_after_night / around_off / weigh / explain / custom はその名前の type だけ書き、summary に一言
 - none 頼みがない。unclear 読めない時は question に聞き返しの1文
 
 strength は fixed(「絶対」「動かせない」と言った時と研修など外の予定) / operational(施設の運用の事情。試験まで・人手など) / wish(本人の希望) / negotiable(配慮の言い方。「きつい」「〜してあげて」)

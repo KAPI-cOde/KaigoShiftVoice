@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from dataclasses import dataclass, field
 
@@ -317,6 +318,22 @@ SWAP_FLEX = "fixed"
 SWAP_SAME = "表もルールも変えていません"
 
 
+def _swap_fill(it: dict, text: str, staff: list[Staff]) -> dict:
+    """入れ替えの2人と日を、一言の文から手元で取る（Claude には swap の型の名前だけを書かせる）。指示文に「swap は
+    staff と days も書く」と足すと、入れ替えと関係ない「青木さん、10日の早番、公休にしてもらえる？」を正しく直せたのが
+    5回中5回から5回中2回に落ちた（本物の Haiku、2026-11-06）ので、指示文は変えない。人は名簿の名前が一言に出てくる順、
+    日は「〇日」。返事に人や日が書いてあればそれを使う。取れなければ _swap が聞き返す"""
+    out = dict(it)
+    norm = unicodedata.normalize("NFKC", text)
+    if not out.get("staff"):
+        hits = sorted((norm.find(s.name), s.name) for s in staff if s.name and s.name in norm)
+        out["staff"] = list(dict.fromkeys(n for _, n in hits))
+    if not out.get("days"):
+        ds = [int(x) for x in re.findall(r"(?<![0-9])([0-9]{1,2})日", norm)]
+        out["days"] = list(dict.fromkeys(ds)) or None
+    return out
+
+
 def _swap(it: dict, text: str, facility: Facility, staff: list[Staff], month: Month, names: set[str],
           rules: list | None) -> tuple[list[dict], str]:
     """2人の勤務の入れ替え（「小川さんと加藤さんの22日、入れ替えて」）。その日の今の表から2人の勤務を取り、
@@ -479,7 +496,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         elif t == "swap":
             if len(real) != 1:   # 同じ人・同じ日の別の頼みと重なると、どちらを当てるか決まらない
                 raise Clarify(f"入れ替えは、ほかの頼みと分けて1つずつ言ってください。{SWAP_SAME}")
-            rs, s = _swap(it, text, facility, staff, month, names, rules)
+            rs, s = _swap(_swap_fill(it, text, staff), text, facility, staff, month, names, rules)
             p.rules.extend(rs)
             sums.append(s)
         elif t == "forbid_sequence":

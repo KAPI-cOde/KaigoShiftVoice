@@ -2,6 +2,7 @@
 その日の今の表から2人の勤務を取って取り替える。決まりで決められない所（2人でない・同じ勤務・言った勤務が表と違う・
 公休の数が変わる・明けや研修・入れない勤務・前の頼みとぶつかる）は、表を変えずに聞き返す。
 前は「この形の頼みは、まだ扱えません」と返していた（2026-11-05、別の系統の AI が書いた現場の言い方2件で3回とも）。
+Claude には swap の型の名前だけを書かせ、2人と日は一言の文から手元で取る（指示文に足すと、ほかの一言の読みが崩れた）。
 API は呼ばない（録った形の返事で回す）。"""
 import datetime as dt
 import json
@@ -201,3 +202,13 @@ def test_入れ替えとほかの頼みが混ざれば聞き返す(built_dir, tm
     r = s.say("小川さんと加藤さんの24日、入れ替えて。小川さんは25日休み")
     assert r.kind == "ask" and r.message.startswith("入れ替えは、ほかの頼みと分けて"), r
     assert _table(s) == before
+
+
+def test_型の名前だけの返事でも_一言の名前と日で入れ替える(built_dir, tmp_path):
+    """Claude は swap の型の名前と summary だけを返す（指示文のとおり）。2人と日は一言から取る。"""
+    text = "職員05さんと職員06さんの24日、入れ替えて"
+    s = _session(built_dir, tmp_path, {text: _reply({"type": "swap", "summary": "2人の24日の入れ替え"})})
+    r = s.say("小川さんと加藤さんの24日、入れ替えて")
+    assert r.kind == "applied", r
+    after = _table(s)
+    assert (after["小川"][23], after["加藤"][23]) == ("早", "遅")
