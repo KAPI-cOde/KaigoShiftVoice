@@ -1794,8 +1794,8 @@ function renderSetup2(box) {
     // 選び方ごとに翌月どうなるか。「頼まれた時だけ」が誰に頼まれた時か、翌月どうなるかが分からなかった（受け止めのユニットリーダー役。2026-11-05）
     var help = el("div", "small su-symhelp"); help.style.margin = "4px 0 2px";
     ["新しい勤務＝翌月も、その記号に入っていた人の勤務として組みます（たまにしか無い物は、頼んだ日だけ）",
-     "会議・研修など＝アプリからは入れず、表を作る人が一言で頼んだ日だけ入れます",
-     "休みの記号（半日休・リフレッシュ休暇など）は、［休み］か［有給と同じ］を選びます"].forEach(function (t) { help.appendChild(el("div", "", t)); });
+     "会議・研修など＝アプリからは入れず、表を作る人が一言で頼んだ日だけ入れます（半日休のように半分働く日も、こちら）",
+     "休みの記号（丸1日の休み。リフレッシュ休暇など）は、［休み］か［有給と同じ］を選びます"].forEach(function (t) { help.appendChild(el("div", "", t)); });
     box.appendChild(help);
   }
   if (pv.symbol_lines && pv.symbol_lines.length) {
