@@ -640,20 +640,35 @@ def _rule(rid: str, name: str, kind: str, flex: str, params: dict, evidence: str
             "meta": {"how": "貼った表から見つけた", "evidence": evidence}}
 
 
-def _answer_type(sym: str, a, daily: bool) -> dict | None:
+def _answer_type(sym: str, a, regular: bool) -> dict | None:
     """知らない記号の答え（名前と種類）から勤務の種類を作る。答えが足りない・おかしければ None。
-    新しい勤務は、貼った月の半分以上の日に出ていればふだんの勤務、それより少なければ頼まれた時だけ置く。"""
+    新しい勤務は、ふだんの勤務（regular。決め方は infer）なら翌月も置き、そうでなければ頼まれた時だけ置く。"""
     if not isinstance(a, dict) or a.get("kind") not in ANSWER_KINDS or not str(a.get("name", "")).strip():
         return None
     st = {"symbol": sym, "name": str(a["name"]).strip(), "kind": a["kind"]}
     if a["kind"] == "work":
         if a.get("next_is_ake"):
             st["next_is_ake"] = True
-        if not daily:
+        if not regular:
             st["on_request_only"] = True
     elif a["kind"] != "ake":
         st["on_request_only"] = True
     return st
+
+
+def _own_shifts(table: dict[str, list[str]], unknown: list[str], answers: dict) -> set[str]:
+    """新しい勤務と答えた記号のうち、誰かが2回以上入り、その人の勤務の日（明け・休みを除く）の半分以上を占める物。
+    パートの人の短い勤務は、月の半分より少ない日にしか出なくても、その人のふだんの勤務なので翌月も置く
+    （国の記載例のグループホーム。週2回の短い勤務が頼まれた時だけになって翌月に1回も入らず、その人たちは
+    早番・日勤・遅番に入っていた。2026-11-05）。出張・会議など、人の勤務のうちたまにしか無い物は当たらない。
+    1回だけの物も当てない（長く休んだ人が1回だけ出た会議を、翌月のふだんの勤務にしないため）。"""
+    new = {s for s in unknown if isinstance(answers.get(s), dict) and answers[s].get("kind") == "work"}
+    work = new | {s["symbol"] for s in _template() if s["kind"] == "work"}
+    out: set[str] = set()
+    for row in table.values():
+        days = [c for c in row if c in work]
+        out |= {s for s, k in Counter(c for c in days if c in new).items() if k >= 2 and k * 2 >= len(days)}
+    return out
 
 
 def _run_ends(table: dict[str, list[str]], sym: str) -> list[str | None]:
@@ -713,10 +728,13 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
         return sum(1 for d in range(n) if any(row[d] == sym for row in table.values()))
 
     # 知らない記号の答えから勤務の種類を作る（明けの種類の記号は、夜勤の翌日の見方に先に要る）
+    # 新しい勤務は、貼った月の半分以上の日に出たか、誰かが2回以上入ってその人の勤務の日の半分以上を占めれば、
+    # ふだんの勤務にする
     unknown = [s for s in pasted.unknown_symbols if s not in same]
+    own = _own_shifts(table, unknown, answers)
     answered: dict[str, dict] = {}
     for sym in unknown:
-        st = _answer_type(sym, answers.get(sym), days_with(sym) * 2 >= n)
+        st = _answer_type(sym, answers.get(sym), days_with(sym) * 2 >= n or sym in own)
         if st:
             answered[sym] = st
     ake_pre = (["明"] if "明" in used else []) + [s for s, st in answered.items() if st["kind"] == "ake"]
@@ -748,16 +766,21 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
 
     # 職員。夜勤以外のふつうの勤務は全員、夜勤はその月にした人だけ
     ordinary = [s.symbol for s in by_sym.values() if s.kind == "work" and not s.on_request_only]
-    # 夜勤以外は、その人が貼った月に入った勤務だけ（1つも入っていない人は全部）
+    # 夜勤以外は、その人が貼った月に入った勤務だけ（1つも入っていない人は全部）。誰かのふだんの勤務だからと足した
+    # 新しい勤務（パートの人の短い勤務など。月の半分より少ない日にしか出ない）は、入った人だけに入れ、全部の中にも
+    # 入れない（貼った月に勤務の無かった人が、ほかの人の短い勤務に入らないように）
+    plain = [s for s in ordinary if s not in night_syms]
+    shared = [s for s in plain if s not in own or days_with(s) * 2 >= n]
     staff = []
     narrowed = []
     narrowed_info: dict[str, tuple[list[str], list[str]]] = {}   # 名前 → (入った勤務, 入っていない勤務)
     for name, row in table.items():
-        plain = [s for s in ordinary if s not in night_syms]
-        mine = [s for s in plain if s in row] or plain
-        if len(mine) < len(plain):
+        worked = [s for s in plain if s in row]
+        mine = worked or shared
+        miss = [s for s in shared if s not in worked]
+        if worked and miss:
             narrowed.append(name)
-            narrowed_info[name] = (mine, [s for s in plain if s not in mine])
+            narrowed_info[name] = (worked, miss)
         can = mine + [s for s in night_syms if s in ordinary and s in row]
         staff.append({"name": name, "unit": pasted.unit_of.get(name, "全体"), "can": can})
     staff_evidence = ""

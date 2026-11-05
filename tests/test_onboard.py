@@ -314,6 +314,50 @@ def test_新しい勤務と答えた記号は毎日いればふだんの勤務_�
     assert not any("半休" in x for x in c.notes)   # 頼まれた時だけの勤務は、入っていなくても知らせない
 
 
+def test_短い勤務だけで働いた人は翌月もその勤務で_短い勤務も翌月の表に入る(tmp_path):
+    # パートの人が週1〜2回の短い勤務（朝・夕・昼）で働く表。短い勤務は月の半分より少ない日にしか出ないが、その人の
+    # ふだんの勤務なので翌月も置く。前は頼まれた時だけになって翌月に1回も入らず、短い勤務だけの人は早番・日勤・
+    # 遅番に入っていた（国の記載例のグループホーム。2026-11-05）。1回だけの会議は頼まれた時だけのまま
+    week = ["早", "早", "日", "遅", "遅", "公", "公"] * 5
+    rows = {nm: week[k:k + 28] for nm, k in (("青木", 0), ("石田", 2), ("上野", 4), ("江口", 6))}
+    rows["江口"][9] = "会"   # 勤務20日のうち1日だけ会議
+
+    def part(shifts: dict[int, str]) -> list[str]:   # 曜日（0＝月。2027年2月1日は月曜）→ 記号。ほかの日は公休
+        return [shifts.get(d % 7, "公") for d in range(28)]
+
+    rows["小川"] = part({1: "朝", 4: "朝"})   # 火・金の朝だけ（短い勤務だけで働く人）
+    rows["岡田"] = part({0: "夕", 3: "夕"})   # 月・木の夕方だけ
+    rows["加藤"] = part({2: "早", 3: "昼"})   # 水は早番、木は昼（勤務のちょうど半分が短い勤務。昼は加藤だけ）
+    rows["千葉"] = part({})
+    rows["千葉"][15] = "委"                    # 休みが続き、委員会に1回だけ出た人
+    text = "氏名\t" + "\t".join(str(d) for d in range(1, 29)) + "".join(
+        f"\n{nm}\t" + "\t".join(r) for nm, r in rows.items())
+    ans = {"朝": {"name": "朝の勤務", "kind": "work"}, "夕": {"name": "夕方の勤務", "kind": "work"},
+           "昼": {"name": "昼の勤務", "kind": "work"}, "会": {"name": "会議", "kind": "work"},
+           "委": {"name": "委員会", "kind": "work"}}
+    pr = infer(parse_paste(text), 2027, 2, ans)
+    st = {s["symbol"]: s for s in pr.shift_types}
+    assert pr.problems == []
+    for sym in ("朝", "夕", "昼"):   # 2月の8日・8日・4日にしか出ない
+        assert "on_request_only" not in st[sym], sym
+    assert st["会"]["on_request_only"] is True and st["委"]["on_request_only"] is True   # 1回だけの勤務
+    can = {s["name"]: set(s["can"]) for s in pr.staff}
+    assert can["小川"] == {"朝"} and can["岡田"] == {"夕"} and can["加藤"] == {"早", "昼"}
+    assert can["江口"] == {"早", "日", "遅"}
+    assert can["千葉"] == {"早", "日", "遅"}   # ふだんの勤務の無かった人に、ほかの人の短い勤務は入れない
+    times = {"朝": {"start": "07:00", "hours": 2.5}, "夕": {"start": "16:00", "hours": 4},
+             "昼": {"start": "10:00", "hours": 6}}
+    c = create_facility(pr, tmp_path / "p", name="試験", next_year=2027, next_month=3, answers=ans, times=times)
+    nxt = Store(tmp_path / "p").month(2027, 3).table
+    assert c.next_table_made
+    assert "朝" in nxt["小川"] and set(nxt["小川"]) <= {"朝", "公"}
+    assert "夕" in nxt["岡田"] and set(nxt["岡田"]) <= {"夕", "公"}
+    moved = [d["text"] for d in c.diffs if d["kind"] == "person_shifts"]
+    assert not [t for t in moved if t.startswith(("小川さん", "岡田さん", "加藤さん"))], moved
+    gone = [d["text"] for d in c.diffs if d["kind"] == "gone_shift"]
+    assert not [t for t in gone if "（朝）" in t or "（夕）" in t], gone
+
+
 def test_貼り付け6_明けは明(tmp_path):
     p = parse_paste(paste(6))
     assert p.aliases.get("明け") == "明" and p.table == parse_paste(SAMPLE.read_text(encoding="utf-8")).table
