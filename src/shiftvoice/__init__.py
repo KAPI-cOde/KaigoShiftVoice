@@ -24,6 +24,13 @@ def main() -> None:
     st.add_argument("name", nargs="?", help="例 start（11月1日の操作の前）・end（11月末）")
     st.add_argument("--data", default="data/runtime/hidamari")
     args = ap.parse_args()
+    import os
+    if os.environ.get("SHIFTVOICE_PUBLIC") == "1":
+        # 公開版（public.py）。人ごとの置き場で開く。置き場の保存・読み込み・--reset・声は使わない
+        if args.cmd != "demo" or args.reset or args.voice:
+            raise SystemExit("公開版（SHIFTVOICE_PUBLIC=1）では使えません")
+        from .public import serve_public
+        return serve_public(args.port if args.port != 8765 else None)
     if args.cmd == "state":
         return _state(args)
     if args.cmd == "demo":

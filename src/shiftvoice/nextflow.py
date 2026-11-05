@@ -14,7 +14,7 @@ from .intake import Clarify, to_proposal
 from .ledger import LedgerError
 from .names import Masker
 from .nextmonth import copy_next_month, next_ym
-from .reader import ReadError
+from .reader import LimitError, ReadError
 from .review import answer, history, review_cards, undo_answer
 from .store import Store
 
@@ -131,6 +131,8 @@ class NextFlow:
         try:
             items = masker.unmask(reader.read(masked))
             p = to_proposal(items, text, fac, staff, self.store.month(self.ny, self.nm))
+        except LimitError as e:   # 公開版で送る前に止めた（public.py）
+            return {"error": str(e)}
         except ReadError:
             return {"error": "読み取りに失敗しました。ルールは変えていません"}
         except Clarify as e:

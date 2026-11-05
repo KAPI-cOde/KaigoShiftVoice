@@ -53,3 +53,16 @@ def test_untracked_new_file_is_checked_too(tmp_path, capsys):
     (root / "new_test.py").write_text(f"# {name}の試験\n", encoding="utf-8")   # add していない
     assert check_public.main(root) == 1
     assert "new_test.py:1" in capsys.readouterr().out
+
+
+
+def test_送る物の置き場を_Git_の除外にかかわらず全部見る(tmp_path, capsys):
+    """Space へ送るファイルの集まり（push.sh が写した置き場）を、そのまま点検する。.gitignore で外れる .env も見る。"""
+    d = tmp_path / "space"
+    (d / "src").mkdir(parents=True)
+    (d / "src" / ".env").write_text("ANTHROPIC_API_KEY=" + "sk-" + "ant-" + "abcdefghijklmnop" + "\n", encoding="utf-8")
+    (d / ".gitignore").write_text(".env\n", encoding="utf-8")
+    assert check_public.main_dir(d, REPO) == 1
+    assert "src/.env" in capsys.readouterr().out
+    (d / "src" / ".env").unlink()
+    assert check_public.main_dir(d, REPO) == 0

@@ -20,7 +20,7 @@ from .ledger import Ledger
 from .model import Rule
 from .names import Masker
 from .period import read_answer, relative_days
-from .reader import ReadError
+from .reader import LimitError, ReadError
 from .giveback import accepted_counts
 from .model import Acceptance
 from .resolve import changed_cells, resolve
@@ -249,8 +249,10 @@ class Session:
         sent = masked if getattr(self.reader, "calls_claude", True) else None
         self._sent[u["id"]] = sent
         self.store.update_pending(self.year, self.month, u["id"], sent_text=sent)
+        read_done = False
         try:
             raw = self.reader.read(masked)
+            read_done = True
             if not re.search(r"職員\d{2}", masked) and any(
                     isinstance(it, dict) and it.get("staff") not in (None, [], "") for it in raw):
                 # 名前を1つも言っていない一言に、Claude が人を当てて返すことがある（「私、13日の日勤、有給に」を名簿の
@@ -264,6 +266,13 @@ class Session:
                          else [{"type": "unclear", "question": b.get("question")}])
         except ReadError as e:
             self.store.update_pending(self.year, self.month, u["id"], status="failed", error=str(e))
+            if isinstance(e, LimitError):   # 公開版で送る前に止めた（public.py）。手元では起きない
+                if not read_done:   # 読み取りの前に止めた時だけ「送っていません」（組み立てで止めた時は読み取りへは送った）
+                    self._sent[u["id"]] = None
+                    self.store.update_pending(self.year, self.month, u["id"], sent_text=None)
+                if not e.retry:   # 送り直しても同じ（名前らしい語など）。開き直した時に［送り直す］を出さない
+                    self.store.resolve_pending(self.year, self.month, u["id"])
+                return Reply("error", u["id"], str(e), extra={"limit": True, "no_retry": not e.retry})
             if getattr(self.reader, "calls_claude", True) is False:   # 鍵なし（NoKeyReader）
                 return Reply("error", u["id"], NO_KEY, extra={"no_key": True})
             return Reply("error", u["id"], READ_FAILED)

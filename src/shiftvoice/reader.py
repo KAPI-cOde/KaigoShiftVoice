@@ -24,6 +24,15 @@ class ReadError(Exception):
     """読み取りに失敗した（通信・途中で切れた・形が違う）。"""
 
 
+class LimitError(ReadError):
+    """公開版で、送る前に止めた（回数・費用・終わりの日・名前らしい語）。文はそのまま画面に出す。手元では起きない。
+    retry が False の時は、送り直しても同じ（名前らしい語など）なので［送り直す］を出さない。"""
+
+    def __init__(self, message: str, retry: bool = True):
+        super().__init__(message)
+        self.retry = retry
+
+
 SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係です。作成者の短い一言を、決まった型の JSON にします。
 人は「職員NN」、ユニットは「ユニットN」と伏せてあります。番号はそのまま使い、名前を推測しないでください。
 

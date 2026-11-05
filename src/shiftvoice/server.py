@@ -254,10 +254,15 @@ class Box:
         self.voice = voice
 
 
-def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=None):
+def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, voice=None, *, public=None):
+    """public（public.PublicApp）を渡した時だけ公開版の動き（人ごとの置き場・残す口だけ・見張り）。"""
     box = Box(session, voice)
 
     class H(BaseHTTPRequestHandler):
+        lock = None   # 下で入れる（公開版では、リクエストごとにその人の置き場とロックに差し替える）
+
+        def flow(self):
+            return self.server.flow()
         def log_message(self, fmt, *args):  # 発言や鍵を端末に流さない
             pass
 
@@ -289,39 +294,39 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
             """声（16kHz・モノラルの float32 の並び）を文字にして、文字の一言と同じ流れに入れる。声は外へ送らない。"""
             if not self._local() or not ctype.startswith("application/octet-stream"):
                 return self._json(403, {"error": "手元の画面からだけ送れます"})
-            if box.voice is None:
+            if self.box.voice is None:
                 return self._json(200, {"error": "声の入口が使えません。文字で入れてください"})
             import numpy as np
             n = int(self.headers.get("Content-Length") or 0)
             samples = np.frombuffer(self.rfile.read(n), dtype="<f4")
             # 名前の手がかりは、いま開いている施設の名簿（［自分の施設で始める］や切り替えの後も、その施設の名前で聞く）
-            names = [s.name for s in box.session.store.staff()]
-            text, secs = box.voice.transcribe(samples, names)
+            names = [s.name for s in self.box.session.store.staff()]
+            text, secs = self.box.voice.transcribe(samples, names)
             if not text:
                 return self._json(200, {"error": "聞き取れませんでした。もう一度話すか、文字で入れてください",
                                         "voice_seconds": secs})
             if self.headers.get("X-Text-Only") == "1":
                 # ［変える（話す）］は文字にするだけ。中身は画面で確かめてから送る
                 return self._json(200, {"text": text, "voice_seconds": round(secs, 3)})
-            with lock:
+            with self.lock:
                 uid = self.headers.get("X-Answer-Uid")
-                r = box.session.answer(uid, text) if uid else box.session.say(text)
-                st = box.session.state()
+                r = self.box.session.answer(uid, text) if uid else self.box.session.say(text)
+                st = self.box.session.state()
             st["has_key"] = has_key
             self._json(200, {"text": text, "voice_seconds": round(secs, 3), "reply": r.to_dict(), "state": st})
 
         def _state_out(self) -> dict:
-            st = box.session.state()
+            st = self.box.session.state()
             st["has_key"] = has_key
-            st["has_voice"] = box.voice is not None
+            st["has_voice"] = self.box.voice is not None
             return st
 
         def _swap(self, root: Path, year: int, month: int) -> dict:
             """lock の中で session を差し替える。声の入口はそのまま使う（名前は文字にするたびに、新しい施設の名簿から渡す）。"""
-            old = box.session
+            old = self.box.session
             new = Session(Store(root), year, month, old.reader, now=old.now, who=old.who, builder=old.builder)
             new.open()
-            box.session = new
+            self.box.session = new
             return self._state_out()
 
         def _setup(self, data: dict) -> None:
@@ -338,7 +343,7 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                         return self._json(400, {"error": "。".join(prop.problems), "problems": list(prop.problems)})
                     name = str(data.get("name") or "")
                     ny, nm = next_ym(year, month)
-                    parent = Path(box.session.store.root).parent
+                    parent = Path(self.box.session.store.root).parent
                     if not name.strip():
                         raise OnboardError("施設の名前を入れてください")
                     root = parent / _short_id(name.strip())
@@ -367,7 +372,7 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                         tmp.rename(root)
                     else:
                         ny, nm = _latest_month(root) or (ny, nm)
-                    with lock:
+                    with self.lock:
                         st = self._swap(root, ny, nm)
                     message = (f"『{st_name(root)}』はもう作ってあるので、前に作った施設を開きました。"
                                "今回貼った表は使っていません。新しく作る時は別の名前にしてください") if existing else ""
@@ -375,11 +380,11 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                                             "year": ny, "month": nm, "notes": notes, "diffs": diffs, "short_rest": short_rest,
                                             "from_month": month, "state": st})
                 if self.path == "/api/facilities/open":
-                    with lock:
-                        hit = [f for f in list_facilities(box.session.store.root) if f["id"] == data.get("id")]
+                    with self.lock:
+                        hit = [f for f in list_facilities(self.box.session.store.root) if f["id"] == data.get("id")]
                         if not hit:
                             return self._json(400, {"error": "その施設は見つかりません"})
-                        root = Path(box.session.store.root).parent / hit[0]["id"]
+                        root = Path(self.box.session.store.root).parent / hit[0]["id"]
                         ym = _latest_month(root)
                         if ym is None:
                             return self._json(400, {"error": "その施設には開ける月の表がありません"})
@@ -391,22 +396,127 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
             except RuntimeError as e:
                 return self._json(400, {"error": str(e)})
 
+        def _public(self, method: str):
+            """公開版の入口。Host と Origin・残す口・本文の大きさ・その人の置き場を確かめてから、手元と同じ道筋へ渡す。"""
+            from .public import COOKIE, Full, allowed
+            host = self.headers.get("Host") or ""
+            origin = self.headers.get("Origin")
+            ok_origins = {f"https://{host}", f"http://{host}"}
+            if public.cfg.host:   # 転送で Host が書き換わって届いた時のために、設定した名前の Origin も受ける
+                ok_origins.add(f"https://{public.cfg.host}")
+            if origin is not None and origin not in ok_origins:
+                return self._json(403, {"error": "ほかのサイトからは送れません"})
+            path = self.path
+            if not allowed(method, path):
+                code = 404 if method == "GET" and not path.startswith("/api/") else 403
+                return self._json(code, {"error": "公開版では使えません。手元で動かす手順は README にあります"})
+            data = {}
+            if method == "POST":
+                if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                    return self._json(403, {"error": "JSON で送ってください"})
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    n = -1
+                if n < 0 or n > public.cfg.max_body:
+                    return self._json(413, {"error": "送る文が長すぎます"})
+                try:
+                    data = json.loads(self.rfile.read(n) or b"{}")
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return self._json(400, {"error": "JSON が読めません"})
+                if not isinstance(data, dict):
+                    return self._json(400, {"error": "JSON が読めません"})
+                for k in ("text", "wrong", "right", "answer"):
+                    v = data.get(k)
+                    if v is not None and (not isinstance(v, str) or len(v) > public.cfg.max_text):
+                        return self._json(200, {"error": f"一言は{public.cfg.max_text}字までにしてください（表もルールも変えていません）"})
+            from http.cookies import SimpleCookie
+            token = None
+            try:
+                c = SimpleCookie(self.headers.get("Cookie") or "")
+                token = c[COOKIE].value if COOKIE in c else None
+            except Exception:  # noqa: BLE001 壊れたクッキーは無い扱い
+                token = None
+            ws = public.spaces.acquire(token)
+            new_cookie = None
+            if ws is None:
+                if method == "GET" and path in ("/", "/index.html"):
+                    return self._get()   # 画面だけ。置き場は画面が最初に呼ぶ /api/state で作る（読み込むだけの訪問で枠を使わない）
+                if method == "GET" and path == "/api/state":
+                    try:
+                        ws = public.spaces.create()
+                    except Full:
+                        return self._json(503, {"error": "いま混み合っています。しばらくしてから開いてください"})
+                    new_cookie = ws.token
+                else:
+                    return self._json(401, {"error": "試す場所が見つかりません（時間がたつと消えます）。ページを開き直してください"})
+            try:
+                if new_cookie:
+                    self._cookie = new_cookie
+                from .nextflow import NextFlow
+                self.box = Box(ws.session)
+                self.lock = ws.lock
+                self.flow = lambda: NextFlow(ws.session.store, ws.session.year, ws.session.month)
+                if method == "GET":
+                    return self._get()
+                # 同じ人の前の操作が動いている間は、全体の枠を取らずにすぐ断る（待つ間に全体の枠を占めない）
+                if not ws.lock.acquire(blocking=False):
+                    return self._json(429, {"error": "前の操作が終わるまでお待ちください（表もルールも変えていません）"})
+                try:
+                    if not public.slots.acquire(timeout=30):
+                        return self._json(503, {"error": "いま混み合っています。1分ほどしてから試してください"})
+                except BaseException:
+                    ws.lock.release()
+                    raise
+                try:
+                    from .reader import LimitError
+                    try:
+                        public.gate.count(ws.token, "post", public.cfg.user_posts_per_hour)
+                        if path == "/api/next/build":
+                            public.gate.count(ws.token, "table", public.cfg.user_tables_per_hour)
+                    except LimitError as e:
+                        return self._json(429, {"error": str(e)})
+                    return self._post(data)
+                finally:
+                    public.slots.release()
+                    ws.lock.release()
+            finally:
+                public.spaces.release(ws)
+
+        def end_headers(self):
+            ck = getattr(self, "_cookie", None)
+            if ck:
+                secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+                self.send_header("Set-Cookie", f"sv_id={ck}; Path=/; HttpOnly; SameSite=Lax; Max-Age=7200{secure}")
+                self._cookie = None
+            if public is not None:
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+            super().end_headers()
+
         def do_GET(self):
+            if public is not None:
+                return self._public("GET")
             if not self._local():
                 return self._json(403, {"error": "手元からだけ開けます"})
+            self._get()
+
+        def _get(self):
             if self.path in ("/", "/index.html"):
                 body = (STATIC / "index.html").read_bytes()
+                if public is not None:   # 公開版の印（埋め込みの中なら、状態を取りに行く前に直接のページへ案内する）
+                    body = body.replace(b"<body>", b'<body data-public="1">', 1)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
             elif self.path in ("/api/next/review", "/api/next/review?split=1"):
-                with lock:
-                    self._json(200, self.server.flow().review(split=self.path.endswith("split=1")))
+                with self.lock:
+                    self._json(200, self.flow().review(split=self.path.endswith("split=1")))
             elif self.path == "/api/cleanup":
-                with lock:
-                    self._json(200, box.session.cleanup())
+                with self.lock:
+                    self._json(200, self.box.session.cleanup())
             elif self.path.startswith("/api/why?"):
                 from urllib.parse import parse_qs, urlparse
                 q = parse_qs(urlparse(self.path).query)
@@ -414,25 +524,27 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     day = int((q.get("day") or ["0"])[0])
                 except ValueError:
                     day = 0
-                with lock:
-                    self._json(200, box.session.why((q.get("staff") or [""])[0], day))
+                with self.lock:
+                    self._json(200, self.box.session.why((q.get("staff") or [""])[0], day))
             elif self.path.startswith("/api/rule?"):
                 from urllib.parse import parse_qs, urlparse
                 q = parse_qs(urlparse(self.path).query)
-                with lock:
-                    self._json(200, box.session.rule_detail((q.get("id") or [""])[0]))
+                with self.lock:
+                    self._json(200, self.box.session.rule_detail((q.get("id") or [""])[0]))
             elif self.path == "/api/state":
-                with lock:
-                    st = box.session.state()
+                with self.lock:
+                    st = self.box.session.state()
                 st["has_key"] = has_key
-                st["has_voice"] = box.voice is not None
+                st["has_voice"] = self.box.voice is not None
+                if public is not None:
+                    st["public"] = public.info()
                 self._json(200, st)
             elif self.path == "/api/table.tsv":
-                with lock:
-                    settings = box.session.store.facility().settings
+                with self.lock:
+                    settings = self.box.session.store.facility().settings
                     back = settings.get("paste_symbols") or {}
                     merged = settings.get("paste_merged") or {}
-                    body = table_tsv(box.session.state(), back).encode("utf-8")
+                    body = table_tsv(self.box.session.state(), back).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/tab-separated-values; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
@@ -446,12 +558,14 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
             elif self.path == "/api/setup/sample":
                 self._json(200, sample_info())
             elif self.path == "/api/facilities":
-                with lock:
-                    self._json(200, {"facilities": list_facilities(box.session.store.root)})
+                with self.lock:
+                    self._json(200, {"facilities": list_facilities(self.box.session.store.root)})
             else:
                 self._json(404, {"error": "not found"})
 
         def do_POST(self):
+            if public is not None:
+                return self._public("POST")
             ctype = self.headers.get("Content-Type") or ""
             if self.path == "/api/voice":
                 return self._voice(ctype)
@@ -462,17 +576,20 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                 data = json.loads(self.rfile.read(n) or b"{}")
             except json.JSONDecodeError:
                 return self._json(400, {"error": "JSON が読めません"})
+            self._post(data)
+
+        def _post(self, data: dict):
             if self.path.startswith("/api/setup/") or self.path.startswith("/api/facilities/"):
                 return self._setup(data)
             if self.path.startswith("/api/next/"):
-                with lock:
-                    fl = self.server.flow()
+                with self.lock:
+                    fl = self.flow()
                     try:
                         if self.path == "/api/next/answer":
                             out = fl.answer(data.get("rule_id", ""), data.get("answer", ""), data.get("new_until"),
                                             bool(data.get("split")))
                         elif self.path == "/api/next/change":
-                            out = fl.change(data.get("rule_id", ""), data.get("text", ""), box.session.reader,
+                            out = fl.change(data.get("rule_id", ""), data.get("text", ""), self.box.session.reader,
                                             split=bool(data.get("split")))
                         elif self.path == "/api/next/undo":
                             out = fl.undo(data.get("rule_id", ""), split=bool(data.get("split")))
@@ -485,43 +602,45 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     except Exception as e:  # 帳面が受け付けない答え（二重の答えなど）
                         return self._json(200, {"error": str(e)})
                 return self._json(200, out)
-            with lock:
+            with self.lock:
                 if self.path == "/api/say" and data.get("text", "").strip():
-                    r = box.session.say(data["text"])
+                    r = self.box.session.say(data["text"])
                 elif self.path == "/api/answer":
-                    r = box.session.answer(data.get("uid", ""), data.get("text", ""))
+                    r = self.box.session.answer(data.get("uid", ""), data.get("text", ""))
                 elif self.path == "/api/accept":
-                    r = box.session.accept(data.get("uid", ""), data.get("pick"))
+                    r = self.box.session.accept(data.get("uid", ""), data.get("pick"))
                 elif self.path == "/api/move":
-                    r = box.session.move(data.get("uid", ""), data.get("pick"))
+                    r = self.box.session.move(data.get("uid", ""), data.get("pick"))
                 elif self.path == "/api/refuse":
-                    r = box.session.refuse(data.get("uid", ""))
+                    r = self.box.session.refuse(data.get("uid", ""))
                 elif self.path == "/api/cancel":
-                    r = box.session.cancel(data.get("uid", ""))
+                    r = self.box.session.cancel(data.get("uid", ""))
                 elif self.path == "/api/distribute":
-                    box.session.distribute()
-                    start_quiet(box.session.store, box.session.year, box.session.month)
+                    self.box.session.distribute()
+                    if public is None:   # 公開版は裏で Claude を呼ぶ読み分けを流さない（public.py）
+                        start_quiet(self.box.session.store, self.box.session.year, self.box.session.month)
                     from .session import Reply
                     r = Reply("ask", None, "表を配った後の扱いにしました")
                 elif self.path == "/api/undo":
-                    r = box.session.undo()
+                    r = self.box.session.undo()
                 elif self.path == "/api/cleanup":
-                    return self._json(200, box.session.cleanup_apply(data.get("archive") or [], data.get("keep") or []))
+                    return self._json(200, self.box.session.cleanup_apply(data.get("archive") or [], data.get("keep") or []))
                 elif self.path == "/api/restore":
-                    r = box.session.restore(data.get("rule_id", ""))
+                    r = self.box.session.restore(data.get("rule_id", ""))
                 elif self.path == "/api/wider":
-                    r = box.session.wider(data.get("uid", ""))
+                    r = self.box.session.wider(data.get("uid", ""))
                 elif self.path == "/api/choose_name":
-                    r = box.session.choose_name(data.get("uid", ""), data.get("wrong", ""), data.get("right", ""))
+                    r = self.box.session.choose_name(data.get("uid", ""), data.get("wrong", ""), data.get("right", ""))
                 elif self.path == "/api/retry":
-                    r = box.session.retry(data.get("uid", ""))
+                    r = self.box.session.retry(data.get("uid", ""))
                 else:
                     return self._json(400, {"error": "知らない操作です"})
-                st = box.session.state()
+                st = self.box.session.state()
             st["has_key"] = has_key
             self._json(200, {"reply": r.to_dict(), "state": st})
 
     H.box = box
+    H.lock = lock
     return H
 
 

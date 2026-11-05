@@ -1,0 +1,9 @@
+# docker build -f deploy/hf-space/Dockerfile . の時に、送る物だけを入れ物の材料にする（.env などを入れない）
+*
+!pyproject.toml
+!LICENSE
+!src
+!data/hidamari
+**/.env
+**/.env.*
+**/__pycache__

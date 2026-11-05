@@ -249,6 +249,7 @@
       <button type="button" id="talk" style="display:none">話す</button>
       <button type="button" id="undo" disabled>ひとつ戻す</button>
     </form>
+    <div class="hint" id="pubnote" style="display:none"></div>
     <div class="hint" id="hint">例「岡田さん、15と16は法事で休み」「遅番の次の日に早番はきついから、やめてあげて」。名簿の名前は番号に伏せてから Claude へ送ります。直した後も［ひとつ戻す］で戻せます。</div>
   </section>
   <section class="right">
@@ -955,7 +956,7 @@ function renderReplyBody(r) {
   }
   if (r.kind === "error") {
     box.appendChild(el("div", "q", r.message || "読み取れませんでした"));
-    if (r.extra && r.extra.no_key) return;   // 鍵なし。送り直しても同じなので、ボタンは出さない
+    if (r.extra && (r.extra.no_key || r.extra.no_retry)) return;   // 鍵なし・公開版で名前らしい語を止めた時。送り直しても同じなので、ボタンは出さない
     var rb = el("button", "", "送り直す");
     rb.type = "button";
     rb.addEventListener("click", function () { doRetry(r.uid); });
@@ -1906,9 +1907,50 @@ function startCreate() {
   }).catch(function () { stop(); SU.err = "作れませんでした。もう一度試してください"; SU.step = 2; renderSetup(); });
 }
 
+// 公開版（サーバーを SHIFTVOICE_PUBLIC=1 で開いた時だけ state に public が付く）。取り込み・声・施設の切り替えは出さない
+function setupPublic(pub) {
+  ["tosetup", "facsel", "talk"].forEach(function (id) { document.getElementById(id).style.display = "none"; });
+  document.getElementById("tosetup").remove();
+  document.getElementById("input").maxLength = pub.max_text || 200;
+  var note = document.getElementById("pubnote");
+  note.textContent = "公開版です。施設と職員は架空です。実在の人の名前や、病気などの個人の事情は入れないでください。" +
+    "名前・電話番号・病気のことらしい言葉を見つけた時は Claude へ送りませんが、見つけきれないこともあります。試せるのは " + pub.until.slice(5).replace("-", "月").replace(/^0/, "") + "日まで、一言は1時間に" + (pub.reads_per_hour || 30) + "回までです";
+  note.style.display = "block";
+  var kb = document.getElementById("keybar");
+  kb.textContent = "この公開版には Claude の鍵が入っていないので、一言で直すことはできません。表と翌月の案は見られます";
+  if (pub.closed) {
+    note.textContent = pub.closed_message;
+    document.getElementById("input").disabled = true;
+    document.getElementById("send").disabled = true;
+  }
+  if (window.top !== window.self) {
+    // 埋め込みの中ではクッキーが使えないことがあり、試した直しが消える。直接のページで開いてもらう
+    var b = el("div", "", "埋め込みの画面では、直した表が残らないことがあります。");
+    var a = el("a", "", "別のタブで開く");
+    a.href = location.href; a.target = "_blank"; a.rel = "noopener";
+    b.appendChild(a);
+    note.insertBefore(b, note.firstChild);
+  }
+}
+
+// 公開版を埋め込みの中（Space のページの中など）で開いた時。クッキーが使えず一言が送れないことがあるので、
+// 試す場所を作る前に、直接のページを別のタブで開いてもらう
+function embeddedPublic() {
+  return document.body.getAttribute("data-public") === "1" && window.top !== window.self;
+}
+if (embeddedPublic()) {
+  ["v11", "topbar", "keybar"].forEach(function (id) { document.getElementById(id).style.display = "none"; });
+  var emb = el("div", "", "この画面の中では、一言で直すことができないことがあります。");
+  emb.style.cssText = "max-width:720px;margin:40px auto;padding:0 20px;font-size:15px;line-height:1.8";
+  var ea = el("a", "", "別のタブで開いて試す");
+  ea.href = location.href; ea.target = "_blank"; ea.rel = "noopener";
+  emb.appendChild(el("br"));
+  emb.appendChild(ea);
+  document.body.insertBefore(emb, document.body.firstChild);
+} else
 fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
   S = st;
-  loadFacilities();
+  if (st.public) setupPublic(st.public); else loadFacilities();
   if (st.has_voice) document.getElementById("talk").style.display = "";
   renderAll();
   var pend = st.pending || [];
