@@ -4,7 +4,7 @@ import shutil
 import pytest
 
 from shiftvoice.nextflow import NextFlow
-from shiftvoice.quiet import _path, check_month, streaks
+from shiftvoice.quiet import _path, _procs, check_month, streaks
 from shiftvoice.review import answer, review_cards
 from shiftvoice.store import Store, atomic_write_json
 
@@ -221,3 +221,22 @@ def test_q16_no_scene_first_even_with_lower_ids(st):
     from shiftvoice.quiet import no_scene_ids
     v = review_cards(st.ledger(), 2026, 12, streaks(st, 2026, 12), 3, 5, None, no_scene_ids(st, 2026, 12))
     assert [c.rule_id for c in v["cards"]] == ["z9", "a1"]
+
+
+def test_q13_procs_divided_by_interleave_workers(st, monkeypatch):
+    """30人を超える施設（表の計算で作業者を8つ回す）は、裏で並べるプロセスを8で割る（8×8で PC が重くならないように）。"""
+    import shiftvoice.quiet as quiet
+    monkeypatch.setattr(quiet.os, "cpu_count", lambda: 10)
+    fac = st.facility()
+    assert _procs(fac, None) == 8                 # 30人以下の施設は今までどおり
+    fac.settings.setdefault("solve", {})["interleave_workers"] = 8
+    assert _procs(fac, None) == 1
+    assert _procs(fac, 3) == 3                    # 引数で決めた時はそのまま
+
+
+def test_q14_runs_without_os_nice(st, monkeypatch):
+    """Windows には os.nice が無い。無くても裏の確かめを並べて回せる（前は AttributeError で毎回止まっていた）。"""
+    import shiftvoice.quiet as quiet
+    monkeypatch.delattr(quiet.os, "nice", raising=False)
+    q = check_month(st, 2026, 11, only=["r007"], workers=2)
+    assert q["rules"]["r007"]["state"] == "needed"

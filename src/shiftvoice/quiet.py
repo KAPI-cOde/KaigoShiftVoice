@@ -77,6 +77,18 @@ def _joint(out: dict, fac, staff, rules, m, dtime: float) -> None:
         s -= hit
 
 
+def _procs(fac, workers: int | None) -> int:
+    """裏で並べるプロセスの数。指定（引数・施設の設定 quiet.workers）が無ければ CPU の数から決める。表の計算で
+    作業者を複数回す施設（30人を超える施設。設定 solve.interleave_workers）は、その数で割り、プロセス×作業者が
+    CPU の数を大きく超えないようにする（8プロセス×8作業者で、事務用の PC が重くならないように。2026-11-05）。"""
+    if workers:
+        return workers
+    if fac.settings.get("quiet", {}).get("workers"):
+        return fac.settings["quiet"]["workers"]
+    n = max(1, min(8, (os.cpu_count() or 2) - 2))
+    return max(1, n // (fac.settings.get("solve", {}).get("interleave_workers") or 1))
+
+
 def check_month(store: Store, year: int, month: int, *, workers: int | None = None,
                 only: list[str] | None = None) -> dict:
     """その月の毎月のルールを1件ずつ外して作り直し、結果を quiet/YYYY-MM.json に残す。"""
@@ -97,13 +109,14 @@ def check_month(store: Store, year: int, month: int, *, workers: int | None = No
         else:
             todo.append((fac, staff, rules, m, rid, dtime))
     t = time.time()
-    n = workers or fac.settings.get("quiet", {}).get("workers") or max(1, min(8, (os.cpu_count() or 2) - 2))
+    n = _procs(fac, workers)
     if todo:
         if n == 1:
             results = map(_one, todo)
         else:
-            ex = ProcessPoolExecutor(max_workers=n, initializer=os.nice, initargs=(10,))   # 画面の操作を優先
-            results = ex.map(_one, todo)
+            nice = getattr(os, "nice", None)   # Windows には無い（無ければ優先度を下げずに回す）
+            ex = ProcessPoolExecutor(max_workers=n, **({"initializer": nice, "initargs": (10,)} if nice else {}))
+            results = ex.map(_one, todo)   # 画面の操作を優先（nice 10）
         for rid, v in results:
             out[rid] = v
         if n != 1:
