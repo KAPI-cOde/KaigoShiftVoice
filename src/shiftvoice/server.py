@@ -2,7 +2,8 @@
 
 API（すべて JSON）
 - GET  /api/state                     表・札・職員・未反映の発言
-- GET  /api/table.tsv                 開いている月の表をタブ区切りで（Excel に貼り戻す・印刷の元）
+- GET  /api/rule?id=                  ルールを押した時の中身（数で言う1行・今の表の様子・上限や下限に届いているマス）
+- GET  /api/table.tsv                開いている月の表をタブ区切りで（Excel に貼り戻す・印刷の元）
 - POST /api/say     {"text"}          一言
 - POST /api/answer  {"uid", "text"}   「毎月ですか、今月だけですか」への返事（"rule"/"once" か話し言葉）
 - POST /api/retry   {"uid"}           送り直す
@@ -415,6 +416,11 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
                     day = 0
                 with lock:
                     self._json(200, box.session.why((q.get("staff") or [""])[0], day))
+            elif self.path.startswith("/api/rule?"):
+                from urllib.parse import parse_qs, urlparse
+                q = parse_qs(urlparse(self.path).query)
+                with lock:
+                    self._json(200, box.session.rule_detail((q.get("id") or [""])[0]))
             elif self.path == "/api/state":
                 with lock:
                     st = box.session.state()

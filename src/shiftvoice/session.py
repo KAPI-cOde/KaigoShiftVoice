@@ -1053,6 +1053,17 @@ class Session:
         rules = month_rules(self.store, self.year, self.month, with_premise=False)
         return why_cell(rules, self.store.facility(), self.store.staff_on(self.year, self.month), m, m.table, name, day)
 
+    def rule_detail(self, rule_id: str) -> dict:
+        """ルールのカードを押した時の中身（ruledetail.py）。① 数で言う1行・② 今の表の様子・③ 届いているマス。
+        表を作る時と同じルールの並びと、その月の職員で数える。表の操作はしない。"""
+        from .ruledetail import rule_detail
+        m = self.store.month(self.year, self.month)
+        if not m.table:
+            return {"id": rule_id, "error": "表がまだありません"}
+        rules = month_rules(self.store, self.year, self.month, with_premise=False)
+        d = rule_detail(rule_id, rules, self.store.facility(), self.store.staff_on(self.year, self.month), m, m.table)
+        return {"id": rule_id, **d} if d else {"id": rule_id, "none": True}
+
     def state(self) -> dict:
         m = self.store.month(self.year, self.month)
         led = self.store.ledger()

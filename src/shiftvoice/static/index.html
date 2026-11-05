@@ -63,6 +63,8 @@
   .card .new { font-size: 11px; border: 1px solid #000; border-radius: 3px; padding: 0 5px; margin-left: 6px; font-weight: 700; }
   .card .detail { margin-top: 6px; padding-top: 6px; border-top: 1px solid #ddd; font-size: 12px; }
   .card .detail div { margin-bottom: 2px; }
+  .card .nums .numline { font-weight: 700; font-size: 13px; }
+  .card .nums .glownote { display: inline-block; background: #fff3a0; box-shadow: inset 0 0 0 1px #d4a800; padding: 0 5px; margin-top: 2px; }
   .empty { font-size: 12px; }
   #topbar { max-width: 1440px; margin: 0 auto; padding: 6px 20px 0; display: flex; justify-content: flex-end; font-size: 12px; }
   #topbar button { font-size: 12px; padding: 2px 10px; }
@@ -321,25 +323,31 @@ function toneOf(sym) {
 }
 function toneCls(sym) { var t = toneOf(sym); return t ? " k-" + t : ""; }
 
-// ルールで光らせるマス
+// ルールを押した時の中身（/api/rule。① 数で言う1行・② 今の表の様子・③ 上限や下限に届いているマス）。
+// 前は施設全体のルールを押すと全員の全部の日が光り、いくつの上限かも分からなかった（作者 2026-11-06）。
+// 光らせるのは届いているマスだけ。表が変わったら（S が替わったら）取り直す
+var RD = null;       // {id, of: 取った時の S, d}
+var RDwant = null;   // 取りに行っている {id, of}
+function loadDetail(id) {
+  if ((RD && RD.id === id && RD.of === S) || (RDwant && RDwant.id === id && RDwant.of === S)) return;
+  var want = RDwant = { id: id, of: S };
+  fetch("/api/rule?id=" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (d) {
+    if (RDwant !== want) return;   // 押し直した・表が変わった後の古い答えは使わない
+    RDwant = null;
+    RD = { id: id, of: want.of, d: d };
+    if (selected === id && S === want.of) { renderTable(); renderCards(); }
+  }).catch(function () { if (RDwant === want) RDwant = null; });
+}
+function openDetail(card) {
+  if (!card || card.kind === "layer") return null;   // 待機などの当番は、今までどおり説明だけ
+  if (RD && RD.id === card.id && RD.of === S) return RD.d;
+  loadDetail(card.id);
+  return null;
+}
 function ruleCells(card) {
   var out = {};
-  if (card.kind === "layer") return out;
-  var names = card.who && card.who.length ? card.who : S.staff.map(function (s) { return s.name; });
-  var days = card.when && card.when.length ? card.when : null;
-  var shifts = null;
-  var p = card.params || {};
-  if (card.kind === "count" && Array.isArray(p.shifts)) shifts = p.shifts;
-  if (card.kind === "sequence" && Array.isArray(p["if"])) shifts = p["if"];
-  names.forEach(function (n) {
-    var row = S.table[n];
-    if (!row) return;
-    for (var d = 1; d <= S.days; d++) {
-      if (days && days.indexOf(d) < 0) continue;
-      if (shifts && shifts.indexOf(row[d - 1]) < 0) continue;
-      out[n + "|" + d] = true;
-    }
-  });
+  var d = openDetail(card);
+  ((d && d.cells) || []).forEach(function (c) { out[c[0] + "|" + c[1]] = true; });
   return out;
 }
 
@@ -751,6 +759,14 @@ function makeCard(c) {
     if (m.reason) b.appendChild(el("div", "why", "理由 " + m.reason));
     if (c.shadowed_by) b.appendChild(el("div", "why", c.shadowed_by));
     if (selected === c.id) {
+      var rd = openDetail(c);
+      if (rd && rd.line) {
+        var nb = el("div", "detail nums");
+        nb.appendChild(el("div", "numline", rd.line));
+        (rd.now || []).forEach(function (t) { nb.appendChild(el("div", "", t)); });
+        if (rd.glow) nb.appendChild(el("div", "glownote", rd.glow));
+        b.appendChild(nb);
+      }
       var dt = el("div", "detail");
       dt.appendChild(el("div", "", m.said ? "言った言葉 「" + m.said + "」" : "最初から入っているルールです"));
       if (m.who) dt.appendChild(el("div", "", "誰が " + m.who));
