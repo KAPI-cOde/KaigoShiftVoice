@@ -64,6 +64,24 @@ def test_t2_02_no_candidate_shows_roster(sess):
     assert len(r.extra["ask_name"]["roster"]) == 16
 
 
+def test_t2_02_same_reading_name(sess):
+    """声の聞き違いで、同じ読みの別の字になった名前（菊地→菊池。README の「聞き違い・読み違いの時」の写真の場面）。
+    名簿の1人に絞って聞き、選ぶまで表は動かず、AI へは名前を送らない。"""
+    b = snap(sess)
+    r = sess.say("菊地さんの早番を4回までにして、毎月ね")
+    assert r.kind == "ask" and r.message == "菊地さんは名簿にいません。菊池さんですか"
+    assert r.extra["ask_name"]["candidates"] == ["菊池"]
+    assert sess.reader.sent == []          # 選ぶ前は何も送らない
+    unchanged(b, snap(sess))
+    r = sess.choose_name(r.uid, "菊地", "菊池")
+    assert r.kind == "applied", r
+    sent = json.dumps([x.messages for x in sess.reader.sent], ensure_ascii=False)
+    assert "菊池" not in sent and "菊地" not in sent and "職員09" in sent
+    a = snap(sess)
+    assert a["table"]["菊池"].count("早") <= 4
+    common(b, a)
+
+
 def test_t2_03_cancel_touches_nobody_else(sess):
     """取り消しは岡田さんの15日の休みの指定だけを外す。16日と加藤さんの研修は残る。表のマスは動かさない。"""
     sess.say("岡田さん、15と16は法事で休み")
