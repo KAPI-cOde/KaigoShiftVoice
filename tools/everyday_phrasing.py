@@ -8,8 +8,10 @@
 1件ごとに、見本の施設「ひだまりの郷」の11月の最初の状態から始める（前の一言の結果を持ち越さない）。今日は
 2026-11-05（木）として読む（「明日」は6日）。数え方は次のとおり。
 - 表を変えなかった（聞き返した・まだ扱えないと言った・読み取りに失敗した）は「聞き返した」
-- 表を変えた時は、cells（その人のその日の勤務）・rule（ルールの名前）・keep_count（その人のその勤務の回数が変わらない）が
-  合えば「正しく直した」、合わなければ「間違えて変えた」。直すのが正しいのに聞き返した物も「聞き返した」に数える
+- 表を変えた時は、cells（その人のその日の勤務）・rule（ルールの名前）・keep_count（その人のその勤務の日が変わらない）が
+  合い、しかも増えたルールが一言に出てきた人だけに関わり（cells の時は頼まれた日だけ）なら「正しく直した」、
+  そうでなければ「間違えて変えた」。直すのが正しいのに聞き返した物も「聞き返した」に数える。人数を守るために
+  ほかの人のマスが動くのは、このアプリの作り（README）なので数えない
 """
 from __future__ import annotations
 
@@ -33,15 +35,23 @@ from shiftvoice.store import SEED, Store  # noqa: E402
 DATA = ROOT / "tools" / "everyday_phrases.json"
 
 
-def judge(p: dict, kind: str, before: dict, after: dict, message: str) -> str:
+def judge(p: dict, kind: str, before: dict, after: dict, message: str, new_rules: list, said: set[str]) -> str:
     if kind != "applied":
         return "聞き返した"
+    # 増えたルールが、一言に出てきた人だけに関わるか（Codex Astra の指摘 2026-11-05。期待のマスが合っても、
+    # ほかの人のルールが増えていたら読み違え）
+    if any(r.who and not set(r.who) <= said for r in new_rules):
+        return "間違えて変えた"
     if p.get("cells"):
+        want = {(n, d) for n, d, _ in p["cells"]}
+        if any(r.who and r.when and not {(w, d) for w in r.who for d in r.when} <= want for r in new_rules):
+            return "間違えて変えた"
         ok = all(after[n][d - 1] == s for n, d, s in p["cells"])
         return "正しく直した" if ok else "間違えて変えた"
     if p.get("keep_count"):
         n, s = p["keep_count"]
-        return "正しく直した" if before[n].count(s) == after[n].count(s) else "間違えて変えた"
+        days = [i for i, x in enumerate(before[n]) if x == s]
+        return "正しく直した" if days == [i for i, x in enumerate(after[n]) if x == s] else "間違えて変えた"
     if p.get("rule"):
         return "正しく直した" if p["rule"] in (message or "") else "間違えて変えた"
     return "間違えて変えた"
@@ -56,6 +66,8 @@ def run_once(phrases: list[dict], today: dt.datetime) -> list[dict]:
             s = Session(Store(d), 2026, 11, HaikuReader(), now=lambda: today)
             s.open()
             before = {n: list(r) for n, r in s.store.month(2026, 11).table.items()}
+            had = set(s.store.ledger().rules_at().keys())
+            said = {st.name for st in s.store.staff() if st.name in p["text"]}
             t0 = time.time()
             try:
                 r = s.say(p["text"])
@@ -64,8 +76,10 @@ def run_once(phrases: list[dict], today: dt.datetime) -> list[dict]:
                 kind, message = "exception", f"{type(e).__name__}"
             after = s.store.month(2026, 11).table
             moved = sum(1 for n in before for a, b in zip(before[n], after[n]) if a != b)
+            new_rules = [r for i, r in s.store.ledger().rules_at().items() if i not in had]
             out.append({"no": p["no"], "text": p["text"], "want": p["want"], "kind": kind, "message": message,
-                        "result": judge(p, kind, before, after, message), "moved": moved,
+                        "result": judge(p, kind, before, after, message, new_rules, said), "moved": moved,
+                        "new_rules": [r.name for r in new_rules],
                         "seconds": round(time.time() - t0, 1)})
     return out
 
