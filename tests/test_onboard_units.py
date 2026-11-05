@@ -121,6 +121,51 @@ def test_翌月の夜勤の回数の幅は夜勤に入れる人の合計で毎�
     assert all(want[0] <= sum(1 for x in table[n] if x == "夜") <= want[1] for n in NIGHT[:k])
 
 
+UNIT_N = {"東": ["青木", "石田", "上野", "江口", "小川", "加藤"], "西": ["岡田", "落合", "菊池", "久保", "小島"]}
+UNIT_D = {"東": "斉藤", "西": "篠原"}
+
+
+def units_rotation_paste(days: int) -> str:
+    """2ユニットのグループホームの形。夜勤は各ユニットで毎晩1人で、東は6人・西は5人が順に入る（夜勤→明け→公休、ほかの日は
+    日勤と公休）。各ユニットに日勤だけの人が1人いて、土日が公休。"""
+    grid = {}
+    for names in UNIT_N.values():
+        k = len(names)
+        cycle = ["夜", "明", "公"] + ["日"] * (k - 4) + ["公"]
+        grid |= {nm: [cycle[(d - i) % k] for d in range(days)] for i, nm in enumerate(names)}
+    grid |= {nm: ["公" if d % 7 in (5, 6) else "日" for d in range(days)] for nm in UNIT_D.values()}
+    lines = ["氏名\t" + "\t".join(str(d) for d in range(1, days + 1))]
+    for u, names in UNIT_N.items():
+        lines += [f"{u}ユニット"] + [nm + "\t" + "\t".join(grid[nm]) for nm in names + [UNIT_D[u]]]
+    return "\n".join(lines)
+
+
+@pytest.mark.parametrize("year, month, nights, want", [
+    # 30日の11月に、東6人が5回ずつ・西5人が6回ずつ。施設全体の11人で見ると上限6回で足りるが、西は5人×6回=30回 < 12月の31晩
+    (2026, 11, {"東": [5] * 6, "西": [6] * 5}, (5, 7)),
+    # 31日の1月に、東は5〜6回・西は6〜7回。施設全体で見ると下限5回のままだが、東は6人×5回=30回 > 2月の28晩
+    (2027, 1, {"東": [6, 5, 5, 5, 5, 5], "西": [7, 6, 6, 6, 6]}, (4, 7)),
+])
+def test_ユニットごとに毎晩夜勤がいる表は夜勤の回数の幅をユニットごとの人数で広げる(tmp_path, year, month, nights, want):
+    """夜勤の人数がユニットごとのルール（各ユニットに毎晩1人）で、ユニットごとに夜勤に入れる人の数が違う表。回数の幅を施設全体の
+    人数だけで広げると、人の少ないユニットの上限の合計が晩の数に届かず（人の多いユニットの下限の合計が晩の数を超え）、運用の都合を
+    外す段に下がって1人に夜勤が寄っていた（Astra の指摘 2026-11-05 4×6。2ユニットのグループホームでふつうにある形）。"""
+    days = calendar.monthrange(year, month)[1]
+    p = parse_paste(units_rotation_paste(days))
+    assert p.unit_list == ["東", "西"]
+    assert {u: [sum(1 for x in p.table[nm] if x == "夜") for nm in names] for u, names in UNIT_N.items()} == nights
+    pr = infer(p, year, month)
+    rule = [r for r in pr.rules if r["name"] == "夜勤の回数（夜勤に入れる人）"][0]
+    assert (rule["params"]["min"], rule["params"]["max"]) == want
+    ny, nm = next_ym(year, month)
+    c = create_facility(pr, tmp_path / "f", name="試験", next_year=ny, next_month=nm)
+    assert c.next_table_made and c.stage_note is None, c.stage_note          # 運用の都合を外す段に下がらない
+    table = Store(tmp_path / "f").month(ny, nm).table
+    for names in UNIT_N.values():
+        assert all(sum(1 for n in names if table[n][d] == "夜") == 1 for d in range(len(table[names[0]])))
+        assert all(want[0] <= table[n].count("夜") <= want[1] for n in names)
+
+
 def build_after(store: Store, year: int, month: int):
     """year・month の次の月の表を作って置く（取り込んだ施設で月を進めた時と同じ帳面のルールで作る）。"""
     copy_next_month(store, year, month)

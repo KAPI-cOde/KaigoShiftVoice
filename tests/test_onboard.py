@@ -391,6 +391,36 @@ def test_短い勤務を何種類も使い分けるパートの人も翌月そ�
     assert set(nxt["落合"]) <= mine | {"公"} and set(nxt["落合"]) & mine
 
 
+def test_短い勤務と一緒にたまに入った会議はふだんの勤務にしない(tmp_path):
+    # パートの人の新しい勤務を合わせて見ると、朝8日・夕方2日・会議2日（勤務の日12日）の人は、会議まで合わせて半分以上になり、
+    # 会議もふだんの勤務になっていた。翌月その人に、頼まれていない会議が入った（Astra の指摘 2026-11-05 3×8。直す前は、この表で
+    # 1月に会議が3日入った）。合わせるのは、その人の勤務の日の4分の1以上を占める記号だけにする。夕方の2日と会議の2日は、
+    # 頼まれた時だけのまま。12月と1月は同じ31日なので、公休の数のルールのまま段1で作れる
+    week = ["早", "早", "日", "遅", "遅", "公", "公"] * 6
+    rows = {nm: week[k:k + 31] for nm, k in (("青木", 0), ("石田", 1), ("上野", 2), ("江口", 3), ("小川", 4),
+                                               ("加藤", 5), ("岡田", 6))}
+    rows["落合"] = ["朝" if d % 7 in (3, 6) else "公" for d in range(31)]   # 2026年12月1日は火曜。金・月の朝で8日
+    rows["落合"][4] = rows["落合"][11] = "夕"
+    rows["落合"][18] = rows["落合"][25] = "会"
+    assert [rows["落合"].count(s) for s in ("朝", "夕", "会", "公")] == [8, 2, 2, 19]
+    text = "氏名\t" + "\t".join(str(d) for d in range(1, 32)) + "".join(
+        f"\n{nm}\t" + "\t".join(r) for nm, r in rows.items())
+    ans = {"朝": {"name": "朝の勤務", "kind": "work"}, "夕": {"name": "夕方の勤務", "kind": "work"},
+           "会": {"name": "会議", "kind": "work"}}
+    pr = infer(parse_paste(text), 2026, 12, ans)
+    st = {s["symbol"]: s for s in pr.shift_types}
+    assert pr.problems == []
+    assert "on_request_only" not in st["朝"]
+    assert st["会"]["on_request_only"] is True and st["夕"]["on_request_only"] is True
+    assert {s["name"]: set(s["can"]) for s in pr.staff}["落合"] == {"朝"}
+    c = create_facility(pr, tmp_path / "p", name="試験", next_year=2027, next_month=1, answers=ans,
+                        times={"朝": {"start": "07:00", "hours": 2.5}, "夕": {"start": "16:00", "hours": 4}})
+    nxt = Store(tmp_path / "p").month(2027, 1).table
+    assert c.next_table_made and c.stage_note is None, c.stage_note
+    assert "朝" in nxt["落合"] and set(nxt["落合"]) <= {"朝", "公"}
+    assert not any("会" in row for row in nxt.values())
+
+
 def test_貼り付け6_明けは明(tmp_path):
     p = parse_paste(paste(6))
     assert p.aliases.get("明け") == "明" and p.table == parse_paste(SAMPLE.read_text(encoding="utf-8")).table

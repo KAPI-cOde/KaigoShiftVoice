@@ -658,19 +658,21 @@ def _answer_type(sym: str, a, regular: bool) -> dict | None:
 
 
 def _own_shifts(table: dict[str, list[str]], unknown: list[str], answers: dict) -> set[str]:
-    """新しい勤務と答えた記号のうち、その人が2回以上入った物を合わせて、その人の勤務の日（明け・休みを除く）の半分以上を
-    占める人の、それらの記号。パートの人の短い勤務は、月の半分より少ない日にしか出なくても、その人のふだんの勤務なので
-    翌月も置く（国の記載例のグループホーム。週2回の短い勤務が頼まれた時だけになって翌月に1回も入らず、その人たちは
-    早番・日勤・遅番に入っていた。2026-11-05）。記号ごとではなく合わせて見るのは、曜日で朝・昼・夕の短い勤務を使い分ける
-    人は、どの記号も半分に届かず、全部が頼まれた時だけになっていたため（Codex の指摘 2026-11-05）。出張・会議など、
-    人の勤務のうちたまにしか無い物は当たらない。1回だけの物も当てない（長く休んだ人が1回だけ出た会議を、翌月のふだんの
-    勤務にしないため）。"""
+    """新しい勤務と答えた記号のうち、その人が2回以上入り、その人の勤務の日（明け・休みを除く）の4分の1以上を占める物を
+    合わせて、その人の勤務の日の半分以上を占める人の、それらの記号。パートの人の短い勤務は、月の半分より少ない日にしか
+    出なくても、その人のふだんの勤務なので翌月も置く（国の記載例のグループホーム。週2回の短い勤務が頼まれた時だけになって
+    翌月に1回も入らず、その人たちは早番・日勤・遅番に入っていた。2026-11-05）。記号ごとではなく合わせて見るのは、曜日で
+    朝・昼・夕の短い勤務を使い分ける人は、どの記号も半分に届かず、全部が頼まれた時だけになっていたため（Codex の指摘
+    2026-11-05）。合わせるのを4分の1以上の物だけにするのは、朝8日・夕方2日・会議2日の人の会議まで合わせてふだんの勤務に
+    なり、翌月その人に頼まれていない会議が入ったため（Astra の指摘 2026-11-05）。朝・昼・夕を4日ずつ、朝8日・夕方4日は
+    今どおり全部を置く。出張・会議など、人の勤務のうちたまにしか無い物は当たらない。1回だけの物も当てない（長く休んだ人が
+    1回だけ出た会議を、翌月のふだんの勤務にしないため）。"""
     new = {s for s in unknown if isinstance(answers.get(s), dict) and answers[s].get("kind") == "work"}
     work = new | {s["symbol"] for s in _template() if s["kind"] == "work"}
     out: set[str] = set()
     for row in table.values():
         days = [c for c in row if c in work]
-        mine = {s: k for s, k in Counter(c for c in days if c in new).items() if k >= 2}
+        mine = {s: k for s, k in Counter(c for c in days if c in new).items() if k >= 2 and k * 4 >= len(days)}
         if mine and sum(mine.values()) * 2 >= len(days):
             out |= set(mine)
     return out
@@ -733,8 +735,8 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
         return sum(1 for d in range(n) if any(row[d] == sym for row in table.values()))
 
     # 知らない記号の答えから勤務の種類を作る（明けの種類の記号は、夜勤の翌日の見方に先に要る）
-    # 新しい勤務は、貼った月の半分以上の日に出たか、その人が2回以上入った新しい勤務を合わせてその人の勤務の日の半分以上を
-    # 占めれば（_own_shifts）、ふだんの勤務にする
+    # 新しい勤務は、貼った月の半分以上の日に出たか、その人が2回以上入り、その人の勤務の日の4分の1以上を占める新しい勤務を
+    # 合わせてその人の勤務の日の半分以上を占めれば（_own_shifts）、ふだんの勤務にする
     unknown = [s for s in pasted.unknown_symbols if s not in same]
     own = _own_shifts(table, unknown, answers)
     answered: dict[str, dict] = {}
@@ -871,11 +873,28 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
         nd = calendar.monthrange(ny_, nm_)[1]
         lo, hi = min(did), max(did)
         seen = {"total": sum(did), "days": n}
+        by_unit: Counter = Counter()
+        if each and all(s in cover and min(cover[s]) > 0 for s in night_syms):
+            # 夜勤の人数がユニットごとのルール（どのユニットにも毎晩いる）の時は、ユニットごとの回数の合計も持たせ、
+            # ユニットごとの夜勤に入れる人の数でも広げる。東6人・西5人のように人の数がユニットで違うと、施設全体の人数だけで
+            # 広げても、人の少ないユニットの上限の合計が晩の数に届かなかった（Astra の指摘 2026-11-05）。ユニットで0人の日が
+            # ある表（夜勤を何ユニットかで順に回す。国の記載例の特養）は、施設全体の人数のルールに任せて今のまま
+            per_day = day_counts(night_syms)
+            seen["units"] = {u: sum(per_day[i * n:(i + 1) * n]) for i, u in enumerate(units)}
+            by_unit = Counter(pasted.unit_of.get(nm, "全体") for nm, k in zip(table, nights) if k > 0)
         note = f"{month}月に夜勤をした人は{lo}〜{hi}回"
-        lo2, hi2 = fit_count(lo, int(hi * nd / n + 0.5) if nd > n else hi, seen, len(did), nd)
+        hi1 = int(hi * nd / n + 0.5) if nd > n else hi
+        lo2, hi2 = fit_count(lo, hi1, seen, len(did), nd, by_unit)
         if (lo2, hi2) != (lo, hi):
             moved = ([f"下限を{lo2}回"] if lo2 != lo else []) + ([f"上限を{hi2}回"] if hi2 != hi else [])
-            note += f"（{n}日の月）。{nm_}月は{nd}日なので{'・'.join(moved)}にした"
+            # ユニットの人の数に合わせて広げた時は、どのユニットに合わせたかを言う（施設全体の人数だけでは届かない分）
+            whole = fit_count(lo, hi1, {"total": seen["total"], "days": n}, len(did), nd)
+            each_fit = {u: fit_count(lo, hi1, {"total": t, "days": n}, by_unit[u], nd)
+                        for u, t in seen.get("units", {}).items()}
+            why = [f"{u}は夜勤に入れる人が{by_unit[u]}人" for u, (ul, uh) in each_fit.items()
+                   if (lo2 < whole[0] and ul == lo2) or (hi2 > whole[1] and uh == hi2)]
+            note += (f"（{n}日の月）。{nm_}月は{nd}日" + (f"で、{'・'.join(why)}" if why else "") + "なので"
+                     + f"{'・'.join(moved)}にした")
         add("夜勤の回数（夜勤に入れる人）", "count", "operational",
             {"shifts": list(night_syms), "min": lo2, "max": hi2, "capable_only": True, "seen": seen}, note)
     # 記号の最初の1文字が同じ2つ（早1と早2など）は、合わせた人数が毎日同じなら、その合計も守る
