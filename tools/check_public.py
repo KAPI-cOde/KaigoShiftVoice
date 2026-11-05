@@ -1,6 +1,7 @@
 """Check tracked files for key-like strings and unapproved name forms.
 
 Usage: python tools/check_public.py
+       python tools/check_public.py --dir PATH   （送る物を写した置き場を、Git の除外にかかわらず全部見る）
 Exit code 0 prints "ok"; exit code 1 prints "file:line reason" for each finding.
 """
 
@@ -59,16 +60,28 @@ def _tracked_files(root: Path) -> list[str]:
     return [p for p in out.decode("utf-8").split("\0") if p]
 
 
-def main(root: Path | str) -> int:
+def _all_files(d: Path) -> list[str]:
+    """置き場の中の全部のファイル（.git の中は除く）。.gitignore で外れる .env なども見る。"""
+    return sorted(str(p.relative_to(d)) for p in d.rglob("*") if p.is_file() and ".git" not in p.relative_to(d).parts)
+
+
+def main_dir(d: Path | str, repo: Path | str) -> int:
+    """Space へ送る物を写した置き場 d を、そのまま全部見る（名前の許可はリポジトリ repo の一覧）。"""
+    return main(repo, files_root=Path(d))
+
+
+def main(root: Path | str, files_root: Path | None = None) -> int:
     root = Path(root)
     allowed = _allowed_names(root)
     findings: list[str] = []
+    base = files_root or root
+    files = _all_files(base) if files_root else _tracked_files(root)
 
-    for rel in _tracked_files(root):
+    for rel in files:
         if _should_skip(rel):
             continue
         try:
-            text = (root / rel).read_bytes().decode("utf-8")
+            text = (base / rel).read_bytes().decode("utf-8")
         except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
             continue
 
@@ -91,4 +104,6 @@ def main(root: Path | str) -> int:
 
 if __name__ == "__main__":
     repo = Path(__file__).resolve().parent.parent
+    if len(sys.argv) == 3 and sys.argv[1] == "--dir":
+        sys.exit(main_dir(Path(sys.argv[2]), repo))
     sys.exit(main(repo))
