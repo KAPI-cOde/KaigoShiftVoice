@@ -70,14 +70,30 @@ def test_元と先が同じ日の移すは捨てて_同じ日の頼みで直す(
     assert s.store.month(2026, 11).table["上野"][13] == "早"
 
 
-def test_元と先が同じ日の移すだけなら_何の勤務にするか聞く(built_dir, tmp_path):
-    text = "職員03さん、14日の遅番、早番に変えてほしいって。"
+def test_元と先が同じ日の移すだけで_一言に勤務の名前が無ければ_何の勤務にするか聞く(built_dir, tmp_path):
+    text = "職員03さん、14日の、変えてほしいって。"
     move = {"type": "move", "staff": "職員03", "shift": "遅", "from_day": 14, "to_day": 14, "reason": None}
     s = _session(built_dir, tmp_path, {text: _reply(move)})
     before = [list(x) for x in s.store.month(2026, 11).table.values()]
-    r = s.say("上野さん、14日の遅番、早番に変えてほしいって。")
+    r = s.say("上野さん、14日の、変えてほしいって。")
     assert r.kind == "ask" and r.message == "上野さんの14日を、どの勤務にしますか。表もルールも変えていません"
     assert [list(x) for x in s.store.month(2026, 11).table.values()] == before
+
+
+def test_移す先の無い移すだけでも_一言に出る勤務の名前が1つなら_その日をその勤務にする(built_dir, tmp_path):
+    # 「14日の遅番、早番に変えて」（元と先が同じ日）と「来週の水曜、研修じゃなくて日勤になった」（先の日が無い）
+    a = "職員03さん、14日の遅番、早番に変えてほしいって。"
+    b = "職員14さん、11日、研修じゃなくて日勤になったって。"
+    s = _session(built_dir, tmp_path, {
+        a: _reply({"type": "move", "staff": "職員03", "shift": "遅", "from_day": 14, "to_day": 14, "reason": None}),
+        b: _reply({"type": "move", "staff": "職員14", "shift": "研", "from_day": 11, "to_day": None,
+                   "reason": "研修じゃなくて日勤になった"})})
+    r = s.say("上野さん、14日の遅番、早番に変えてほしいって。")
+    assert r.kind == "applied", r
+    assert s.store.month(2026, 11).table["上野"][13] == "早"
+    r = s.say("杉山さん、来週の水曜、研修じゃなくて日勤になったって。")
+    assert r.kind == "applied", r
+    assert s.store.month(2026, 11).table["杉山"][10] == "日"
 
 
 def test_名前の無い一言で人の欄が埋め草なら_誰の頼みかを聞く(built_dir, tmp_path):
@@ -104,3 +120,17 @@ def test_今度の日曜はその1日だけを直し_毎週の休みにしない
     assert after["上野"][7] == "公"
     assert {x.id for x in s.store.ledger().rules_at().values() if x.kind == "weekday"} == weekly   # 毎週の休みにしない
     assert [d for d, (a, b) in enumerate(zip(before["上野"], after["上野"]), 1) if a != b and b == "公"] == [8]
+
+
+def test_追加しないでと言った回数の上限は_今入っている回数にする(built_dir, tmp_path):
+    """「今月はもう夜勤、追加しないでね。今入ってる分はそのままで」を上限0回と読んでも、今の夜勤を外さない。"""
+    text = "職員05さん、今月はもう夜勤、追加しないでね。今入ってる分はそのままで。"
+    s = _session(built_dir, tmp_path, {text: _reply(
+        {"type": "count_limit", "staff": ["職員05"], "shift": "夜", "min": None, "max": 0, "until_day": None,
+         "strength": "operational", "reason": None})})
+    now = s.store.month(2026, 11).table["小川"].count("夜")
+    assert now > 0
+    r = s.say("小川さん、今月はもう夜勤、追加しないでね。今入ってる分はそのままで。")
+    assert r.kind == "applied", r
+    assert f"夜勤は月{now}回まで" in r.message
+    assert s.store.month(2026, 11).table["小川"].count("夜") == now   # 今の夜勤を外していない
