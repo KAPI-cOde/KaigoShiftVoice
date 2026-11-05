@@ -2,6 +2,10 @@
 
 - モデルはリポジトリの外（既定 ~/Library/Caches/KaigoShiftVoice/models/haas-ja-v1.0-onnx。環境変数 SHIFTVOICE_MODELS で変えられる）
 - 職員の名前と勤務の言葉を手がかり（hotwords、強さ1.5）として渡す。渡さないと 小島→尾島 などが出る
+- 勤務の言葉はモデルを作る時に、職員の名前は文字にするたびに、いま開いている施設の名簿から渡す。
+  ［自分の施設で始める］や施設の切り替えで別の施設へ移っても、モデルを読み込み直さずにその施設の名前で聞ける。
+  名前をモデルを作る時に入れると、後から渡した別の施設の名前と並んで効き、起動した施設の名前が勝つ
+  （「おじま」と言っても名簿にない「小島」になる。2026-11-05 の実験。両方の渡し方で同じ字になることも確かめた）
 - 音声は16kHz・モノラルの float の並び。ブラウザで16kHz に直してから送る（ffmpeg を使わない）
 - 長い発言は25秒ずつに切る。最初の読み込み（約11秒）は起動時に済ませる
 """
@@ -57,11 +61,13 @@ class Voice:
         miss = missing_files(d)
         if miss:
             raise FileNotFoundError(f"声のモデルがありません（{', '.join(miss)}）。{d}")
+        # 手がかりのファイルには、施設に関わらない勤務の言葉だけを入れる。名前は文字にするたびに渡す（transcribe）
         hw = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
-        for w in list(dict.fromkeys(list(names) + list(SHIFT_WORDS))):
+        for w in SHIFT_WORDS:
             hw.write(w + "\n")
         hw.close()
         self.hotwords = hw.name
+        self.names = list(names)   # 起動した施設の名簿（transcribe で names を省いた時に使う）
         t0 = time.perf_counter()
         self.rec = sherpa_onnx.OfflineRecognizer.from_transducer(
             encoder=str(d / "encoder.onnx"), decoder=str(d / "decoder.onnx"), joiner=str(d / "joiner.onnx"),
@@ -71,13 +77,15 @@ class Voice:
         )
         self.load_seconds = time.perf_counter() - t0
 
-    def transcribe(self, samples) -> tuple[str, float]:
-        """16kHz の float の並びを文字にする。返すのは（文字, 秒）。"""
+    def transcribe(self, samples, names: list[str] | None = None) -> tuple[str, float]:
+        """16kHz の float の並びを文字にする。返すのは（文字, 秒）。
+        names は、いま開いている施設の名簿の名前（省くと作った時の名簿）。この時だけの手がかりとして渡す。"""
         t0 = time.perf_counter()
+        hotwords = "/".join(dict.fromkeys(self.names if names is None else names))   # sherpa-onnx は「/」で区切る
         step = SAMPLE_RATE * CHUNK_SECONDS
         texts = []
         for i in range(0, max(len(samples), 1), step):
-            st = self.rec.create_stream()
+            st = self.rec.create_stream(hotwords)
             st.accept_waveform(SAMPLE_RATE, samples[i:i + step])
             self.rec.decode_stream(st)
             texts.append(st.result.text.strip())

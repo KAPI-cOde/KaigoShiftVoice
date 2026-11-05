@@ -118,7 +118,7 @@ class FakeVoice:
     """声の文字起こしの代わり。聞こえた文を決めておく。"""
     text = ""
 
-    def transcribe(self, samples):
+    def transcribe(self, samples, names=None):   # names はサーバーが渡す、開いている施設の名簿
         return self.text, 0.01
 
 

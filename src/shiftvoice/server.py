@@ -240,13 +240,12 @@ def table_tsv(st: dict, paste_symbols: dict | None = None) -> str:
 
 
 class Box:
-    """今開いている施設の入れ物。施設を切り替える時は lock の中で session と voice を差し替える。"""
+    """今開いている施設の入れ物。施設を切り替える時は lock の中で session を差し替える。
+    声の入口（voice）は施設に関わらず1つを使い回し、文字にするたびに、開いている施設の名簿の名前を渡す。"""
 
     def __init__(self, session: Session, voice=None):
         self.session = session
         self.voice = voice
-        self.orig_root = Path(session.store.root)     # 起動した時の置き場（声の入口はここの名簿に合わせてある）
-        self.orig_voice = voice
 
 
 def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=None):
@@ -289,7 +288,9 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
             import numpy as np
             n = int(self.headers.get("Content-Length") or 0)
             samples = np.frombuffer(self.rfile.read(n), dtype="<f4")
-            text, secs = box.voice.transcribe(samples)
+            # 名前の手がかりは、いま開いている施設の名簿（［自分の施設で始める］や切り替えの後も、その施設の名前で聞く）
+            names = [s.name for s in box.session.store.staff()]
+            text, secs = box.voice.transcribe(samples, names)
             if not text:
                 return self._json(200, {"error": "聞き取れませんでした。もう一度話すか、文字で入れてください",
                                         "voice_seconds": secs})
@@ -310,12 +311,11 @@ def make_handler(session: Session, lock: threading.Lock, has_key: bool, voice=No
             return st
 
         def _swap(self, root: Path, year: int, month: int) -> dict:
-            """lock の中で session を差し替える。声の入口は、起動した置き場の名簿に合わせてあるので、その置き場の時だけ残す。"""
+            """lock の中で session を差し替える。声の入口はそのまま使う（名前は文字にするたびに、新しい施設の名簿から渡す）。"""
             old = box.session
             new = Session(Store(root), year, month, old.reader, now=old.now, who=old.who, builder=old.builder)
             new.open()
             box.session = new
-            box.voice = box.orig_voice if Path(root) == box.orig_root else None
             return self._state_out()
 
         def _setup(self, data: dict) -> None:
