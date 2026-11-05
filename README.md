@@ -157,7 +157,7 @@ uv run --extra voice shiftvoice demo --voice
 
 ### 鍵の入れ方
 
-鍵は Claude Console（https://platform.claude.com/）で作れます。鍵が無いままターミナルから起動すると、鍵を聞きます（入力は表示されません。Enter だけなら鍵なしで始まります）。保存を選ぶと、このフォルダの `.env`（本人だけ読める。Git に入りません）に書きます。自分で書く時は、鍵が画面や記録に出ないよう、次のように入力を求める形にしてください。
+鍵は Claude Console（https://platform.claude.com/）で作れます。鍵が無いままターミナルから起動すると、鍵を聞きます（入力は表示されません。Enter だけなら鍵なしで始まります）。保存を選ぶと、このフォルダの `.env`（Git に入りません。Mac と Linux では本人だけが読める設定で書きます）に書きます。自分で書く時は、鍵が画面や記録に出ないよう、次のように入力を求める形にしてください。
 
 ```
 read -rs "k?ANTHROPIC_API_KEY: " && printf 'ANTHROPIC_API_KEY=%s\n' "$k" > .env && unset k

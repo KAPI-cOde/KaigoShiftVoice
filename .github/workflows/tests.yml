@@ -4,6 +4,7 @@ name: tests
 # 声の試験は、声のモデルと録音が無いので飛ばされる。
 # Mac で回す。計算に使う OR-Tools は OS ごとに探し方の道筋が違い、同じ入力でも違う表になる（ルールはどれも守る）。
 # 試験は、作者の Mac で作った表と数（動画・写真・README と同じ）を確かめるので、Linux では一部が合わない。
+# Windows の事務用 PC でも止まらないよう、Windows でも同じ2ファイルと Windows 向けの安全の試験を流す（pytest-windows）。
 # 審査員は Linux（Codespaces）で試すので、Linux では「どの OS でも成り立つこと」の試験だけを別の仕事（pytest-linux）で流す。
 on:
   push:
@@ -36,3 +37,17 @@ jobs:
       - run: python -m pip install uv
       - name: uv run pytest（Linux 向けの2ファイル）
         run: uv run pytest -q tests/test_flow_any_os.py tests/test_seed_table.py
+
+  # Windows では、起動の印・保存の置き換えなど OS で動きが変わる所の試験と、OS で変わらない試験だけ流す。
+  pytest-windows:
+    name: pytest-windows（Windows では OS で変わらない試験だけ）
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install uv
+      - name: uv run pytest（Windows 向けの3ファイル）
+        run: uv run pytest -q tests/test_flow_any_os.py tests/test_seed_table.py tests/test_windows_safety.py

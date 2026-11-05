@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -18,6 +19,22 @@ from .ledger import Ledger
 from .model import Acceptance, Facility, Month, Staff
 
 SEED = Path(__file__).resolve().parents[2] / "data" / "hidamari"
+
+
+def _replace(tmp, path) -> None:
+    """Windows では、ウイルス対策や同期が保存先を一瞬つかむと PermissionError になる。短く待ってやり直す。"""
+    waited = 0.0
+    delay = 0.05
+    while True:
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if waited >= 1.0:
+                raise
+            time.sleep(delay)
+            waited += delay
+            delay = min(delay * 2, 0.2)
 
 
 def atomic_write_json(path: Path, obj) -> None:
@@ -29,7 +46,7 @@ def atomic_write_json(path: Path, obj) -> None:
             json.dump(obj, f, ensure_ascii=False, indent=1)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        _replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)

@@ -73,15 +73,15 @@ def _state(args) -> None:
         return
     if not args.name or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", args.name):
         raise SystemExit("名前は英数字で付けてください（例 start・end）")
-    from .server import lock_file
+    from .server import lock_file, pid_alive
     lock = lock_file(data)
     if args.action == "load" and lock.exists():
-        import os
         try:
-            os.kill(int(lock.read_text(encoding="utf-8").split("\n", 1)[0]), 0)
+            alive = pid_alive(int(lock.read_text(encoding="utf-8").split("\n", 1)[0]))
+        except (OSError, ValueError):
+            alive = False
+        if alive:
             raise SystemExit("サーバーが開いています。止めて（Ctrl+C）から戻してください")
-        except (ValueError, ProcessLookupError, PermissionError):
-            pass
     src, dst = (data, base / args.name) if args.action == "save" else (base / args.name, data)
     if not src.exists():
         raise SystemExit(f"{src} がありません")

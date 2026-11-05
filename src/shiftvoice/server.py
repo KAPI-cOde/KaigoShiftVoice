@@ -565,6 +565,38 @@ def release_lock(lock: Path) -> None:
         pass
 
 
+def pid_alive(pid: int) -> bool:
+    """その番号のプロセスが生きているか。Windows の os.kill(pid, 0) は Ctrl+C を送ってしまうので使わない。"""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.restype = ctypes.c_void_p
+        k32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        k32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = k32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ctypes.get_last_error() == 5        # ERROR_ACCESS_DENIED は生きている扱い
+        try:
+            code = ctypes.c_uint32()
+            if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == 259                   # STILL_ACTIVE
+        finally:
+            k32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True           # ほかの利用者の動いているプロセス
+    except OSError:
+        return False
+    return True
+
+
 def _take_lock(root: Path, url: str) -> Path | None:
     """同じ置き場を2つのサーバーで開かない（後から保存した方が前の書き込みを消すため）。
     すでに開いていれば、その URL を出して None を返す。前のサーバーが落ちて印だけ残った時は引き継ぐ。"""
@@ -573,16 +605,12 @@ def _take_lock(root: Path, url: str) -> Path | None:
     if lock.exists():
         try:
             pid, old_url = lock.read_text(encoding="utf-8").split("\n", 1)
-            alive = True
-            try:
-                os.kill(int(pid), 0)
-            except PermissionError:
-                pass          # ほかの利用者の動いているプロセス
-            if alive:
-                print(f"この置き場はもう開いています。{old_url.strip()} を開いてください", flush=True)
-                return None
-        except (ValueError, ProcessLookupError):
-            pass
+            alive = pid_alive(int(pid))
+        except (OSError, ValueError):
+            alive = False     # 読めない・壊れている印は引き継ぐ
+        if alive:
+            print(f"この置き場はもう開いています。{old_url.strip()} を開いてください", flush=True)
+            return None
     lock.write_text(f"{os.getpid()}\n{url}", encoding="utf-8")
     return lock
 
