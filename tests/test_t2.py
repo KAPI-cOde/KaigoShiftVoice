@@ -95,7 +95,7 @@ def test_t2_02_misheard_name_without_key(sess):
 def test_t2_unclear_question_hides_mask_words(sess):
     """名前の無い一言（作者のふだんの言い方「明日の早番　遅番にしてください」）に Claude が聞き返す時、
     名前を伏せる内部の言い方（職員NN・職員番号）を画面に出さない（2026-11-05、本物の Haiku の返事に出た）。"""
-    text = "明日の早番　遅番にしてください"
+    text = "早番を遅番にしてください"   # 日付の無い一言（相対の日付は送る前に置き換えるので、ここでは使わない）
     q = ("どの職員を、どの日に、早番から遅番に変えますか？（職員番号と日付を教えてください。"
          "例：職員03さんの明日の早番を遅番に）。対象の職員と日付（例：職員NNの○日〜○日）")
     sess.reader = RecordedReader({text: json.dumps({"items": [{"type": "unclear", "question": q}]},

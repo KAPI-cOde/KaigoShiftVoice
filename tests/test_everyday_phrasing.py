@@ -22,10 +22,9 @@ def test_相対の日付を表の月の日付に置き換える():
     assert r("あさっての早番、遅番でお願い") == "7日の早番、遅番でお願い"
     assert r("来週の水曜、研修じゃなくて日勤") == "11日、研修じゃなくて日勤"
     assert r("今度の日曜の日勤") == "8日の日勤"
-    assert r("来週の日曜日") == "15日"          # 週は月曜から
+    assert r("来週の土曜日") == "14日"          # 週は月曜から
     assert r("今週の月曜") == "2日"
     assert r("次の金曜は休み") == "6日は休み"
-    assert r("今度の木曜") == "12日"            # 今日が木曜なら、次の週の木曜
 
 
 def test_置き換えない言い方():
@@ -34,7 +33,10 @@ def test_置き換えない言い方():
               "職員08さんから電話。明日の30日、熱で休みたいって",   # すぐ後に日付がある
               "今日の夜、職員10さんが早く来てくれて助かった",     # 今日は置き換えない
               "明日香の件", "来週の遅番を休みにしてください",   # 名前の頭・曜日の無い来週
-              "月末は休みにしといて"]:
+              "月末は休みにしといて",
+              "来週の水曜日の11日", "再来週の水曜日の18日",   # すぐ後に日付がある（前は「11日日の11日」に壊れた）
+              "来週の日曜", "今週の日曜日",                    # 週を日曜から数える人もいる
+              "今度の木曜"]:                                   # 今日が木曜。今日のことか来週のことか分からない
         assert r(s) == s
     assert r("明日の早番", dt.date(2026, 11, 30)) == "明日の早番"   # 12月1日は表の月の外
 
@@ -134,3 +136,85 @@ def test_追加しないでと言った回数の上限は_今入っている回�
     assert r.kind == "applied", r
     assert f"夜勤は月{now}回まで" in r.message
     assert s.store.month(2026, 11).table["小川"].count("夜") == now   # 今の夜勤を外していない
+
+
+def test_月の外の明日は送らずに聞く(built_dir, tmp_path):
+    """11月30日に11月の表で「明日」と言うと12月1日。送らずに、その月の表で言ってもらう（前は送っていて、
+    Claude が「1日」と返すと11月1日として通りえた。Codex Astra のレビュー 2026-11-05）。"""
+    root = tmp_path / "h"
+    shutil.copytree(built_dir, root)
+    s = Session(Store(root), 2026, 11, RecordedReader({}), now=lambda: dt.datetime(2026, 11, 30, 9, 0, tzinfo=JST))
+    s.open()
+    before = [list(x) for x in s.store.month(2026, 11).table.values()]
+    r = s.say("斉藤さん、明日の日勤、有給にしてくれる？")
+    assert r.kind == "ask" and "12月1日" in r.message and "11月の表の外" in r.message, r
+    assert s.reader.sent == []
+    assert [list(x) for x in s.store.month(2026, 11).table.values()] == before
+
+
+def test_送り直しても_明日は言った日から数える(built_dir, tmp_path):
+    """読み取りに失敗した一言を翌日に［送り直す］と、前は「明日」が1日ずれた。"""
+    root = tmp_path / "h"
+    shutil.copytree(built_dir, root)
+    s = Session(Store(root), 2026, 11, RecordedReader({}), now=lambda: NOW)
+    s.open()
+    r = s.say("斉藤さん、明日の日勤、有給にしてくれる？")
+    assert r.kind == "error"
+    s.reader = RecordedReader({"職員12さん、6日の日勤、有給にしてくれる？": _reply(
+        {"type": "set_cell", "staff": "職員12", "days": [6], "shift": "有", "strength": "wish", "reason": None})})
+    s.now = lambda: NOW + dt.timedelta(days=1)
+    r = s.retry(r.uid)
+    assert r.kind == "applied", r
+    assert s.store.month(2026, 11).table["斉藤"][5] == "有"
+
+
+def test_移す先の無い移すで_打ち消した勤務や別の人の勤務を拾わない(built_dir, tmp_path):
+    move14 = {"type": "move", "staff": "職員03", "shift": "遅", "from_day": 14, "to_day": None, "reason": None}
+    a = "職員03さん、14日の遅番を移して。早番にはしないで"
+    b = "職員03さんの14日の遅番は別の日に移して。職員05さんの15日は早番で"
+    c = "職員03さんの14日の研修は別の日に移して。14日は早番にはしないで"
+    s = _session(built_dir, tmp_path, {
+        a: _reply(move14),
+        b: _reply(move14, {"type": "set_cell", "staff": "職員05", "days": [15], "shift": "早", "strength": "wish",
+                           "reason": None}),
+        c: _reply({"type": "move", "staff": "職員03", "shift": "研", "from_day": 14, "to_day": None, "reason": None},
+                  {"type": "avoid_cell", "staff": "職員03", "days": [14], "shift": "早", "reason": None})})
+    before = [list(x) for x in s.store.month(2026, 11).table.values()]
+    r = s.say("上野さん、14日の遅番を移して。早番にはしないで")
+    assert r.kind == "ask" and r.message == "上野さんの14日の遅番を、何日に移しますか。表もルールも変えていません", r
+    r = s.say("上野さんの14日の遅番は別の日に移して。小川さんの15日は早番で")
+    assert r.kind == "ask" and "何日に移しますか" in r.message, r
+    r = s.say("上野さんの14日の研修は別の日に移して。14日は早番にはしないで")
+    assert r.kind == "ask" and r.message == "上野さんの14日の研修を、何日に移しますか。表もルールも変えていません", r
+    assert [list(x) for x in s.store.month(2026, 11).table.values()] == before
+
+
+def test_外してと言った0回の上限は_今の回数に変えない(built_dir, tmp_path):
+    text = "職員05さん、今月は夜勤0回にして。今入っている夜勤も全部外して"
+    s = _session(built_dir, tmp_path, {text: _reply(
+        {"type": "count_limit", "staff": ["職員05"], "shift": "夜", "min": None, "max": 0, "until_day": None,
+         "strength": "operational", "reason": None})})
+    r = s.say("小川さん、今月は夜勤0回にして。今入っている夜勤も全部外して")
+    assert r.kind == "applied", r
+    assert "夜勤は月0回まで" in r.message
+    assert s.store.month(2026, 11).table["小川"].count("夜") == 0
+
+
+def test_名前を言っていない一言に_Claudeが人を当てたら聞く(built_dir, tmp_path):
+    """「私、13日の日勤、有給に」を、Claude が名簿の最初の人と読んだ（本物の Haiku で3回に1回、6マス動いた）。"""
+    text = "私、13日の日勤、有給にしてもらっていいですか。"
+    s = _session(built_dir, tmp_path, {text: _reply(
+        {"type": "set_cell", "staff": "職員01", "days": [13], "shift": "有", "strength": "wish", "reason": None})})
+    before = [list(x) for x in s.store.month(2026, 11).table.values()]
+    r = s.say(text)
+    assert r.kind == "ask" and r.message.startswith("誰の頼みか読み取れませんでした"), r
+    assert [list(x) for x in s.store.month(2026, 11).table.values()] == before
+
+
+def test_動かせますでも_その日の勤務の変更と読む(built_dir, tmp_path):
+    text = "青木です。10日の早番、日勤に動かせます？ 朝ちょっと用事あって。"
+    s = _session(built_dir, tmp_path, {"職員01です。10日の早番、日勤に動かせます？ 朝ちょっと用事あって。": _reply(
+        {"type": "move", "staff": "職員01", "shift": "早", "from_day": 10, "to_day": None, "reason": "朝ちょっと用事"})})
+    r = s.say(text)
+    assert r.kind == "applied", r
+    assert s.store.month(2026, 11).table["青木"][9] == "日"

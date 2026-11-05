@@ -48,35 +48,52 @@ WEEKDAYS = "月火水木金土日"
 _NAME_TAIL = "香美菜奈花子実海"
 
 
-def resolve_relative_days(text: str, today: dt.date, year: int, month: int) -> str:
+def relative_days(text: str, today: dt.date, year: int, month: int) -> tuple[str, list[tuple[str, dt.date]]]:
     """「明日」「あさって」「来週の水曜」「今度の日曜」などを、表の月の「〇日」に置き換える（Claude へ送る前に手元で）。
     現場の人は日付より「明日の早番」「来週の水曜」と言うことが多い（2026-11-05、作者の書いた言い方と、別の系統の AI が
-    書いた30件のうち4件で、Claude が日付を読めずに聞き返した）。決まりは次のとおり。
+    書いた30件のうち4件で、Claude が日付を読めずに聞き返した）。返すのは、置き換えた文と、表の月の外になった言い方。
     - 週は月曜から。今週の〜曜・来週の〜曜・再来週の〜曜。今度の〜曜・次の〜曜は、今日より後のいちばん近いその曜日
     - 曜日は「曜」が付く時だけ（「次の日」は翌日の意味で、日曜ではない）
-    - 置き換えた日が表の月の外なら置き換えない（Claude が聞き返す）。すぐ後に日付が言われている時（「明日の30日」）も
-      置き換えない。「今日」は置き換えない（その日の出来事を記録する一言に使うため）"""
-    def day(d: dt.date) -> str | None:
-        return f"{d.day}日" if (d.year, d.month) == (year, month) else None
+    - 置き換えないもの（Claude がそのまま読み、分からなければ聞き返す）。すぐ後に日付が言われている時（「明日の30日」
+      「来週の水曜日の11日」）。「今日」（その日の出来事を記録する一言に使う）。週の始まりが人によって違う
+      「今週・来週・再来週の日曜」。今日と同じ曜日の「今度の〜曜」（今日のことか来週のことか分からない）
+    - 表の月の外になった時は置き換えず、言い方と日を返す（呼ぶ側が聞き返す）"""
+    outside: list[tuple[str, dt.date]] = []
 
     def put(pattern: str, when) -> None:
         nonlocal text
+
         def rep(m):
-            got = day(when(m))
-            return got if got else m.group(0)
+            rest = m.string[m.end():]
+            if re.match(r"日?の?[0-9０-９]+日", rest):   # すぐ後に日付がある（「来週の水曜日の11日」で途中の「曜」まで取らない）
+                return m.group(0)
+            d = when(m)
+            if d is None:
+                return m.group(0)
+            if (d.year, d.month) != (year, month):
+                outside.append((m.group(0), d))
+                return m.group(0)
+            return f"{d.day}日"
         text = re.sub(pattern, rep, text)
 
-    explicit = r"(?!の?[0-9０-９]+日)"
-    put(r"(?:明後日|あさって)" + explicit, lambda m: today + dt.timedelta(days=2))
-    put(r"(?:明日(?![" + _NAME_TAIL + r"])|あした)" + explicit, lambda m: today + dt.timedelta(days=1))
+    put(r"(?:明後日|あさって)", lambda m: today + dt.timedelta(days=2))
+    put(r"(?:明日(?![" + _NAME_TAIL + r"])|あした)", lambda m: today + dt.timedelta(days=1))
     monday = today - dt.timedelta(days=today.weekday())
 
     def week(m):
         wd = WEEKDAYS.index(m.group(2))
         which = m.group(1)
         if which in ("今度", "次"):
-            ahead = (wd - today.weekday()) % 7 or 7
-            return today + dt.timedelta(days=ahead)
+            if wd == today.weekday():
+                return None   # 今日のことか来週のことか分からない
+            return today + dt.timedelta(days=(wd - today.weekday()) % 7)
+        if m.group(2) == "日":
+            return None       # 週を日曜から数える人もいて、どの日曜か分からない
         return monday + dt.timedelta(days=wd + {"今週": 0, "来週": 7, "再来週": 14}[which])
-    put(r"(再来週|来週|今週|今度|次)の?([" + WEEKDAYS + r"])曜日?" + explicit, week)
-    return text
+    put(r"(再来週|来週|今週|今度|次)の?([" + WEEKDAYS + r"])曜日?", week)
+    return text, outside
+
+
+def resolve_relative_days(text: str, today: dt.date, year: int, month: int) -> str:
+    """relative_days の置き換えた文だけ（試験で、送る文と同じ文を作るのに使う）。"""
+    return relative_days(text, today, year, month)[0]

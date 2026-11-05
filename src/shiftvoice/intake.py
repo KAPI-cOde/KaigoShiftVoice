@@ -41,8 +41,10 @@ class Clarify(Exception):
 
 # 名前の無い一言（「私、13日の日勤、有給に」）に、Claude が人の欄へ入れることがある埋め草（2026-11-05、本物の Haiku で
 # 「職員不明」）。名簿にない人ではなく、誰の頼みか分からないと聞く
-# 回数の上限の頼みで「今の分は残して、これ以上増やさない」と言っている言葉
+# 回数の上限の頼みで「今の分は残して、これ以上増やさない」と言っている言葉。外す・0回と言っている時は使わない
+# （「今入っている夜勤も全部外して」「夜勤は0回、日勤はそのまま」。Codex Astra のレビュー 2026-11-05）
 KEEP_NOW = r"追加しない|追加せず|増やさない|増やさず|そのまま|今入って|今の分"
+REMOVE_WORDS = r"外し|外す|はずし|はずす|0回|０回|ゼロ|なし|無し|抜い|抜く|消し|消す|全部"
 NOBODY = re.compile(r"^(職員)?(不明|未定|未指定|NN|ＮＮ|XX|ＸＸ|〇〇|○○)(さん)?$|^(本人|自分|私|わたし|僕|俺|話者|依頼者)$")
 WHO_UNKNOWN = "誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください"
 
@@ -207,34 +209,63 @@ def _tidy(items: list[dict], month: Month, text: str = "") -> list[dict]:
     return out
 
 
-def _same_day_move(items: list[dict], text: str, facility: Facility) -> list[dict]:
+# 移す先の無い「移す」を、その日の勤務の変更と読んでよい言葉（「早番に変えて」「日勤になった」「研修じゃなくて」）
+CHANGE_WORDS = r"に変え|に替え|にし|になっ|になる|に直|に動か|に回|にでき|じゃなく|ではなく|でなく"
+
+
+def _targets(text: str, facility: Facility, not_this: str | None) -> set[str]:
+    """一言の中で「〇〇に」「〇〇へ」「〇〇で」と、変える先として言った勤務（すぐ後に打ち消しがある物は除く。
+    「早番にはしないで」の早番は、変える先ではない）。移す元の勤務と、ほかの勤務の名前の一部になる名前は数えない。"""
+    out = set()
+    for t in facility.shift_types:
+        if not t.name or not_this in (t.symbol, t.name):
+            continue
+        if any(o.name != t.name and t.name in o.name and o.name in text for o in facility.shift_types):
+            continue
+        for m in re.finditer(re.escape(t.name) + r"(?:に|へ|で)", text):
+            if not re.search(r"ない|なく|ません|やめ", text[m.end():m.end() + 6]):
+                out.add(t.symbol)
+    return out
+
+
+def _same_day_move(items: list[dict], text: str, facility: Facility, names: set[str] | None = None) -> list[dict]:
     """「14日の遅番、早番に変えて」「11日、研修じゃなくて日勤になった」を、移す先の日が無いか元と同じ日の「移す」
     （研修の日を動かす形）と読むことがある（本物の Haiku、2026-11-05。同じ一言で3回に2回）。元と先が同じでは
     「14日は遅番でない」と「14日は遅番」がぶつかって表が作れず、先の日が無いと「日付が読めませんでした」になっていた。
-    - 同じ人・同じ日の別の頼み（「14日 早番」など）があれば、移すだけを捨てる
-    - 無ければ、一言に出てくる勤務の名前が、移す勤務のほかに1つだけの時は、その日をその勤務にする
-    - それでも分からなければ、何日かではなく、どの勤務にするかを聞く"""
+    - 同じ人・同じ日をその勤務にする別の頼み（「14日 早番」など）があれば、移すだけを捨てる（「14日は早番にしない」は
+      移す先を決めないので数えない）
+    - 無ければ、一言で変える先として言った勤務が1つだけで、一言に出てくる人が1人以下の時だけ、その日をその勤務にする。
+      先の日が無い時は、変えると読める言葉（「に変えて」「じゃなくて」など）がある時だけ
+    - それでも分からなければ聞く（元と先が同じ日なら、どの勤務にするか。先の日が無ければ、何日に移すか）。
+      別の人の勤務や打ち消した勤務を拾って黙って直さない（Codex Astra のレビュー 2026-11-05）"""
     def key(v):
         return tuple(v) if isinstance(v, list) else (v,)
     out = []
+    people = sum(1 for n in (names or ()) if n and n in text)
     for it in items:
         d = it.get("from_day")
         if it.get("type") != "move" or d is None or it.get("to_day") not in (None, d):
             out.append(it)
             continue
         st = it.get("staff")
-        if any(x is not it and x.get("type") in ("set_cell", "day_off", "avoid_cell")
+        if any(x is not it and x.get("type") in ("set_cell", "day_off")
                and key(x.get("staff")) == key(st) and d in (x.get("days") or []) for x in items):
             continue
-        said = {t.symbol for t in facility.shift_types if t.name and t.name in text and it.get("shift") not in (t.symbol, t.name)
-                and not any(o.name != t.name and t.name in o.name and o.name in text for o in facility.shift_types)}
-        if len(said) == 1:
+        same_day = it.get("to_day") == d
+        said = _targets(text, facility, it.get("shift"))
+        if len(said) == 1 and people <= 1 and (same_day or re.search(CHANGE_WORDS, text)):
             out.append({"type": "set_cell", "staff": st, "days": [d], "shift": said.pop(), "strength": "wish",
                         "reason": it.get("reason")})
             continue
         one = st[0] if isinstance(st, list) and len(st) == 1 else st
         who = f"{one}さんの" if isinstance(one, str) and one else ""
-        out.append({"type": "unclear", "question": f"{who}{d}日を、どの勤務にしますか。表もルールも変えていません"})
+        if same_day:
+            q = f"{who}{d}日を、どの勤務にしますか。表もルールも変えていません"
+        else:
+            sym = it.get("shift")
+            sname = next((t.name for t in facility.shift_types if sym in (t.symbol, t.name)), "勤務")
+            q = f"{who}{d}日の{sname}を、何日に移しますか。表もルールも変えていません"
+        out.append({"type": "unclear", "question": q})
     return out
 
 
@@ -282,7 +313,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     """leave_caps は人ごとの有給の上限（帳面の回数の決まりから。日数のない有給の頼みに使う。13章）。
     rules はこの月の帳面のルール（人数の頼みを、今の同じ勤務の人数のルールと同じ数え方にそろえるのに使う）。"""
     names = {s.name for s in staff}
-    items = _tidy_leave(_weekday_off(_same_day_move(_tidy(items, month), text, facility), text), text)
+    items = _tidy_leave(_weekday_off(_same_day_move(_tidy(items, month), text, facility, names), text), text)
     real = [it for it in items if it.get("type") != "none"]
     if not real:
         raise Clarify("表を変える頼みが見つかりませんでした。もう一度言ってください")
@@ -369,7 +400,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 when = list(range(1, ud + 1))
                 p.until = f"{month.year:04d}-{month.month:02d}-{ud:02d}"
                 label = f"{month.month}月1〜{ud}日の累計"
-            if hi == 0 and lo is None and who and len(who) == 1 and month.table and re.search(KEEP_NOW, text):
+            if hi == 0 and lo is None and who and len(who) == 1 and month.table and re.search(KEEP_NOW, text) \
+                    and not re.search(REMOVE_WORDS, text):
                 # 「今月はもう夜勤、追加しないでね。今入ってる分はそのままで」を、上限0回と読むことがある（本物の Haiku で
                 # 3回に2回、夜勤を全部外して19マス動いた。2026-11-05、別の系統の AI が書いた言い方）。「追加しない」
                 # 「増やさない」「そのまま」と言っている時は、今入っている回数を上限にする（今の分は消さず、増やさない）

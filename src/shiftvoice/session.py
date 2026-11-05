@@ -15,11 +15,11 @@ import datetime as dt
 from dataclasses import dataclass, field
 
 from .build import build_original, clip_to_month, month_rules
-from .intake import Clarify, Proposal, to_proposal
+from .intake import WHO_UNKNOWN, Clarify, Proposal, to_proposal
 from .ledger import Ledger
 from .model import Rule
 from .names import Masker
-from .period import read_answer, resolve_relative_days
+from .period import read_answer, relative_days
 from .reader import ReadError
 from .giveback import accepted_counts
 from .model import Acceptance
@@ -233,13 +233,30 @@ class Session:
                        f"{wrong}さんは名簿にいません。名簿から選んでください")
             return Reply("ask", u["id"], msg, extra={"ask_name": {"wrong": wrong, "candidates": cands,
                                                                   "roster": [x.name for x in staff]}})
-        # 「明日」「来週の水曜」などは、表の月の日付に置き換えてから送る（Claude には今日の日付を渡していないため）
-        masked = resolve_relative_days(masked, self.now().date(), self.year, self.month)
+        # 「明日」「来週の水曜」などは、表の月の日付に置き換えてから送る（Claude には今日の日付を渡していないため）。
+        # 今日は一言を言った日（翌日に［送り直す］を押しても「明日」がずれない）。表の月の外なら送らずに聞く
+        try:
+            said = dt.datetime.fromisoformat(u["at"]).date() if u.get("at") else self.now().date()
+        except ValueError:
+            said = self.now().date()
+        masked, outside = relative_days(masked, said, self.year, self.month)
+        if outside:
+            word, d = outside[0]
+            self._sent[u["id"]] = None
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("ask", u["id"], f"「{word}」は{d.month}月{d.day}日で、いま開いている{self.month}月の表の外です。"
+                                         f"{d.month}月の表で言ってください。表もルールも変えていません")
         sent = masked if getattr(self.reader, "calls_claude", True) else None
         self._sent[u["id"]] = sent
         self.store.update_pending(self.year, self.month, u["id"], sent_text=sent)
         try:
-            items = masker.unmask(self.reader.read(masked))
+            raw = self.reader.read(masked)
+            if not re.search(r"職員\d{2}", masked) and any(
+                    isinstance(it, dict) and it.get("staff") not in (None, [], "") for it in raw):
+                # 名前を1つも言っていない一言に、Claude が人を当てて返すことがある（「私、13日の日勤、有給に」を名簿の
+                # 最初の人と読み、6マス動いた。2026-11-05、本物の Haiku で3回に1回）。当て推量なので、誰の頼みかを聞く
+                raw = [{"type": "unclear", "question": WHO_UNKNOWN}]
+            items = masker.unmask(raw)
             if self.builder and any(it.get("type") == "custom" for it in items):
                 # 型に収まらない一言（表に無い当番など）は組み立て役へ（8章）
                 b = masker.unmask(self.builder.build(masked))
