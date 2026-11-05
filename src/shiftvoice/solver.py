@@ -5,6 +5,7 @@
 - 決まりは rules.expand の場面ごとにスイッチを持つ。fixed は常に守る
 - 段1は 本人の希望（wish）と運用の都合（operational）も外せなくして解く。相談できる決まりは重みつきで外せる
 - 再現性のため、種・並列数・計算の量（max_deterministic_time）は施設の設定から取る。秒数では区切らない
+- 職員が30人を超える施設は、設定の interleave_workers の数の作業者を決まった順で回す（同じ入力なら同じ表）
 """
 from __future__ import annotations
 
@@ -220,7 +221,16 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     # 月ごとの種（撮影用に固定した一組。施設の設定 seed_by_month）。無ければ施設の種
     solver.parameters.random_seed = st.get("seed_by_month", {}).get(f"{month.year:04d}-{month.month:02d}",
                                                                     st.get("seed", 11))
-    solver.parameters.num_workers = st.get("workers", 1)
+    iw = st.get("interleave_workers")
+    if iw:
+        # 職員が30人を超える施設（取り込みの時に設定へ書く）は、決まった順で複数の作業者を回す。区切りの大きさも
+        # 決めるので、同じ入力なら同じ表になる。近くを探し直す作業者が入り、1人で探すより短い並びとルールの外れが
+        # 減る（2026-11-05 に測った。docs/measurements.md）。計算の量は作業者の合計で数える
+        solver.parameters.num_workers = iw
+        solver.parameters.interleave_search = True
+        solver.parameters.interleave_batch_size = iw
+    else:
+        solver.parameters.num_workers = st.get("workers", 1)
     solver.parameters.max_deterministic_time = (max_dtime if max_dtime is not None
                                                 else st.get("max_deterministic_time", 30.0))
     t0 = time.perf_counter()
