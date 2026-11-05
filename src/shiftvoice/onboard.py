@@ -27,6 +27,7 @@ from .build import C3_MESSAGE, TIMEOUT_MESSAGE, build_original
 from .ledger import Ledger, today
 from .model import Month, ShiftType
 from .nextmonth import TAIL, next_ym
+from .rules import fit_count
 from .store import SEED, Store, atomic_write_json, read_json
 
 # 別名 → 記号
@@ -657,17 +658,21 @@ def _answer_type(sym: str, a, regular: bool) -> dict | None:
 
 
 def _own_shifts(table: dict[str, list[str]], unknown: list[str], answers: dict) -> set[str]:
-    """新しい勤務と答えた記号のうち、誰かが2回以上入り、その人の勤務の日（明け・休みを除く）の半分以上を占める物。
-    パートの人の短い勤務は、月の半分より少ない日にしか出なくても、その人のふだんの勤務なので翌月も置く
-    （国の記載例のグループホーム。週2回の短い勤務が頼まれた時だけになって翌月に1回も入らず、その人たちは
-    早番・日勤・遅番に入っていた。2026-11-05）。出張・会議など、人の勤務のうちたまにしか無い物は当たらない。
-    1回だけの物も当てない（長く休んだ人が1回だけ出た会議を、翌月のふだんの勤務にしないため）。"""
+    """新しい勤務と答えた記号のうち、その人が2回以上入った物を合わせて、その人の勤務の日（明け・休みを除く）の半分以上を
+    占める人の、それらの記号。パートの人の短い勤務は、月の半分より少ない日にしか出なくても、その人のふだんの勤務なので
+    翌月も置く（国の記載例のグループホーム。週2回の短い勤務が頼まれた時だけになって翌月に1回も入らず、その人たちは
+    早番・日勤・遅番に入っていた。2026-11-05）。記号ごとではなく合わせて見るのは、曜日で朝・昼・夕の短い勤務を使い分ける
+    人は、どの記号も半分に届かず、全部が頼まれた時だけになっていたため（Codex の指摘 2026-11-05）。出張・会議など、
+    人の勤務のうちたまにしか無い物は当たらない。1回だけの物も当てない（長く休んだ人が1回だけ出た会議を、翌月のふだんの
+    勤務にしないため）。"""
     new = {s for s in unknown if isinstance(answers.get(s), dict) and answers[s].get("kind") == "work"}
     work = new | {s["symbol"] for s in _template() if s["kind"] == "work"}
     out: set[str] = set()
     for row in table.values():
         days = [c for c in row if c in work]
-        out |= {s for s, k in Counter(c for c in days if c in new).items() if k >= 2 and k * 2 >= len(days)}
+        mine = {s: k for s, k in Counter(c for c in days if c in new).items() if k >= 2}
+        if mine and sum(mine.values()) * 2 >= len(days):
+            out |= set(mine)
     return out
 
 
@@ -728,8 +733,8 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
         return sum(1 for d in range(n) if any(row[d] == sym for row in table.values()))
 
     # 知らない記号の答えから勤務の種類を作る（明けの種類の記号は、夜勤の翌日の見方に先に要る）
-    # 新しい勤務は、貼った月の半分以上の日に出たか、誰かが2回以上入ってその人の勤務の日の半分以上を占めれば、
-    # ふだんの勤務にする
+    # 新しい勤務は、貼った月の半分以上の日に出たか、その人が2回以上入った新しい勤務を合わせてその人の勤務の日の半分以上を
+    # 占めれば（_own_shifts）、ふだんの勤務にする
     unknown = [s for s in pasted.unknown_symbols if s not in same]
     own = _own_shifts(table, unknown, answers)
     answered: dict[str, dict] = {}
@@ -858,16 +863,21 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     if night_syms and did:
         # 翌月の日数が多い時は、上限を日数に合わせて四捨五入で広げる（28日の2月に全員7回なら、31日の3月は7〜8回）。
         # そのままだと、毎晩の人数と合わせきれずに運用の都合を外す段へ下がり、1人に夜勤が寄っていた（Codex の指摘
-        # 2026-11-05）。切り上げにすると30日→31日でも上限が1回増え、見本の施設の12月が変わったので四捨五入にした
+        # 2026-11-05）。切り上げにすると30日→31日でも上限が1回増え、見本の施設の12月が変わったので四捨五入にした。
+        # 四捨五入だけでは、夜勤に入れる人の上限の合計が晩の数に届かない月（30日の月に6人が5回ずつ→31日の月）と、
+        # 下限の合計が晩の数を超える月（31日の月に5〜6回→28日の2月）が残った。ルールは翌月より先の月にも使うので、
+        # 貼った月の回数の合計と日数（seen）を持たせ、月ごとに入れる人の合計で届くように広げる（rules.fit_count）
         ny_, nm_ = next_ym(year, month)
         nd = calendar.monthrange(ny_, nm_)[1]
         lo, hi = min(did), max(did)
+        seen = {"total": sum(did), "days": n}
         note = f"{month}月に夜勤をした人は{lo}〜{hi}回"
-        if nd > n and int(hi * nd / n + 0.5) > hi:
-            hi = int(hi * nd / n + 0.5)
-            note += f"（{n}日の月）。{nm_}月は{nd}日なので上限を{hi}回にした"
+        lo2, hi2 = fit_count(lo, int(hi * nd / n + 0.5) if nd > n else hi, seen, len(did), nd)
+        if (lo2, hi2) != (lo, hi):
+            moved = ([f"下限を{lo2}回"] if lo2 != lo else []) + ([f"上限を{hi2}回"] if hi2 != hi else [])
+            note += f"（{n}日の月）。{nm_}月は{nd}日なので{'・'.join(moved)}にした"
         add("夜勤の回数（夜勤に入れる人）", "count", "operational",
-            {"shifts": list(night_syms), "min": lo, "max": hi, "capable_only": True}, note)
+            {"shifts": list(night_syms), "min": lo2, "max": hi2, "capable_only": True, "seen": seen}, note)
     # 記号の最初の1文字が同じ2つ（早1と早2など）は、合わせた人数が毎日同じなら、その合計も守る
     groups: dict[str, list[str]] = {}
     for sym in ordinary:

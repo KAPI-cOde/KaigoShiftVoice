@@ -220,6 +220,23 @@ def _days(rule: Rule, month: Month) -> list[int]:
     return list(rule.when) if rule.when else list(range(1, month.days + 1))
 
 
+def fit_count(lo: int | None, hi: int | None, seen: dict, people: int, days: int) -> tuple[int | None, int | None]:
+    """取り込みで見つけた回数の幅（夜勤の回数）を、数える日数と入れる人の数に合わせて広げる。
+    seen は貼った月の {"total": 入れる人の回数の合計, "days": 日数}。その日数の回数（total × days ÷ seen の日数）に、
+    入れる人の上限の合計が届かない時は上限を、下限の合計が超える時は下限を、届く所まで動かす。狭めはしない。
+    （回数は月の日数で変わらないので、30日の月に6人が5回ずつだと31日の月は上限の合計30回 < 31晩、31日の月に5〜6回だと
+    28日の2月は下限の合計30回 > 28晩になり、運用の都合を外す段へ下がっていた。Codex の指摘 2026-11-05）"""
+    if people <= 0 or not seen.get("days"):
+        return lo, hi
+    total = seen["total"] * days
+    fewest, most = total // seen["days"], -(-total // seen["days"])   # その日数の回数（割り切れない時は広い側へ）
+    if lo is not None:
+        lo = min(lo, fewest // people)
+    if hi is not None:
+        hi = max(hi, -(-most // people))
+    return lo, hi
+
+
 def _syms(spec, facility: Facility) -> tuple[str, ...]:
     if spec == "work":
         return tuple(facility.workday_symbols())
@@ -259,11 +276,14 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
             people = [s for s in people if any(x in s.can for x in syms)]
         rest = {st.symbol for st in facility.shift_types if st.kind == "rest"}
         adjust = month.rest_adjust if set(syms) <= rest else {}
+        lo0, hi0 = p.get("min"), p.get("max")
+        if p.get("seen"):   # 取り込みで見つけた回数の幅は、月ごとに日数と入れる人の数に合わせて広げる（言った側だけ）
+            lo0, hi0 = fit_count(lo0, hi0, p["seen"], len(people), len(_days(rule, month)))
         for s in people:
             terms = [Term(s.name, d, syms) for d in _days(rule, month)]
             delta = adjust.get(s.name, 0)  # 公休の足し引き（配った後の直しの例外。12章）
-            lo = p.get("min") + delta if p.get("min") is not None else None
-            hi = p.get("max") + delta if p.get("max") is not None else None
+            lo = lo0 + delta if lo0 is not None else None
+            hi = hi0 + delta if hi0 is not None else None
             if s.name in rule.meta.get("except_min", ()):   # 名指しのルールが下限を言った人（with_overrides）
                 lo = None
             if s.name in rule.meta.get("except_max", ()):

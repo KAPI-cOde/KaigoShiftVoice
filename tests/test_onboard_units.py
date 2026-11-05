@@ -1,7 +1,11 @@
 """取り込みで、ユニットごとには0人の日がある勤務（夜勤を2ユニットで順に回す表）は、施設全体の人数も守る試験。
 直す前は、ユニットごとの夜勤に下限が付かず、作った翌月に施設全体で夜勤0人の夜ができていた。名前はすべて作り話。"""
+import calendar
+
 import pytest
 
+from shiftvoice.build import build_original
+from shiftvoice.nextmonth import copy_next_month, next_ym
 from shiftvoice.onboard import create_facility, infer, parse_paste
 from shiftvoice.store import Store
 
@@ -78,3 +82,65 @@ def test_翌月の日数が多い時は夜勤の回数の幅も広げて毎晩�
     table = Store(tmp_path / "f").month(2027, 3).table
     assert min(night_totals(table)) >= 1
     assert max(sum(1 for x in table[nm] if x == "夜") for nm in east_n + west_n) <= 8
+
+
+NIGHT = ["青木", "石田", "上野", "江口", "小川", "加藤", "岡田"]
+DAYTIME = ["落合", "菊池"]
+
+
+def rotation_paste(days: int, k: int) -> str:
+    """夜勤の k 人が順に毎晩1人ずつ入る表（夜勤→明け→公休、ほかの日は日勤と公休）。日勤だけの2人は土日が公休。"""
+    cycle = ["夜", "明", "公"] + ["日"] * (k - 4) + ["公"]
+    grid = {nm: [cycle[(d - i) % k] for d in range(days)] for i, nm in enumerate(NIGHT[:k])}
+    for nm in DAYTIME:
+        grid[nm] = ["公" if d % 7 in (5, 6) else "日" for d in range(days)]
+    lines = ["氏名\t" + "\t".join(str(d) for d in range(1, days + 1))]
+    lines += [nm + "\t" + "\t".join(grid[nm]) for nm in NIGHT[:k] + DAYTIME]
+    return "\n".join(lines)
+
+
+@pytest.mark.parametrize("year, month, k, nights, want", [
+    (2026, 11, 6, [5] * 6, (5, 6)),             # 30日の11月に6人が5回ずつ。四捨五入（5×31/30）では上限5回で、6人で30回 < 12月の31晩
+    (2027, 2, 7, [4] * 7, (4, 5)),              # 28日の2月に7人が4回ずつ。四捨五入（4×31/28）では上限4回で、7人で28回 < 3月の31晩
+    (2027, 1, 6, [6, 5, 5, 5, 5, 5], (4, 6)),   # 31日の1月に6人が5〜6回。下限5回のままだと6人で30回 > 2月の28晩
+])
+def test_翌月の夜勤の回数の幅は夜勤に入れる人の合計で毎晩の人数に合う(tmp_path, year, month, k, nights, want):
+    """毎晩1人の夜勤を、夜勤に入れる人で回す表。翌月の日数が違うと、回数の幅の合計が翌月の晩の数に届かない（または超える）ことがあり、
+    運用の都合を外す段に下がっていた（Codex の指摘 2026-11-05。上限は 4×7、下限は同じ形の逆向き）。"""
+    days = calendar.monthrange(year, month)[1]
+    p = parse_paste(rotation_paste(days, k))
+    assert [sum(1 for x in p.table[nm] if x == "夜") for nm in NIGHT[:k]] == nights
+    pr = infer(p, year, month)
+    rule = [r for r in pr.rules if r["name"] == "夜勤の回数（夜勤に入れる人）"][0]
+    assert (rule["params"]["min"], rule["params"]["max"]) == want
+    ny, nm = next_ym(year, month)
+    c = create_facility(pr, tmp_path / "f", name="試験", next_year=ny, next_month=nm)
+    assert c.next_table_made and c.stage_note is None, c.stage_note          # 運用の都合を外す段に下がらない
+    table = Store(tmp_path / "f").month(ny, nm).table
+    assert min(night_totals(table)) >= 1
+    assert all(want[0] <= sum(1 for x in table[n] if x == "夜") <= want[1] for n in NIGHT[:k])
+
+
+def build_after(store: Store, year: int, month: int):
+    """year・month の次の月の表を作って置く（取り込んだ施設で月を進めた時と同じ帳面のルールで作る）。"""
+    copy_next_month(store, year, month)
+    ny, nm = next_ym(year, month)
+    r = build_original(store, ny, nm, with_premise=False)
+    m = store.month(ny, nm)
+    m.table = r.result.table
+    store.save_month(m)
+    return r
+
+
+def test_取り込んだ後の28日の2月も夜勤の回数の下限が毎晩の人数と合う(tmp_path):
+    """30日の11月に6人が5回ずつ（毎晩1人）を取り込む。取り込みのルールは翌月より先の月にもそのまま使うので、28日の2月に
+    下限5回のままだと6人で30回になり28晩を超え、運用の都合を外す段に下がっていた。"""
+    c = create_facility(infer(parse_paste(rotation_paste(30, 6)), 2026, 11), tmp_path / "f", name="試験",
+                        next_year=2026, next_month=12)
+    assert c.next_table_made
+    store = Store(tmp_path / "f")
+    assert build_after(store, 2026, 12).ok                                  # 1月
+    feb = build_after(store, 2027, 1)
+    assert feb.ok and feb.note is None, feb.note                            # 2月も運用の都合を外す段に下がらない
+    table = store.month(2027, 2).table
+    assert min(night_totals(table)) >= 1 and sum(night_totals(table)) == 28

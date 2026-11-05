@@ -358,6 +358,39 @@ def test_短い勤務だけで働いた人は翌月もその勤務で_短い勤�
     assert not [t for t in gone if "（朝）" in t or "（夕）" in t], gone
 
 
+@pytest.mark.parametrize("shifts", [
+    {0: "朝", 2: "昼", 4: "夕"},   # 月は朝、水は昼、金は夕方。4回ずつで、どれも勤務の日12日の半分に届かない
+    {0: "朝", 2: "朝", 4: "夕"},   # 朝8回・夕方4回。夕方だけ半分に届かない
+])
+def test_短い勤務を何種類も使い分けるパートの人も翌月その勤務で(tmp_path, shifts):
+    # 記号ごとに「その人の勤務の日の半分以上」で見ると、曜日で短い勤務を使い分ける人は、どれも半分に届かずに頼まれた時だけになり、
+    # 翌月は早番・日勤・遅番に入っていた（Codex の指摘 2026-11-05 3×8）。会議に2回出た常勤の人の会議は、頼まれた時だけのまま
+    week = ["早", "早", "日", "遅", "遅", "公", "公"] * 5
+    rows = {nm: week[k:k + 28] for nm, k in (("青木", 0), ("石田", 2), ("上野", 4), ("江口", 6))}
+    rows["江口"][9] = rows["江口"][16] = "会"   # 勤務20日のうち2日が会議
+    rows["落合"] = [shifts.get(d % 7, "公") for d in range(28)]   # 2027年2月1日は月曜
+    text = "氏名\t" + "\t".join(str(d) for d in range(1, 29)) + "".join(
+        f"\n{nm}\t" + "\t".join(r) for nm, r in rows.items())
+    mine = set(shifts.values())
+    ans = {"朝": {"name": "朝の勤務", "kind": "work"}, "昼": {"name": "昼の勤務", "kind": "work"},
+           "夕": {"name": "夕方の勤務", "kind": "work"}, "会": {"name": "会議", "kind": "work"}}
+    pr = infer(parse_paste(text), 2027, 2, ans)
+    st = {s["symbol"]: s for s in pr.shift_types}
+    assert pr.problems == []
+    for sym in mine:
+        assert "on_request_only" not in st[sym], sym
+    assert st["会"]["on_request_only"] is True
+    can = {s["name"]: set(s["can"]) for s in pr.staff}
+    assert can["落合"] == mine and can["江口"] == {"早", "日", "遅"}
+    times = {"朝": {"start": "07:00", "hours": 2.5}, "昼": {"start": "10:00", "hours": 6},
+             "夕": {"start": "16:00", "hours": 4}}
+    c = create_facility(pr, tmp_path / "p", name="試験", next_year=2027, next_month=3, answers=ans,
+                        times={s: times[s] for s in mine})
+    nxt = Store(tmp_path / "p").month(2027, 3).table
+    assert c.next_table_made
+    assert set(nxt["落合"]) <= mine | {"公"} and set(nxt["落合"]) & mine
+
+
 def test_貼り付け6_明けは明(tmp_path):
     p = parse_paste(paste(6))
     assert p.aliases.get("明け") == "明" and p.table == parse_paste(SAMPLE.read_text(encoding="utf-8")).table
