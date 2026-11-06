@@ -947,7 +947,7 @@ def test_途中入職の人は公休の多さを知らせる_空欄の知らせ�
     assert len(pr.rest_notes) == 1
     note = pr.rest_notes[0]
     assert note.startswith(f"木下さん 公休{pr.long_rest['木下']}日（ほかの人は{pr.rest_mode}日）。月の途中から入った人や長く休んだ人なら")
-    assert f"（例「木下さん、公休は{pr.rest_mode}日」）" in note
+    assert f"（例「木下さん、公休は月{pr.rest_mode}日」）" in note
     assert p.blank_by["木下"] >= 14
     assert infer(parse_paste(paste(0 + 11)), 2026, 11).rest_notes == []     # ふつうの表では出ない
 
