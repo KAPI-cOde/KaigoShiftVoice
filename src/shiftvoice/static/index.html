@@ -1262,7 +1262,6 @@ function renderHint() {
 // ---- 見本の施設の11月の表の上に出す、問題の案内（介護員でない人に、何が問題で、なぜ問題で、何を話せばよいかを先に言う）
 var GUIDE_KEY = "sv_guide_closed";
 function guideClosed() { try { return localStorage.getItem(GUIDE_KEY) === "1"; } catch (e) { return false; } }
-function hhmm(t) { var h = Math.floor(t / 60), mi = t % 60; return h + "時" + (mi ? mi + "分" : ""); }
 function renderGuide() {
   var box = document.getElementById("guide");
   box.textContent = "";
@@ -1270,16 +1269,7 @@ function renderGuide() {
   if (!g || !g.problems.length || guideClosed()) { box.style.display = "none"; guideOn = false; return; }
   box.style.display = "block";
   var p = g.problems[0];
-  var late = (S.symbols || []).filter(function (x) { return x.name === "遅番"; })[0];
-  var early = (S.symbols || []).filter(function (x) { return x.name === "早番"; })[0];
-  var why = "";
-  if (late && early && late.start && early.start) {
-    var a = late.start.split(":"), b = early.start.split(":");
-    var end = (parseInt(a[0], 10) * 60 + parseInt(a[1], 10) + Number(late.hours) * 60) % 1440;
-    var st = parseInt(b[0], 10) * 60 + parseInt(b[1], 10);
-    var gap = (1440 - end + st) / 60;
-    why = hhmm(end) + "に終わり翌朝" + hhmm(st) + "に始まるので、家にいられるのは" + (Math.round(gap * 10) / 10) + "時間です。";
-  }
+  var why = p.why || "";   // 遅番の終わりと早番の始まりの時刻、間の時間を言う文（guide.py の why で組む）
   var r1 = el("div", "g1");
   var t1 = el("span", "gt");
   if (p.now > 0) {

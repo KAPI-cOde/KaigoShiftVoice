@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .addshift import clock
 from .interval import short_pairs
 from .standby import SHORT_GAP_HOURS
 
@@ -37,6 +38,22 @@ def late_early(facility, table: dict[str, list[str]], prev_tail: dict[str, list[
                 d1, d2 = i + 1 - off, i + 2 - off   # 月の中の日（前の月の末日は 0）
                 out.append([[name, d] for d in (d1, d2) if d >= 1])
     return out
+
+
+def span(minutes: int) -> str:
+    """分を「8時間半」「10時間45分」「11時間」に（時刻の「8時半」と同じ言い方）。"""
+    h, m = divmod(int(minutes), 60)
+    return f"{h}時間" + ("" if not m else "半" if m == 30 else f"{m}分")
+
+
+def why(facility, late: str = "遅", early: str = "早") -> str:
+    """「22時15分に終わり翌朝6時45分に始まるので、家にいられるのは8時間半です。」時刻の無い時は空。"""
+    sl, se = facility.shift(late), facility.shift(early)
+    if not (sl.start and sl.hours and se.start):
+        return ""
+    end = (int(sl.start[:2]) * 60 + int(sl.start[3:]) + round(sl.hours * 60)) % 1440
+    st = int(se.start[:2]) * 60 + int(se.start[3:])
+    return f"{clock(end)}に終わり翌朝{clock(st)}に始まるので、家にいられるのは{span(1440 - end + st)}です。"
 
 
 def _seed_month() -> dict:
@@ -67,4 +84,5 @@ def guide(facility, month) -> dict | None:
         "now": len(now),
         "cells": [c for pair in now for c in pair],
         "say": "遅番の次の日に早番はきついから、やめてあげて",
+        "why": why(facility, late, early),
     }]}
