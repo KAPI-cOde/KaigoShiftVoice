@@ -65,20 +65,27 @@ def broken_text(broken: list[dict], names: set[str], limit: int = 6) -> str:
 
 
 def impossible_wishes(facility: Facility, rules: list[Rule], month: Month) -> tuple[list[Rule], list[str]]:
-    """前の月の末の夜勤の明けと重なる1日の希望休は、どう組んでも叶わない。残すと表全体が作れないと分かり、段4まで下がって
-    関係のない人の希望休まで外れた（2026-11-06 通しの試し。16人のうち1人の1日で10件外れた）。その日だけ頼みから外す。"""
+    """前の月の末の夜勤の明けと重なる1日の希望休と、動かせないマスと重なる希望休は、どう組んでも叶わない。残すと表全体が
+    作れないと分かって段を下げ、関係のない人の希望休まで外れた（2026-11-06 通しの試し。1人の1日で10件外れた）。その日だけ外す。"""
     out, notes = [], []
+    ake = {t.symbol for t in facility.shift_types if t.kind == "ake"}
     for r in rules:
-        who = (r.who or [None])[0]
-        tail = month.prev_tail.get(who) if who else None
-        night = bool(tail) and tail[-1] in facility.symbols and facility.shift(tail[-1]).next_is_ake
-        if r.kind == "cell" and r.flex == "wish" and r.when and 1 in r.when and night and len(r.who) == 1 \
-                and not set(r.params.get("in") or []) & {t.symbol for t in facility.shift_types if t.kind == "ake"}:
-            notes.append(f"{who}さんの1日は前の月の夜勤の明けなので、希望休を入れられません")
-            if len(r.when) > 1:
-                out.append(replace(r, when=[d for d in r.when if d != 1]))
+        if not (r.kind == "cell" and r.flex == "wish" and r.when and r.who and len(r.who) == 1):
+            out.append(r)
             continue
-        out.append(r)
+        who, want = r.who[0], set(r.params.get("in") or [])
+        tail = month.prev_tail.get(who)
+        bad: set[int] = set()
+        if 1 in r.when and tail and tail[-1] in facility.symbols and facility.shift(tail[-1]).next_is_ake and not want & ake:
+            bad.add(1)
+            notes.append(f"{who}さんの1日は前の月の夜勤の明けなので、希望休を入れられません")
+        for o in rules:   # 後から動かせない形で頼んだマス（希望休の日の「10日の〇〇さん、日8に」）。頼んだ方を残す
+            if o.kind == "cell" and o.flex == "fixed" and o.who == [who] and o.params.get("in") and not want & set(o.params["in"]):
+                for d in set(o.when or []) & set(r.when) - bad:
+                    bad.add(d)
+                    notes.append(f"{who}さんの{d}日は「{o.name}」を守るので、希望休を外しました")
+        if set(r.when) - bad:
+            out.append(replace(r, when=[d for d in r.when if d not in bad]) if bad else r)
     return out, notes
 
 

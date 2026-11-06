@@ -100,3 +100,21 @@ def test_one_cell_word_stays_small_in_a_month_that_dropped_a_rule(tmp_path):
     assert r.ok and r.table[who][11] == want
     assert r.window is not None, r.tries
     assert len(r.changes) <= 16, r.changes
+
+
+def test_fixed_cell_on_a_wish_day_only_drops_that_day(nov):
+    """希望休の日に勤務を頼んだ時は、その日の希望だけ外す。同じ人のほかの日とほかの人の希望は守る"""
+    from shiftvoice.build import solve_staged
+    from shiftvoice.model import Rule
+    fac, staff, m, rules = nov
+    rs = [r for r in rules if not r.meta.get("premise")]
+    a, b = staff[0].name, staff[1].name
+    wish = dict(kind="cell", flex="wish", params={"in": ["公"]})
+    new = [Rule(id="w1", ver=1, name=f"{a}さん 8・10日 希望休", who=[a], when=[8, 10], **wish),
+           Rule(id="w2", ver=1, name=f"{b}さん 10日 希望休", who=[b], when=[10], **wish),
+           Rule(id="c1", ver=1, name=f"{a}さん 10日 早番", kind="cell", flex="fixed", params={"in": ["早"]}, who=[a], when=[10])]
+    r = solve_staged(fac, staff, rs + new, m)
+    assert r.ok and r.result.stage in (1, 3)
+    assert f"{a}さんの10日は" in r.note
+    t = r.result.table
+    assert t[a][9] == "早" and t[a][7] == "公" and t[b][9] == "公"
