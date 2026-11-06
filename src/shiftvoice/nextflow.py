@@ -14,6 +14,7 @@ from .giveback import _months_back, accepted_counts, build_pair
 from .giveback import settings as gb_settings
 from .intake import WHO_UNKNOWN, Clarify, to_proposal
 from .ledger import LedgerError
+from .addshift import hide_spoken, read_spoken
 from .names import Masker
 from .period import other_month, other_month_message, relative_days
 from .nextmonth import copy_next_month, next_ym
@@ -223,7 +224,7 @@ class NextFlow:
                 return {"error": f"名前が読み取れません（{unknown[0]}）。{masker.leftover[unknown[0]]}さんのように、名前に「さん」を付けて言い直してください。ルールは変えていません"}
             return {"error": f"名簿にない名前です（{'・'.join(unknown)}）。ルールは変えていません"}
         try:
-            items = masker.unmask(reader.read(masked))
+            items = masker.unmask(read_spoken(reader, *hide_spoken(masked, fac)))
             p = to_proposal(items, text, fac, staff, self.store.month(self.ny, self.nm))
         except LimitError as e:   # 公開版で送る前に止めた（public.py）
             return {"error": str(e)}
@@ -409,7 +410,7 @@ class NextFlow:
             return {**out, "wish_error": f"「{word}」は{d.month}月{d.day}日で、{self.nm}月の外です。{self.nm}月の何日かで言ってください。何も入れていません"}
         dec = self.store.month(self.ny, self.nm)
         try:
-            raw = reader.read(masked)
+            raw = read_spoken(reader, *hide_spoken(masked, fac))
             if not re.search(r"職員\d{2}", masked) and any(
                     isinstance(it, dict) and it.get("staff") not in (None, [], "") for it in raw):
                 return {**out, "wish_error": WHO_UNKNOWN.replace("表もルールも変えていません", "何も入れていません")}

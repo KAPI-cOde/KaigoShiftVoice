@@ -81,6 +81,17 @@ class Store:
     def facility(self) -> Facility:
         return Facility.from_dict(read_json(self.root / "facility.json"))
 
+    def add_shift_type(self, st: dict) -> None:
+        """勤務の種類を1つ足す。施設の設定のほかのキーは読んだまま書き戻す。"""
+        fac = read_json(self.root / "facility.json")
+        fac["shift_types"].append(st)
+        atomic_write_json(self.root / "facility.json", fac)
+
+    def remove_shift_type(self, symbol: str) -> None:
+        fac = read_json(self.root / "facility.json")
+        fac["shift_types"] = [s for s in fac["shift_types"] if s["symbol"] != symbol]
+        atomic_write_json(self.root / "facility.json", fac)
+
     def staff(self) -> list[Staff]:
         return [Staff.from_dict(s) for s in read_json(self.root / "staff.json")]
 
@@ -111,6 +122,10 @@ class Store:
 
     def save_month(self, m: Month) -> None:
         atomic_write_json(self._month_path(m.year, m.month), m.to_dict())
+
+    def months(self) -> list[Month]:
+        """置き場にある月の全部。"""
+        return [Month.from_dict(read_json(p)) for p in sorted((self.root / "months").glob("????-??.json"))]
 
     # 未反映の発言
     def _pending_path(self, year: int, month: int) -> Path:

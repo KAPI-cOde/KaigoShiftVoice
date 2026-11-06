@@ -15,6 +15,7 @@ import re
 import datetime as dt
 from dataclasses import dataclass, field
 
+from .addshift import add_shift_items, hide_spoken, read_spoken, show_spoken
 from .build import build_original, clip_to_month, month_rules
 from .daycount import day_counts as _day_counts
 from .intake import WHO_UNKNOWN, Clarify, Proposal, to_proposal
@@ -178,7 +179,7 @@ def support_items(masked: str, facility) -> list[dict] | None:
     people = set(re.findall(r"職員\d{2,3}", t))
     if len(people) != 1 or _SUPPORT_SKIP.search(t):
         return None
-    work = [st for st in facility.shift_types if st.kind == "work" and not st.on_request_only]
+    work = [st for st in facility.shift_types if st.kind == "work" and (not st.on_request_only or st.spoken)]
     by_word = {w: st.symbol for st in work for w in (st.name, st.symbol)}
     words = "|".join(re.escape(w) for w in sorted(by_word, key=len, reverse=True))
     m = re.search(rf"(ユニット\d+)の?({words})(?:に|へ|で|を|は|が|として|職員\d{{2,3}}|さん)*{_SUPPORT_VERB}", t)
@@ -190,6 +191,9 @@ def support_items(masked: str, facility) -> list[dict] | None:
         said = re.search("|".join(re.escape(st.name) for st in work), t)   # 記号の「日」は日付の字と見分けられない
         shift = by_word[said.group(0)] if said else None
     plain = re.sub(r"ユニット\d+|職員\d{2,3}", "／", t)
+    for st in work:
+        if st.spoken:   # 「日8」の8を日付に数えない
+            plain = plain.replace(st.name, "／")
     days: list[int] = []
     for a, b, one in re.findall(r"(\d{1,2})日?(?:から|〜|~)(\d{1,2})日|(\d{1,2})(?=日|と\d|[／は]?$)", plain):
         days += list(range(int(a), int(b) + 1)) if a else [int(one)]
@@ -265,6 +269,7 @@ class Session:
         self.who = who
         self.base_date = base_date  # 引き受けを数える基準日（デモ設定。None は今日）
         self._sent: dict[str, str | None] = {}  # 一言ごとに Claude へ送った文（伏せた後）
+        self._ask_times: str | None = None      # 足す勤務の時刻を聞き返している時、その名前（次の一言だけ、時刻を答えと読む）
 
     # 開く
     @property
@@ -343,6 +348,7 @@ class Session:
         return self._stamp(self._read(u))
 
     def _read(self, u: dict) -> Reply:
+        waiting, self._ask_times = self._ask_times, None
         fac, staff = self.store.facility(), self.store.staff()
         masker = Masker(staff, fac)
         masked, unknown = masker.mask(u["text"])
@@ -382,18 +388,20 @@ class Session:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], f"「{word}」は{d.month}月{d.day}日で、いま開いている{self.month}月の表の外です。"
                                          f"{d.month}月の表で言ってください。表もルールも変えていません")
-        local = only_shift_items(masked, fac) or support_items(masked, fac)
-        if local is not None:   # 手元で読めた（日勤だけ・ユニット間の応援 など）。Claude へは送らない
+        local = only_shift_items(masked, fac) or support_items(masked, fac) or add_shift_items(masked, fac, waiting)
+        if local is not None:   # 手元で読めた（日勤だけ・ユニット間の応援・勤務の種類を足す など）。Claude へは送らない
+            self._ask_times = local[0].get("ask_times")
             self._sent[u["id"]] = None
             items = masker.unmask(local)
             self.store.update_pending(self.year, self.month, u["id"], sent_text=None, items=items, status="read")
             return self._safe_propose({**u, "items": items})
+        masked, spoken = hide_spoken(masked, fac)   # 足した勤務の名前は「勤務A」にして送る
         sent = masked if getattr(self.reader, "calls_claude", True) else None
         self._sent[u["id"]] = sent
         self.store.update_pending(self.year, self.month, u["id"], sent_text=sent)
         read_done = False
         try:
-            raw = self.reader.read(masked)
+            raw = read_spoken(self.reader, masked, spoken)
             read_done = True
             if not re.search(r"職員\d{2}", masked) and any(
                     isinstance(it, dict) and it.get("staff") not in (None, [], "") for it in raw):
@@ -403,7 +411,7 @@ class Session:
             items = masker.unmask(raw)
             if self.builder and any(it.get("type") == "custom" for it in items):
                 # 型に収まらない一言（表に無い当番など）は組み立て役へ（8章）
-                b = masker.unmask(self.builder.build(masked))
+                b = masker.unmask(show_spoken(self.builder.build(masked), spoken))
                 items = ([{"type": "layer_def", "def": b["layer"]}] if "layer" in b
                          else [{"type": "unclear", "question": b.get("question")}])
         except ReadError as e:
@@ -471,6 +479,8 @@ class Session:
             return self._cancel(u, p)
         if p.kind == "cover":
             return self._cover_offer(u, p)
+        if p.kind == "add_shift":
+            return self._add_shift(u, p, m)
         if p.kind == "cells" and p.replace_from and not m.distributed:
             r = self._replace_offer(u, p, m)
             if r is not None:
@@ -493,6 +503,36 @@ class Session:
             self.store.update_pending(self.year, self.month, u["id"], status="ask_period")
             return Reply("ask_period", u["id"], ASK_PERIOD, summary=p.summary, extra={"kept": kept} if kept else {})
         return self._apply(u, p, scope, kept=kept)
+
+    def _add_shift(self, u: dict, p: Proposal, m) -> Reply:
+        """施設の勤務の種類を1つ足す（毎月残る。施設の形の変更なので毎月か今月だけかは聞かない）。表は変えない。
+        ［ひとつ戻す］で外せるよう、開いている月の履歴に積む。"""
+        st = p.shift_type
+        self.store.add_shift_type(st)                                       # 1 施設
+        m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev, "said": u["text"],
+                          "added_shift": st["symbol"]})
+        self.store.save_month(m)                                            # 2 月の履歴
+        self.store.resolve_pending(self.year, self.month, u["id"])          # 3 未反映の発言
+        msg = f"{p.summary}。頼まれた時だけ置き、今ある勤務の人数には数えません"
+        return Reply("applied", u["id"], msg, summary=msg)
+
+    def _shift_in_use(self, sym: str, restored: dict) -> str:
+        """足した勤務を外すと壊れる所。開いている月は戻した後の表で見る（ほかの月の表・ルール・職員の情報も見る）。無ければ空。"""
+        def holds(v) -> bool:
+            if isinstance(v, dict):
+                return any(holds(x) for x in v.values())
+            return any(holds(x) for x in v) if isinstance(v, list) else v == sym
+        for o in self.store.months():
+            d = o.to_dict()
+            d.pop("history")
+            if (o.year, o.month) == (self.year, self.month):
+                d["table"] = restored
+            if holds(d):
+                return f"{o.month}月の表"
+        r = next((r for r in self.store.ledger().rules_at().values() if holds(r.params)), None)
+        if r is not None:
+            return f"ルール「{r.name}」"
+        return "職員の情報" if any(holds(s.to_dict()) for s in self.store.staff()) else ""
 
     def _kept(self, p: Proposal, m) -> str:
         """読んだルールが、今の表でもう1か所も破れていなければ「今の表で、もう守られています（読んだ中身）」。
@@ -849,6 +889,10 @@ class Session:
         m = self.store.month(self.year, self.month)
         if not m.history:
             return Reply("ask", None, "戻せる一言がありません")
+        sym = m.history[-1].get("added_shift")
+        used = self._shift_in_use(sym, m.history[-1]["table"]) if sym else ""
+        if used:   # 別の月を開いて使った時など。種類を外すと、そこの記号が読めなくなる
+            return Reply("ask", None, f"{sym}は{used}で使っているので、足す前には戻せません。先にそちらを直してください")
         h = m.history.pop()
         led = self.store.ledger()
         for t in [t for t in led.txs if t.get("op_id") == h["op_id"] and t["op"] != "undo"]:
@@ -862,6 +906,8 @@ class Session:
         if "rest_adjust" in h:   # 配った後の直しは、公休の足し引き・応援・引き受けの記録もまとめて戻す（16章の11）
             m.rest_adjust, m.support = h["rest_adjust"], h["support"]
         self.store.save_month(m)
+        if sym:
+            self.store.remove_shift_type(sym)
         if h.get("acceptance_id"):
             self.store.save_acceptances([a for a in self.store.acceptances() if a.id != h["acceptance_id"]])
         if "staff_before" in h:   # 入れる勤務の変更（日勤だけ など）も戻す

@@ -424,3 +424,25 @@ def test_表を作る前の希望休は公開版でも入れられ_見張りを�
     assert code == 403
     code, res, _ = req(base, "/api/next/wish", "POST", {"text": "山川太郎は15日休み"}, cookie=cookie)
     assert code != 403 and calls() == 0     # 名前らしい語は送らない
+
+
+def test_公開版でも話して勤務を足せて_見張りを通り_ひとつ戻せて_ほかの人に出ない(make_server):
+    base, app, calls = make_server()
+    a, _ = new_user(base)
+    b, _ = new_user(base)
+    code, res, _ = req(base, "/api/say", "POST", {"text": "8時から17時の日8を足して"}, cookie=a)
+    assert code == 200 and res["reply"]["kind"] == "applied", res
+    assert calls() == 0                                  # 手元で読むので Claude を呼ばない
+    _, st, _ = req(base, "/api/state", cookie=a)
+    assert ["日8", "日8"] in st["shift_names"]
+    _, other, _ = req(base, "/api/state", cookie=b)
+    assert ["日8", "日8"] not in other["shift_names"]    # 足した人の置き場だけ
+    code, res, _ = req(base, "/api/say", "POST", {"text": "10日の小島さん、日8に"}, cookie=a)
+    assert code == 200 and res["reply"]["kind"] == "applied", res
+    assert calls() == 1                                  # 続きの一言は見張りを通って送る
+    assert res["state"]["table"]["小島"][9] == "日8"
+    for _ in range(2):
+        code, res, _ = req(base, "/api/undo", "POST", {}, cookie=a)
+        assert code == 200, res
+    _, st, _ = req(base, "/api/state", cookie=a)
+    assert ["日8", "日8"] not in st["shift_names"] and st["table"]["小島"][9] != "日8"

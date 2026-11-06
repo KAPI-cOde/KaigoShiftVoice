@@ -13,6 +13,7 @@ import unicodedata
 
 from dataclasses import dataclass, field
 
+from .addshift import said_times
 from .model import WEEKDAYS, Facility, Month, Staff
 from .period import read_period
 
@@ -35,6 +36,7 @@ class Proposal:
     replace_from: list[str] | None = None   # 言い直し（「AさんじゃなくてBさん」）で、前の頼みを外すかもしれない人
     covers: list[dict] = field(default_factory=list)   # 穴埋めの記録の候補 {staff, day（言っていなければ None）, how}
     support: dict[str, str] = field(default_factory=dict)   # ユニット間の応援 "名前/日" → その日に働くユニット
+    shift_type: dict | None = None     # 話して足す勤務の種類（facility.json の1件の形）
 
 
 class Clarify(Exception):
@@ -489,7 +491,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             raise Clarify("この形の頼みは、まだ扱えません。別の言い方で言ってください")
     kinds = {"cells" if it["type"] in DATE_TYPES else "staff" if it["type"] == "staff_info"
              else "layer" if it["type"] == "layer_def" else "cancel" if it["type"] == "cancel"
-             else "cover" if it["type"] == "cover" else "rule" for it in real}
+             else "cover" if it["type"] == "cover" else "add_shift" if it["type"] == "add_shift"
+             else "rule" for it in real}
     if len(kinds) > 1:
         raise Clarify("頼みが混ざっています。1つずつ言ってください")
     kind = kinds.pop()
@@ -499,7 +502,14 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         t = it["type"]
         reason = it.get("reason") or None
         p.reason = p.reason or reason
-        if t == "layer_def":
+        if t == "add_shift":
+            # 手元で読んだ頼み（addshift.py）。読み取りの返事はこの型にならない。頼まれた時だけ置き、全員が入れる
+            if it["name"] in facility.symbols or any(st.name == it["name"] for st in facility.shift_types):
+                raise Clarify(f"{it['name']}はもうある勤務です。足していません。表もルールも変えていません")
+            p.shift_type = {"symbol": it["name"], "name": it["name"], "kind": "work", "start": it["start"],
+                            "hours": it["hours"], "on_request_only": True, "spoken": True}
+            sums.append(f"{it['name']}（{said_times(p.shift_type)}）を足しました")
+        elif t == "layer_def":
             from .standby import DefError, explain, validate_def
             try:
                 d = validate_def(it.get("def"), facility)
@@ -523,7 +533,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             ds = _days(it.get("days"), month)
             sym = _sym(it.get("shift"), facility)
             sname = facility.shift(sym).name
-            on_req = facility.shift(sym).on_request_only
+            on_req = facility.shift(sym).on_request_only and not facility.shift(sym).spoken   # 足した勤務はふつうの勤務の頼みと同じ強さ
             if t == "set_cell":
                 p.rules.append({"name": f"{_who(who)} {'・'.join(map(str, ds))}日 {sname}", "kind": "cell",
                                 "flex": "fixed" if on_req else _cell_strength(it.get("strength"), text, t)
@@ -620,6 +630,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             lo, hi = _num(it.get("min")), _num(it.get("max"))
             if lo is None and hi is None:
                 raise Clarify("何人にするか教えてください")
+            if facility.shift(sym).spoken and lo and hi is None and "以上" not in text:
+                hi = lo   # 足した勤務は頼まれた分だけ置く。下限だけだと、表を作る時に日勤の代わりに多く置かれる
             if lo is not None and hi is not None and lo > hi:
                 raise Clarify("人数の下限が上限より大きくなっています。もう一度言ってください")
             raw = it.get("weekdays")

@@ -40,5 +40,7 @@
  "今日の夜、職員10さんが早く来てくれて助かった": "{\"items\":[{\"type\":\"cover\",\"staff\":[\"職員10\"],\"day\":null,\"how\":\"早出\",\"reason\":\"今日の夜に早く来てくれて助かった\"}]}",
  "昨日、職員16さんが1時間早く来て、早番の穴を埋めてくれた": "{\"items\":[{\"type\":\"cover\",\"staff\":\"職員16\",\"day\":null,\"how\":\"早出\",\"reason\":\"早番の穴を埋めた\"}]}",
  "8日、職員15さんが残業で日勤の穴を埋めてくれたよ": "{\"items\":[{\"type\":\"cover\",\"staff\":[\"職員15\"],\"day\":8,\"how\":\"残業\",\"reason\":null}]}",
- "職員02さんが残って、夜勤の穴を埋めてくれた": "{\"items\":[{\"type\":\"cover\",\"staff\":\"職員02\",\"day\":null,\"how\":\"残業\",\"reason\":\"夜勤の穴を埋めた\"}]}"
+ "職員02さんが残って、夜勤の穴を埋めてくれた": "{\"items\":[{\"type\":\"cover\",\"staff\":\"職員02\",\"day\":null,\"how\":\"残業\",\"reason\":\"夜勤の穴を埋めた\"}]}",
+ "10日の職員11さん、勤務Aに": "{\"items\": [{\"type\": \"set_cell\", \"staff\": \"職員11\", \"days\": [10], \"shift\": \"勤務A\", \"strength\": \"wish\", \"reason\": null}]}",
+ "平日は勤務Aを1人": "{\"items\": [{\"type\": \"coverage\", \"shift\": \"勤務A\", \"min\": 1, \"max\": null, \"weekdays\": [\"mon\", \"tue\", \"wed\", \"thu\", \"fri\"], \"holidays\": false, \"strength\": \"operational\", \"reason\": null}]}"
 }
