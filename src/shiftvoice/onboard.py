@@ -1365,6 +1365,7 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
         settings["paste_merged"] = dict(proposal.paste_merged)     # 1つにまとまる書き方（コピーの知らせで伝える）
     if proposal.paste_layout:
         settings["paste_layout"] = proposal.paste_layout           # 持ち出す時に、貼った表と同じ行と列へ出す
+    settings["pasted_month"] = [proposal.year, proposal.month]     # 希望休を入れて作り直す時に、貼った月へ戻る
     fac = {"id": _short_id(name), "name": name.strip(), "units": list(proposal.units),
            "shift_types": shift_types, "settings": settings}
     atomic_write_json(root / "facility.json", fac)

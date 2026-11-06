@@ -1423,7 +1423,11 @@ class Session:
         led = self.store.ledger()
         rules = led.rules_at(between=self._span())
         fac, staff = self.store.facility(), self.store.staff()
+        from .nextmonth import next_ym
+        pasted = fac.settings.get("pasted_month")
         return {
+            # 貼った月の次の月を開いていて、まだ配っていない時だけ、希望休を入れて作り直せる
+            "redo_wishes": bool(pasted and next_ym(*pasted) == (self.year, self.month) and not m.distributed),
             "year": self.year, "month": self.month, "days": m.days, "holidays": m.holidays,
             "weekdays": [m.weekday(d) for d in range(1, m.days + 1)],
             "staff": [{"name": s.name, "unit": s.unit, "changes": s.changes} for s in staff],

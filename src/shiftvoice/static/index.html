@@ -258,7 +258,7 @@
 </head>
 <body>
 <div id="keybar">Claude の鍵が入っていないので、一言で直すことはできません（表を見ること、自分の施設の表を貼って来月の表を作ることは、鍵なしでできます）。鍵を入れる時は、起動した窓を閉じて（Ctrl+C）もう一度起動すると聞かれます。鍵の作り方は README の「鍵の入れ方」にあります</div>
-<div id="topbar"><span id="distwrap"></span><select id="facsel" style="display:none" title="施設を切り替える"></select><button type="button" id="tosetup">自分の施設で始める</button><button type="button" id="to12">12月へ</button></div>
+<div id="topbar"><span id="distwrap"></span><select id="facsel" style="display:none" title="施設を切り替える"></select><button type="button" id="tosetup">自分の施設で始める</button><button type="button" id="redowish" style="display:none"></button><button type="button" id="to12">12月へ</button></div>
 <main id="v11">
   <section class="left">
     <div id="banner"></div>
@@ -1478,6 +1478,13 @@ function openReview() {
   get12().then(function (r) { R = r; detailOpen = false; extOpen = false; chOpen = false; rvErr = ""; renderReview(); });
 }
 document.getElementById("to12").addEventListener("click", openReview);
+document.getElementById("redowish").addEventListener("click", function () {
+  post("setup/wishes", {}).then(function (res) {
+    if (res.error) { document.getElementById("reply").textContent = res.error; return; }
+    resetForFacility(res.state, "");
+    openReview();
+  });
+});
 document.getElementById("to11").addEventListener("click", function () {
   if (waitTimer) return;
   show12(false);
@@ -1883,6 +1890,9 @@ function renderResult() {
 // ---- トップバー（月の名前・施設の切り替え）
 function renderTopbar() {
   document.getElementById("to12").textContent = (S.month % 12 + 1) + "月へ";
+  var rw = document.getElementById("redowish");
+  rw.textContent = S.month + "月の希望休を入れて作り直す";
+  rw.style.display = S.redo_wishes ? "" : "none";
 }
 var FACS = [];
 function loadFacilities() {
@@ -2193,7 +2203,7 @@ function startCreate() {
     var nm = res.facility.name || SU.name;
     var msg = res.existing
       ? (res.message || "『" + nm + "』はもう作ってあるので、前に作った施設を開きました。今回貼った表は使っていません。新しく作る時は別の名前にしてください")
-      : nm + "の" + res.month + "月の表ができました。気づいたことを一言で直せます";
+      : nm + "の" + res.month + "月の表ができました。気づいたことを一言で直せます。希望休は、右上の［" + res.month + "月の希望休を入れて作り直す］から入れます";
     var warn = (res.notes || []).filter(function (x) { return x.indexOf("1回も入っていません") >= 0 || x.indexOf("守りきれなかった") >= 0 || x.indexOf("外せる形") >= 0; });
     if (warn.length) msg += "。" + warn.join("。");
     SU = null;

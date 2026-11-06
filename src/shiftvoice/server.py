@@ -446,6 +446,15 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
                     return self._json(200, {"ok": True, "existing": existing, "message": message, "facility": {"id": root.name, "name": st_name(root)},
                                             "year": ny, "month": nm, "notes": notes, "diffs": diffs, "short_rest": short_rest,
                                             "from_month": month, "state": st})
+                if self.path == "/api/setup/wishes":
+                    # 取り込むと翌月の表がすぐできるので、そのままでは翌月の希望休の欄へ進めなかった（2026-11-06 通しの試し）。
+                    # 貼った月へ戻り、毎月と同じ［〇月へ］の流れで希望休を入れて作り直す
+                    with self.lock:
+                        if not self.box.session.state()["redo_wishes"]:
+                            return self._json(400, {"error": "今の月は、希望休を入れて作り直せません"})
+                        store = self.box.session.store
+                        st = self._swap(Path(store.root), *store.facility().settings["pasted_month"])
+                    return self._json(200, {"ok": True, "state": st})
                 if self.path == "/api/facilities/open":
                     with self.lock:
                         hit = [f for f in list_facilities(self.box.session.store.root) if f["id"] == data.get("id")]

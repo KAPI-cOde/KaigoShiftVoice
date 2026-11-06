@@ -143,20 +143,36 @@ def add_shift_items(masked: str, facility, waiting: str | None = None) -> list[d
 _ZEN = str.maketrans("０１２３４５６７８９", "0123456789")
 
 
+PLAIN_WORK = {"早", "日", "遅", "夜", "研"}   # Claude が知っている勤務。ほかの勤務の名前は読み手に伝わらない
+
+
 def spoken_shifts(facility) -> list:
-    return [st for st in facility.shift_types if st.spoken]
+    """話して足した勤務と、取り込みで答えた施設の勤務（日8 など）。取り込んだ勤務もそのまま送ると「日8」を日勤と読み、
+    入れない勤務の頼みとして断っていた（2026-11-06 通しの試し）。"""
+    return [st for st in facility.shift_types if st.spoken or (st.kind == "work" and st.symbol not in PLAIN_WORK)]
+
+
+def _words(st) -> set[str]:
+    """一言の中で当てる言い方。1字の漢字の記号は、ふつうの言葉の中の字と見分けられないので当てない。"""
+    return {st.name} | ({st.symbol} if len(st.symbol) >= 2 or st.symbol.isascii() or "\u2460" <= st.symbol <= "\u2473" else set())
 
 
 def hide_spoken(masked: str, facility) -> tuple[str, dict[str, str]]:
     """一言の中の足した勤務の名前を「勤務A」に置き換える。返すのは送る文と、{勤務A: 記号}（言っていなければ文はそのまま）。"""
     t = masked.translate(_ZEN)
     tokens: dict[str, str] = {}
-    order = sorted(enumerate(spoken_shifts(facility)), key=lambda x: -len(x[1].name))   # 長い名前を先に当てる
-    for i, st in order:
-        token = f"勤務{chr(ord('A') + i % 26)}"
-        t, n = re.subn(rf"(?<![0-9A-Za-z]){re.escape(st.name)}(?![0-9])", token, t)
-        if n:
-            tokens[token] = st.symbol
+    by_word = {w: (f"勤務{chr(ord('A') + i % 26)}", st.symbol)
+               for i, st in enumerate(spoken_shifts(facility)) for w in _words(st)}
+    if not by_word:
+        return masked, {}
+    words = "|".join(re.escape(w) for w in sorted(by_word, key=len, reverse=True))   # 長い名前を先に当てる
+
+    def put(m: re.Match) -> str:
+        token, sym = by_word[m.group(0)]
+        tokens[token] = sym
+        return token
+
+    t = re.sub(rf"(?<![0-9A-Za-z])(?:{words})(?![0-9])", put, t)   # 1回で置き換える（「勤務A」の A を当て直さない）
     return (t, tokens) if tokens else (masked, {})
 
 
