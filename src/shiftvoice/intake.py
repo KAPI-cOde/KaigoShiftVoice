@@ -218,7 +218,7 @@ def _coverage_days_said(text: str, month: Month, n_items: int) -> list[int]:
     期間か日付か分からない言い方は聞き返す（Astra 2026-11-07 の穴5・6。前の作りは「28日まで」を28日だけ、「1日から5日まで」を
     1日と5日だけ、「28日は早番3人、29日は夜勤1人」を両方の勤務の両日、言い直しの「14日、あ、違う、18日」を両日にした）。"""
     t = unicodedata.normalize("NFKC", text or "")
-    if (_RANGE.search(t) or _said_dates(t)) and re.search(r"以外|除い|除く|除け|除外|のぞい|のぞく|抜いて|抜き|外して|のほか", t):
+    if (_RANGE.search(t) or _said_dates(t)) and re.search(r"以外|除|のぞ|抜いて|抜き|外して|のほか", t):
         # 「28日以外は早番3人」が28日だけの人数になった（Astra 2026-11-07 朝）
         raise Clarify("〇日以外という言い方の人数は、まだ扱えません。人数を変える日を、日付で言ってください")
     ranges = list(_RANGE.finditer(t))

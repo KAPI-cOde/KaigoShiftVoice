@@ -261,8 +261,8 @@ def test_幅のある日付の人数は言い直しと取り違えない():
     """「28日は施設全体で早番を3人から4人に」は下限と上限の2本になる。新しい方だけを効かせる時に上限だけが残り、毎日の各1人の
     上限がゆるまず、段1で作れず段3で2人になった（Astra 2026-11-07 朝の2回目。3×8）"""
     daily = cov("r1", "fixed", "==", 1)
-    lo = cov("d28lo", "operational", ">=", 3, scope="all", when=[28])
-    hi = cov("d28hi", "operational", "<=", 4, scope="all", when=[28])
+    lo = replace(cov("d28lo", "operational", ">=", 3, scope="all", when=[28]), meta={"uid": "u1"})   # 1つの一言から2本
+    hi = replace(cov("d28hi", "operational", "<=", 4, scope="all", when=[28]), meta={"uid": "u1"})
     got = early_by_day([daily, lo, hi])
     assert 3 <= sum(got[28].values()) <= 4
 
@@ -279,3 +279,20 @@ def test_日付の無い以外の人数は今までどおり(made, tmp_path):
                                                        "weekdays": ["mon", "tue", "wed", "thu", "fri", "sat"]}])
     assert "日付" not in (r.message or "")
     assert all(not x.when for x in new)
+
+
+def test_0人の後に3人以上と言い直すと古い0人は効かない():
+    """毎日各ユニット1人、同じ1日に「施設全体0人」、続けて「施設全体3人以上」。古い0人の上限が残って毎日の下限がゆるみ、
+    希望休と重なると0人の表が通った（Astra 2026-11-07 朝の3回目。2×9）"""
+    daily = cov("r1", "fixed", "==", 1)
+    zero = replace(cov("z", "operational", "==", 0, scope="all", when=[1]), meta={"uid": "u1"})
+    three = replace(cov("t", "operational", ">=", 3, scope="all", when=[1]), meta={"uid": "u2"})
+    eff = next(r for r in with_overrides([daily, zero, three]) if r.id == "r1")
+    day1 = {i.key: (i.lo, i.hi) for i in expand(eff, FAC, STAFF, NOV) if i.key.endswith("/1")}
+    assert day1["U1/1"][0] == 1 and day1["U2/1"][0] == 1    # 各ユニットの下限は残る（0人にゆるめない）
+    assert sum(early_by_day([daily, zero, three])[1].values()) >= 3
+
+
+def test_何日を除きの人数は聞き返す(made, tmp_path):
+    r, new = _say(made, tmp_path, "28日を除き早番を3人", [{"type": "coverage", "shift": "早", "min": 3, "max": None}])
+    assert r.kind != "applied" and new == []
