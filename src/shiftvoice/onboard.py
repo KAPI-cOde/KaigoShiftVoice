@@ -101,7 +101,7 @@ UNIT_WORD = re.compile(r"ユニット|棟|フロア|\d階")
 # （2026-11-06 実際の施設の Excel の形の試し。「予定」の行が人に、その上の「日付」がユニットになった）
 SCHEDULE_ROW = re.compile(r"予定|行事|イベント|催し|日程")
 # 「U1」「A棟」「2F」のような、ユニットの見出しらしい名前。見出しの行に欠員の印（欠）などがあっても見出しと読む
-UNIT_CODE = re.compile(r"[A-Za-z]{1,2}\d{1,2}|\d{1,2}[FＦ]|[A-Za-z]")
+UNIT_CODE = re.compile(r"[A-Za-z]{1,2}\d{1,2}|\d{1,2}[FＦ]")
 
 _WEEKDAY = re.compile(r"^[(（]?[月火水木金土日](?:曜日?)?[)）]?$")
 _DAY = re.compile(r"^(?:\d{4}[/-])?(?:(\d{1,2})[/-])?(\d{1,2})日?(?:[(（][月火水木金土日][)）])?$")
@@ -331,9 +331,12 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
                 or name.isdigit() or bool(SCHEDULE_ROW.search(name)))
 
     def marked_unit_row(name: str, days: list[str]) -> bool:
-        """ユニットの見出しの行に、日ごとの印（欠員の「欠」など）がある形。勤務の記号が1つも無く、名前がユニットらしい。"""
+        """ユニットの見出しの行に、日ごとの印（欠員の「欠」など）がある形。勤務の記号が1つも無く、印は半分の日より少なく、
+        名前がユニットらしい（「A」「B」の1文字は人の名前にも使うので見ない。休みを空欄・勤務を施設独自の記号で書く
+        表で、人が見出しになって黙って消えないように）。"""
+        filled = [c for c in days if c]
         return ((bool(UNIT_WORD.search(name)) or bool(UNIT_CODE.fullmatch(name)))
-                and not any(c in shift_names for c in days if c))
+                and len(filled) * 2 < len(days) and not any(c in shift_names for c in filled))
 
     def is_total_row(cells: list[str], name_idx: int) -> bool:
         """名前以外のセルが空でなく、全部が数字の行は集計の行（出勤者数・公休数 など）。"""
@@ -1178,7 +1181,7 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
             calm = [x for x in nexts if x in night_syms or x in rest_syms]
             if len(nexts) < NIGHT_SEEN_MIN or len(calm) / len(nexts) < RATE_LINE:
                 continue
-            follow = [x for x in dict.fromkeys(calm)]
+            follow = sorted(dict.fromkeys(calm), key=lambda x: (x not in night_syms, x))   # 夜勤を先に（名前を表で揺らさない）
             add(f"{names[sym]}の翌日は" + "か".join(names[x] for x in follow), "sequence", "fixed",
                 {"if": [sym], "next_in": follow},
                 f"{names[sym]}の翌日は{len(nexts)}回中{len(calm)}回が" + "か".join(names[x] for x in follow)

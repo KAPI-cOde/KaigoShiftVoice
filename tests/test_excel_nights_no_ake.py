@@ -77,3 +77,12 @@ def test_取り込んだ施設は30人以下でも最初の段から作業者を
     assert large_workers(store.facility(), store.staff_on(2026, 12)) == 8
     seed = Store(SEED)
     assert large_workers(seed.facility(), seed.staff_on(2026, 11)) == 0
+
+
+def test_1文字の名前や施設独自の記号だけの人の行は見出しにしない():
+    """職員を A・B と書き、勤務を施設独自の記号（N・D）で書き、休みを空欄にする表。勤務の記号に当たらなくても人の行"""
+    head = "氏名\t" + "\t".join(str(d) for d in range(1, 31))
+    cycle = ["N", "D", "", "D", ""]
+    rows = [f"{nm}\t" + "\t".join(cycle[(d + k) % 5] for d in range(30)) for k, nm in enumerate(["A", "B", "C", "U1"])]
+    p = parse_paste("\n".join([head] + rows) + "\n")
+    assert list(p.table) == ["A", "B", "C", "U1"]   # U1 も印が半分の日を超えるので人の行
