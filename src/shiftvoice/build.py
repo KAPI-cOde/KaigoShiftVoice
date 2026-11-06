@@ -69,6 +69,8 @@ def impossible_wishes(facility: Facility, rules: list[Rule], month: Month) -> tu
     作れないと分かって段を下げ、関係のない人の希望休まで外れた（2026-11-06 通しの試し。1人の1日で10件外れた）。その日だけ外す。"""
     out, notes = [], []
     ake = {t.symbol for t in facility.shift_types if t.kind == "ake"}
+    nights = _ake_as_rest_nights(facility)
+    rest = {t.symbol for t in facility.shift_types if t.kind == "rest"}
     for r in rules:
         if not (r.kind == "cell" and r.flex == "wish" and r.when and r.who and len(r.who) == 1):
             out.append(r)
@@ -79,14 +81,39 @@ def impossible_wishes(facility: Facility, rules: list[Rule], month: Month) -> tu
         if 1 in r.when and tail and tail[-1] in facility.symbols and facility.shift(tail[-1]).next_is_ake and not want & ake:
             bad.add(1)
             notes.append(f"{who}さんの1日は前の月の夜勤の明けなので、希望休を入れられません")
+        elif 1 in r.when and tail and nights and tail[-1] in nights and want and want <= rest:
+            bad.add(1)
+            notes.append(f"{who}さんの1日は前の月の夜勤の明けなので、希望休を入れられません")
         for o in rules:   # 後から動かせない形で頼んだマス（希望休の日の「10日の〇〇さん、日8に」）。頼んだ方を残す
             if o.kind == "cell" and o.flex == "fixed" and o.who == [who] and o.params.get("in") and not want & set(o.params["in"]):
                 for d in set(o.when or []) & set(r.when) - bad:
                     bad.add(d)
                     notes.append(f"{who}さんの{d}日は「{o.name}」があるので、希望休を守れませんでした")
         if set(r.when) - bad:
-            out.append(replace(r, when=[d for d in r.when if d not in bad]) if bad else r)
+            r = replace(r, when=[d for d in r.when if d not in bad]) if bad else r
+            out.append(r)
+            if nights and want and want <= rest:
+                # 明けを「公」と書く施設では、希望休の日が夜勤の明けになると、休めていないのに希望どおりに見えた（2026-11-07
+                # 実際の施設の表を画面の口で作った通しの試しで4日）。希望休の前の日は夜勤にしない（希望休と同じ強さ）
+                before = [d - 1 for d in r.when if d >= 2]
+                if before:
+                    out.append(replace(r, id=f"{r.id}-ake", name=f"{r.name}（前の日は夜勤にしない）",
+                                       params={"not_in": sorted(nights)}, when=before,
+                                       meta={**r.meta, "derived": "rest_not_ake"}))
     return out, notes
+
+
+def _ake_as_rest_nights(facility: Facility) -> set[str]:
+    """明けの記号が無く、夜勤の翌日を休み（公）と書く施設の夜勤の記号（日をまたぐ勤務）。明けの記号がある施設は空。"""
+    if any(t.kind == "ake" for t in facility.shift_types):
+        return set()
+    out = set()
+    for t in facility.shift_types:
+        if t.kind == "work" and not t.next_is_ake and t.start and t.hours:
+            h, m = (int(x) for x in t.start.split(":"))
+            if h + m / 60 + t.hours > 24:
+                out.add(t.symbol)
+    return out
 
 
 def solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month,

@@ -142,3 +142,30 @@ def test_持ち出す表の前の月の日の列は_その月の前の月の末(
     row = next(r for r in dec if r[0] == "青木")
     assert row[1:6] == st.month(2026, 12).prev_tail["青木"][-5:] and row[1:6] == st.month(2026, 11).table["青木"][-5:]
     assert next(r for r in nov if r[0] == "青木")[1:6] == parse_paste(PASTE).layout["lefts"]["青木"][1:6]
+
+
+def test_明けを公と書く施設では希望休の前の日に夜勤を置かない(tmp_path):
+    """希望休の日が夜勤の明けになると、休めていないのに希望どおりに見えた（実際の施設の形の10月で4日）。明けを書く施設には足さない"""
+    from shiftvoice.build import impossible_wishes, month_rules, solve_staged
+    from shiftvoice.model import Rule
+    create_facility(infer(parse_paste(PASTE), 2026, 11, {}), tmp_path / "f", name="試験", next_year=2026, next_month=12)
+    st = Store(tmp_path / "f")
+    fac, staff, m = st.facility(), st.staff_on(2026, 12), st.month(2026, 12)
+    wishes = [Rule(id=f"w{i}", ver=1, name=f"{n}さん 希望休", kind="cell", flex="wish", params={"in": ["公"]}, who=[n],
+                   when=[d], scope="once") for i, (n, d) in enumerate([("青木", 10), ("石田", 12)])]
+    rules, notes = impossible_wishes(fac, month_rules(st, 2026, 12, with_premise=False) + wishes, m)
+    derived = [r for r in rules if r.meta.get("derived") == "rest_not_ake"]
+    assert [(r.who, r.when, r.params) for r in derived] == [(["青木"], [9], {"not_in": ["夜"]}), (["石田"], [11], {"not_in": ["夜"]})]
+    r = solve_staged(fac, staff, month_rules(st, 2026, 12, with_premise=False) + wishes, m)
+    assert r.ok
+    for n, d in [("青木", 10), ("石田", 12)]:
+        assert r.result.table[n][d - 1] == "公" and r.result.table[n][d - 2] != "夜", (n, d)
+    # 明けを書く施設（見本の施設）には足さない
+    seed = Store(SEED)
+    rs, _ = impossible_wishes(seed.facility(), [replace_who(wishes[0], seed)], seed.month(2026, 11))
+    assert not any(x.meta.get("derived") for x in rs)
+
+
+def replace_who(rule, store):
+    from dataclasses import replace
+    return replace(rule, who=[store.staff()[0].name])
