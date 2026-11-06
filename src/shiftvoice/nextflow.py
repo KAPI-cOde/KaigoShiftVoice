@@ -81,10 +81,38 @@ def _wish_span(y: int, m: int) -> tuple[str, str]:
     return f"{y:04d}-{m:02d}-01", f"{y:04d}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
 
 
-def parse_wish_paste(text: str, roster: list[str], days: int) -> tuple[dict[str, list[int]], list[str]]:
+class WishOtherMonth(ValueError):
+    """貼った希望の表が、入れている月と違う月の物。何も入れない"""
+
+    def __init__(self, said: int):
+        super().__init__(said)
+        self.said = said
+
+
+def _label_month(label: str) -> int | None:
+    """日の見出しに書いてある月（12/1・12月1日・2026-12-01・Excel の通し番号）。1・1日のように書いていなければ None。"""
+    from .onboard import _DAY, _DAY_MD, SERIAL_RANGE
+    if re.fullmatch(r"\d{5}", label) and SERIAL_RANGE[0] <= int(label) <= SERIAL_RANGE[1]:
+        return (dt.date(1899, 12, 30) + dt.timedelta(days=int(label))).month
+    m = _DAY_MD.match(label) or _DAY.match(label)
+    return int(m.group(1)) if m and m.group(1) else None
+
+
+def _named_months(cells: list[str]) -> set[int]:
+    """題や見出しの隅の「11月」「2026年11月の希望休」の月。「11月30日締切」のような日付は数えない。"""
+    found = re.findall(r"(?<![0-9])(\d{1,2})月(?!\s*\d)", " ".join(cells))
+    return {int(x) for x in found if 1 <= int(x) <= 12}
+
+
+def parse_wish_paste(text: str, roster: list[str], days: int,
+                     month: int | None = None) -> tuple[dict[str, list[int]], list[str]]:
     """来月の希望を書いた表（名前と日の見出しと「希」）を読む。返すのは 名前 → 日 と、名簿にない名前。
     取り込み（onboard.parse_paste）は空欄を公休にし「希」を公に読み替えるので、希望の紙には使わない
-    （空欄＝希望なし、希＝希望休、を分けたいため）。日の見出しは onboard と同じ読み方（1・1日・12/1・12月1日）"""
+    （空欄＝希望なし、希＝希望休、を分けたいため）。日の見出しは onboard と同じ読み方（1・1日・12/1・12月1日）。
+    month を渡すと、見出しや題に書いてある月を見て、別の月のマスに「希」があれば WishOtherMonth を上げる
+    （前は月を捨てて日だけ読み、11月の表が12月に入った。Astra 2026-11-06 の指摘4）。
+    名前は、全部が同じか、空白で区切った前の語が同じ時だけ本人とする（「岡田 花」は岡田。前は先頭が同じなら
+    本人にしていて、名簿にない長い名前が短い名前の別の人に入った。指摘5）"""
     from .onboard import _cell_text, _clean_name, _day_number, _nfkc
     import csv
     import io
@@ -93,6 +121,8 @@ def parse_wish_paste(text: str, roster: list[str], days: int) -> tuple[dict[str,
     rows = [[_cell_text(c) for c in r] for r in csv.reader(io.StringIO(text), delimiter=delim)]
     rows = [r for r in rows if any(r)]
     cols: dict[int, int] | None = None
+    col_month: dict[int, int | None] = {}
+    named: set[int] = set()     # 見出しより上の題に書いてある月
     out: dict[str, list[int]] = {}
     unknown: list[str] = []
     for cells in rows:
@@ -101,15 +131,26 @@ def parse_wish_paste(text: str, roster: list[str], days: int) -> tuple[dict[str,
         if cols is None or (len(nums) >= 3 and len(nums) >= len([c for c in cells if c]) - 2):
             if len(nums) >= 3:   # 見出しの行（日の番号が並ぶ行）
                 cols = {j: d for j, d in nums.items() if 1 <= d <= days}
+                named |= _named_months([c for j, c in enumerate(cells) if j not in nums])
+                title = None if month is None or month in named or not named else min(named)
+                col_month = {j: _label_month(cells[j]) or title for j in cols}
+                named = set()
                 continue
         if cols is None:
+            named |= _named_months(cells)
             continue
         marks = [d for j, d in cols.items() if j < len(cells) and re.sub(r"\s", "", cells[j]) in WISH_MARKS]
         if not marks:
             continue
+        if month is not None:
+            said = next((col_month[j] for j in cols if j < len(cells) and col_month[j] not in (None, month)
+                         and re.sub(r"\s", "", cells[j]) in WISH_MARKS), None)
+            if said is not None:
+                raise WishOtherMonth(said)
         name = next((n for n in roster for c in cells[:min(cols)] if c and _clean_name(c) in (n, n + "さん")), None)
         if name is None:
-            name = next((n for n in roster for c in cells[:min(cols)] if c and _clean_name(c).startswith(n)), None)
+            name = next((n for n in roster for c in cells[:min(cols)]
+                         if c and len(c.split()) > 1 and _clean_name(c.split()[0]) == n), None)
         if name is None:
             raw = next((c for c in cells[:min(cols)] if c and not c.isdigit()), "")
             if raw:
@@ -401,7 +442,11 @@ class NextFlow:
         self._ensure()
         staff = self.store.staff_on(self.ny, self.nm)
         dec = self.store.month(self.ny, self.nm)
-        got, unknown = parse_wish_paste(text, [s.name for s in staff], dec.days)
+        try:
+            got, unknown = parse_wish_paste(text, [s.name for s in staff], dec.days, self.nm)
+        except WishOtherMonth as e:
+            return {**self.review(split), "wish_error": f"{e.said}月の希望の表です。いま入れているのは{self.nm}月です。"
+                    f"{self.nm}月の表を貼ってください。何も入れていません"}
         if not got:
             return {**self.review(split), "wish_error": "「希」の入ったマスが見つかりませんでした。"
                     "1行目に日の番号（1から）、左の列に名前、希望の日に「希」を書いた表を貼ってください。何も入れていません"}

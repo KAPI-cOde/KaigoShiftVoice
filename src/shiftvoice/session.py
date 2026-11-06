@@ -25,7 +25,7 @@ from .reader import LimitError, ReadError
 from .giveback import accepted_counts
 from .model import Acceptance
 from .resolve import changed_cells, resolve
-from .rules import same_slot
+from .rules import check_table, same_slot
 from .review import history as _history
 from .standby import ASK_WIDER, NO_MOVE, assign, duty_days, fix_absence, oncall_layer, use_move
 from .store import Store
@@ -445,7 +445,6 @@ class Session:
         日を決めた頼み（休みの希望など）と当番は当てない（守られていても、そのマスを留める意味がある）。"""
         if p.kind != "rule" or not p.rules or not m.table or any(rd["kind"] in ("cell", "layer") for rd in p.rules):
             return ""
-        from .rules import check_table
         start, end = self._span()
         rules = []
         for i, rd in enumerate(p.rules):
@@ -598,7 +597,8 @@ class Session:
                 r = self._refit_staff(u, p, m, staff, before)
                 if r is not None:
                     return r
-                changes, secs = self._refit_last
+                changes, secs, refit_warning = self._refit_last
+                warning = "。".join(x for x in (warning, refit_warning) if x)
                 note = shift_note(m.history[-1]["table"], m.table, p.staff_changes[0]["staff"],
                                   {x: self.store.facility().shift(x).name
                                    for c in p.staff_changes for x in c.get("can_remove", [])}) if changes else ""
@@ -638,7 +638,7 @@ class Session:
                 tmp.append(Rule(id=f"s-{s.name}", ver=1, name=f"{s.name}さん 入れる勤務の変更", kind="cell",
                                 flex="fixed", params={"not_in": sorted(bad)}, who=[s.name],
                                 when=sorted(d for ds in bad.values() for d in ds), scope="once"))
-        self._refit_last = ([], 0.0)
+        self._refit_last = ([], 0.0, "")
         if not tmp:
             return None
         rules = [clip_to_month(r, *self._span())
@@ -648,11 +648,20 @@ class Session:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("failed_solve", u["id"], (rr.staged.message or "直せませんでした") +
                          "。職員の情報も表も変えていません", seconds=rr.seconds)
+        base = m.table
         m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev, "said": u["text"],
                           "staff_before": before})
         m.table = rr.table
         self.store.save_month(m)
-        self._refit_last = (rr.changes, rr.seconds)
+        # ほかの人の希望や運用の都合を外して作れた時は、黙らずに知らせる（Astra 2026-11-06 の指摘1。
+        # 前は段を下げて外したことを捨て、適用できたとだけ返した）。もとの表で外れていた物は数えない
+        was = {(b["rule"], b["key"]) for b in check_table(rules, fac, month_staff, m, base)}
+        missed = sorted({b["name"] for b in check_table(rules, fac, month_staff, m, rr.table)
+                         if b["flex"] in ("fixed", "wish", "operational") and (b["rule"], b["key"]) not in was})
+        notes = [f"{'・'.join(missed)}は、守れなくなりました"] if missed else []
+        if rr.staged.note:
+            notes.append(rr.staged.note)
+        self._refit_last = (rr.changes, rr.seconds, "。".join(notes))
         return None
 
     def _cancel(self, u: dict, p: Proposal) -> Reply:
