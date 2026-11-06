@@ -744,13 +744,13 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             sym = _sym(it.get("shift"), facility)
             wds = [w for w in (it.get("weekdays") or []) if w in WEEKDAYS]
             if it.get("avoid") is False and facility.shift(sym).kind == "work" and \
-                    re.search(r"だけ|のみ|以外は", re.sub(r"今月だけ|今週だけ|今回だけ|今日だけ|その日だけ|今月のみ", "", text)):
+                    re.search(r"(?:[月火水木金土日]曜日?|土日|週末|平日)(?:だけ|のみ|以外は)", text):
                 # 「夜勤は金曜と土曜だけ」は、ほかの曜日に入れない頼み。毎週その曜日を夜勤にする頼みにすると、
                 # 104マス動いた（2回目の通しの試し）。ほかの曜日に入れない形にする（同じ頼みが別にあれば足さない）
                 rest = [w for w in WEEKDAYS if w not in wds]
                 if any(o.get("type") == "weekday_pref" and o.get("avoid") is not False and o.get("shift") == it.get("shift")
-                       and set(o.get("weekdays") or []) >= set(rest) for o in real):
-                    continue
+                       and o.get("staff") == it.get("staff") and set(o.get("weekdays") or []) >= set(rest) for o in real):
+                    continue   # 同じ人の同じ頼みがもうある（別の人の頼みは消さない）
                 it = {**it, "avoid": True, "weekdays": rest}
                 wds = rest
             if not wds:

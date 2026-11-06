@@ -358,3 +358,19 @@ def test_できればの曜日の頼みは配慮の強さ(made, tmp_path):
     r, new = _say(made, tmp_path / "b", "石田さん、木曜は遅番",
                   [{"type": "weekday_pref", "staff": "石田", "weekdays": ["thu"], "shift": "遅", "avoid": False}])
     assert [x.flex for x in new] == ["wish"]   # 言い切った時は今までどおり
+
+
+# ---- 壊す側の確かめ（2026-11-07 3時、Opus）
+@pytest.mark.parametrize("text", ["青木さん、金曜はできるだけ早番に", "来月だけ、青木さんは金曜を早番に", "急だけど、青木さんは金曜を早番に"])
+def test_曜日に掛からないだけでは曜日の限定にしない(made, tmp_path, text):
+    r, new = _say(made, tmp_path, text, [{"type": "weekday_pref", "staff": "青木", "weekdays": ["fri"], "shift": "早", "avoid": False}])
+    assert r.kind == "applied", r.message
+    assert [(x.params.get("in"), x.params["weekdays"]) for x in new] == [(["早"], ["fri"])]
+
+
+def test_別の人のだけの頼みを消さない(made, tmp_path):
+    items = [{"type": "weekday_pref", "staff": "青木", "weekdays": ["sun", "mon", "tue", "wed", "thu"], "shift": "夜", "avoid": True},
+             {"type": "weekday_pref", "staff": "石田", "weekdays": ["fri", "sat"], "shift": "夜", "avoid": False}]
+    r, new = _say(made, tmp_path, "青木さん、日曜から木曜は夜勤にしないで。石田さん、夜勤は金曜と土曜だけ", items)
+    assert r.kind == "applied", r.message
+    assert sorted((x.who[0], x.params.get("not_in") is not None) for x in new) == [("石田", True), ("青木", True)]
