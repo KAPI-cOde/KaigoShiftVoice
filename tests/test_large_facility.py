@@ -129,3 +129,39 @@ def test_36人の施設でも段1のままルールを全部守り_短い並び�
     a = solver_mod.solve_month(fac, staff, rules, m, max_dtime=5.0)
     b = solver_mod.solve_month(fac, staff, rules, m, max_dtime=5.0)
     assert a.status == b.status == "ok" and a.table == b.table
+
+
+RESOLVE_IN_CHILD = """
+import sys
+from pathlib import Path
+from shiftvoice.build import month_rules
+from shiftvoice.model import Rule
+from shiftvoice.resolve import resolve
+from shiftvoice.store import Store
+st = Store(Path(sys.argv[1]))
+fac, staff, m = st.facility(), st.staff_on(2027, 3), st.month(2027, 3)
+who = staff[2].name
+new = Rule(id="n1", ver=1, name=f"{who}さん 17日", kind="cell", flex="wish", params={"in": ["公"]}, who=[who], when=[17],
+           scope="once")
+r = resolve(fac, staff, month_rules(st, 2027, 3, with_premise=False) + [new], m, m.table, [new])
+assert r.ok and r.table[who][16] == "公", r.tries
+print(len(r.changes))
+"""
+
+
+def test_作業者を回す時に一言の直しでアプリが落ちない(tmp_path):
+    """36人の施設で「職員03さん、17日は休み」。最初の狭い範囲は作れないと分かる。直す前は、前の表を計算の手がかりに渡して
+    いたので、OR-Tools 9.15 の探し方の1つ（max_lp）が止まり、プロセスごと落ちた（Check failed: heuristics.fixed_search）。
+    落ちると試験も止まるので、別のプロセスで流して終わり方を見る"""
+    import subprocess
+    import sys
+    p = parse_paste(_big_paste(4), SYMBOLS)
+    plan = plan_symbols(p, SYMBOLS)
+    prop = infer(p, 2027, 2, plan.answers)
+    c = create_facility(prop, tmp_path / "f", name="試験", next_year=2027, next_month=3,
+                        answers=plan.answers, times=plan.times)
+    assert c.next_table_made
+    out = subprocess.run([sys.executable, "-c", RESOLVE_IN_CHILD, str(tmp_path / "f")], capture_output=True, text=True,
+                         timeout=300)
+    assert out.returncode == 0, out.stderr[-500:]
+    assert 0 < int(out.stdout.strip()) <= 12

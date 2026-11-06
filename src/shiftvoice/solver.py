@@ -288,13 +288,19 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                         t = m.new_bool_var("")
                         m.add(va + vb - 1 <= t)
                         penalties.append(int(w_gap * gap) * t)
+    iw = large_workers(facility, staff, stage)
     if hint:
         w_keep = facility.settings.get("keep_weight", 500)
         for s in staff:
             for d in days:
                 old = hint.get(s.name, [None] * D)[d - 1]
                 if old in allowed[(s.name, d)]:
-                    m.add_hint(x[(s.name, d, old)], 1)
+                    if not iw:
+                        # 作業者を回す時は、前の表を計算の手がかりに渡さない（近づける罰は下で同じに課す）。OR-Tools 9.15 は、
+                        # 手がかりのあるモデルが読み込みの時点で作れないと分かると、探し方の1つ（max_lp）が手がかりを
+                        # 使おうとして止まり、アプリごと落ちた（Check failed: heuristics.fixed_search）。36人の施設の
+                        # 一言と、段を下げた一言の直しで起きた。渡さなくても、12通りの一言で動いたマスは同じだった（2026-11-06）
+                        m.add_hint(x[(s.name, d, old)], 1)
                     penalties.append(w_keep * (1 - x[(s.name, d, old)]))
 
     if extra is not None:  # 目的と制約を足す口（返す案など）。extra(model, x, penalties)
@@ -306,7 +312,6 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     # 月ごとの種（撮影用に固定した一組。施設の設定 seed_by_month）。無ければ施設の種
     solver.parameters.random_seed = st.get("seed_by_month", {}).get(f"{month.year:04d}-{month.month:02d}",
                                                                     st.get("seed", 11))
-    iw = large_workers(facility, staff, stage)
     dtime = st.get("max_deterministic_time", 30.0)
     if iw:
         # その月の職員が30人を超える時と段を下げる時は、決まった順で複数の作業者を回す。区切りの大きさも決めるので、
