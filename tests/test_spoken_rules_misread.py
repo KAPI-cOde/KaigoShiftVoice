@@ -208,8 +208,10 @@ def test_名指しのゆるい連勤の上限は全員の上限の例外(made, t
 # ---- Astra（2026-11-07 2回目）
 def test_できればの例外では動かせない全員の上限から外さない():
     general = Rule("r025", 1, "連勤の上限", "max_run", "fixed", {"shifts": "work", "max": 5})
-    weak = Rule("n9", 1, "青木さん 連勤は6日まで", "max_run", "negotiable", {"shifts": "work", "max": 6}, who=["青木"])
-    plain = Rule("n8", 1, "青木さん 連勤は6日まで", "max_run", "operational", {"shifts": "work", "max": 6}, who=["青木"])
+    weak = Rule("n9", 1, "青木さん 連勤は6日まで", "max_run", "negotiable", {"shifts": "work", "max": 6}, who=["青木"],
+                meta={"exception": True})
+    plain = Rule("n8", 1, "青木さん 連勤は6日まで", "max_run", "operational", {"shifts": "work", "max": 6}, who=["青木"],
+                 meta={"exception": True})
     assert not next(r for r in with_overrides([general, weak]) if r.id == "r025").meta.get("except_who")
     assert next(r for r in with_overrides([general, plain]) if r.id == "r025").meta.get("except_who") == ["青木"]
 
@@ -237,3 +239,13 @@ def test_有給の何日までには期限(made, tmp_path):
     r, new = _say(made, tmp_path, "青木さん、今月は20日までに有給1日", [{"type": "leave_count", "staff": "青木", "count": 1}])
     assert r.kind == "applied", r.message
     assert [x.params for x in new] == [{"shifts": ["有"], "min": 1, "max": 1}]
+
+
+def test_ただの名指しのゆるい上限は今までどおりもう守られている(made, tmp_path):
+    """「今月だけ」「〜てもいい」などの例外の言い方が無い「青木さん、連勤6日まで」は、全員の連勤の上限がもう決めている"""
+    from shiftvoice.build import month_rules
+    r, new = _say(made, tmp_path, "青木さん、連勤6日まで", [{"type": "consecutive_limit", "staff": "青木", "max": 6}])
+    assert "もう守られています" in (r.message or "")
+    eff = with_overrides(month_rules(Store(tmp_path / "f"), 2026, 12, with_premise=False))
+    general = next(x for x in eff if x.kind == "max_run" and not x.who and x.params["shifts"] == "work")
+    assert not general.meta.get("except_who")

@@ -178,6 +178,10 @@ def _count_strength(v, text: str, single: bool) -> str:
     return "operational"
 
 
+# 名指しの上限を、全員の上限の例外として頼む言い方（「千葉さん、今月だけ6連勤まではいい」「6日まで許して」）
+PERMIT_WORDS = r"今月だけ|今月は|てもいい|ても良い|てもよい|でもいい|でいい|許|かまわない|構わない|大丈夫|OK"
+
+
 # 日付を決めた一言（「28日は」「今月の1日だけ」）の日。「1日2人」「1日あたり」の1日（1日ごと）と、「3日続けて」「2日間」は除く
 _DATE_IN_TEXT = re.compile(r"(?<![0-9０-９])([0-9]{1,2})日(?![勤間続連分]|[0-9]|あたり|当たり|ごと|につき|まで|以内|以上)")
 
@@ -827,6 +831,10 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 p.rules.append({"name": f"{_who(who)} 連勤は{mx}日まで", "kind": "max_run",
                                 "flex": _count_strength(it.get("strength"), text, len(real) == 1),
                                 "params": {"shifts": "work", "max": mx}, "who": who, "when": None})
+            if who and re.search(PERMIT_WORDS, text):
+                # 名指しで「今月だけ」「〜てもいい」「許す」と言った上限は、全員の上限の例外の頼み（rules._run_exceptions）。
+                # ただ「小島さん、連勤6日まで」と言った時は、全員の連勤5日がもう決めているので今までどおり
+                p.rules[-1]["meta"] = {**p.rules[-1].get("meta", {}), "exception": True}
         elif t == "cancel":
             # 取り消しは指定を外すだけ。反対の勤務を命じない（13章。T2-03）
             who = _names(it.get("staff"), names)

@@ -229,8 +229,9 @@ def implied_by(rd: dict, rules) -> str | None:
         elif r.kind == "max_run":
             if r.who and not (who and set(who) <= set(r.who)):
                 continue
-            if who and not r.who and q.get("max") is not None and (p.get("max") or 0) > q["max"]:
-                continue   # 名指しのゆるい上限（「千葉さん、今月だけ連勤6日まで」）は、全員の上限の例外（rules.with_overrides）
+            if (rd.get("meta") or {}).get("exception") and who and not r.who and q.get("max") is not None \
+                    and (p.get("max") or 0) > q["max"]:
+                continue   # 例外の頼み（「千葉さん、今月だけ連勤6日まで」）は、全員の上限の例外（rules._run_exceptions）
             if q.get("shifts") == p.get("shifts") and q.get("max") is not None and q["max"] <= (p.get("max") or 0):
                 return r.name
         elif r.kind == "count":

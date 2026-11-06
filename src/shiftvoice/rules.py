@@ -185,7 +185,8 @@ def _run_exceptions(rules: list[Rule]) -> list[Rule]:
     loose: dict[str, dict[str, int]] = {}   # 勤務の鍵 → 人 → 名指しの上限
     key = lambda p: json.dumps(p.get("shifts"), ensure_ascii=False, sort_keys=True)
     for r in rules:
-        if r.kind == "max_run" and r.who and not r.when and r.params.get("max") is not None and r.flex != "negotiable":
+        if (r.kind == "max_run" and r.who and not r.when and r.params.get("max") is not None and r.flex != "negotiable"
+                and r.meta.get("exception")):
             # 「できれば6日まで」の弱い頼みでは、全員の上限（動かせない連勤の上限など）から外さない（Astra）
             for w in r.who:
                 loose.setdefault(key(r.params), {})[w] = r.params["max"]
