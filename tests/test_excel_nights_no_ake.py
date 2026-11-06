@@ -106,3 +106,16 @@ def test_夜勤の後の休みの次の日の有給も休みに数える():
     prop = infer(parse_paste("\n".join(n + "\t" + "\t".join(r) for n, r in rows.items()) + "\n"), 2026, 11, {})
     two = [r["params"] for r in prop.rules if "next2_in" in r["params"]]
     assert two == [{"if": ["夜"], "then": ["公"], "next2_in": ["公", "有"]}]
+
+
+def test_月間予定の行と括弧つきの見出しと所属を添えた人():
+    """「月間予定」は人にしない。「2階（介護）」は欠の印があっても見出し。「青木 2階」は欠の印だけの月でも人（Astra 2026-11-07）"""
+    head = "氏名\t" + "\t".join(str(d) for d in range(1, 31))
+    plain = lambda: "\t".join(["日", "公", "日"][d % 3] for d in range(30))
+    marks = "\t".join("欠" if d in (3, 9) else "" for d in range(30))
+    rows = ["月間予定\t" + "\t".join("祝" if d == 2 else "" for d in range(30)),
+            "2階（介護）\t" + marks, "石田\t" + plain(), "上野\t" + plain(),
+            "青木 2階\t" + marks, "江口\t" + plain()]
+    p = parse_paste("\n".join([head] + rows) + "\n")
+    assert list(p.table) == ["石田", "上野", "青木2階", "江口"]   # 名前の空白は詰め、括弧は半角にそろえて読む（前から）
+    assert p.unit_list == ["2階(介護)"] and p.unit_of["青木2階"] == "2階(介護)"

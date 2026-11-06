@@ -99,11 +99,14 @@ NOT_UNIT = re.compile(r"勤務|シフト|予定|様式|令和|平成|\d{4}|\d年
 UNIT_WORD = re.compile(r"ユニット|棟|フロア|\d階")
 # 予定・行事の行（祝日の印や「敬老会」などの行事を書く行）。人の行として読むと、知らない記号と公休だらけの人が出た
 # （2026-11-06 実際の施設の Excel の形の試し。「予定」の行が人に、その上の「日付」がユニットになった）
-SCHEDULE_ROW = re.compile(r"(?:行事)?予定(?:表|欄)?|行事(?:予定)?|イベント|催し|日程|予定[・/]行事|行事[・/]予定")   # 名前の欄の全体
+# 名前の欄の全体（括弧の注記つきの名前「石田（入職予定）」は人の行）
+SCHEDULE_ROW = re.compile(r"[^（(\s]{0,4}(?:予定|行事)(?:表|欄|等)?|イベント|催し|日程|予定[・/]行事|行事[・/]予定")
 # 見出しの行に付く日ごとの印。人の行と取り違えないよう、これだけの行を見出しと読む（「青木（2階）」の人の行を消さない）
 UNIT_MARKS = {"欠", "欠員"}
 # 「U1」「A棟」「2F」のような、ユニットの見出しらしい名前。見出しの行に欠員の印（欠）などがあっても見出しと読む
-UNIT_CODE = re.compile(r"[A-Za-z]{1,2}\d{1,2}|\d{1,2}[FＦ]")
+# 名前の全体がユニットの形か（括弧の中は外して見る。「青木 2階」のような所属を添えた人の名前は当てない）
+UNIT_CODE = re.compile(r"[A-Za-z]{1,2}\d{1,2}|\d{1,2}[FＦ]|\d{1,2}階|第?[一二三四五六七八九十\d]{1,2}(?:ユニット|棟|フロア|階)"
+                       r"|(?:ユニット|棟|フロア)\s?\S{1,3}|\S{1,6}(?:ユニット|棟|フロア)")
 
 _WEEKDAY = re.compile(r"^[(（]?[月火水木金土日](?:曜日?)?[)）]?$")
 _DAY = re.compile(r"^(?:\d{4}[/-])?(?:(\d{1,2})[/-])?(\d{1,2})日?(?:[(（][月火水木金土日][)）])?$")
@@ -337,8 +340,9 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
         名前がユニットらしい（「A」「B」の1文字は人の名前にも使うので見ない。休みを空欄・勤務を施設独自の記号で書く
         表で、人が見出しになって黙って消えないように）。"""
         filled = [c for c in days if c]
-        return (not re.search(r"[（(]", name) and (bool(UNIT_WORD.search(name)) or bool(UNIT_CODE.fullmatch(name)))
-                and bool(filled) and len(filled) * 2 < len(days) and all(c in UNIT_MARKS for c in filled))
+        core = re.sub(r"[（(][^）)]*[）)]", "", name).strip()
+        return (bool(UNIT_CODE.fullmatch(core)) and bool(filled) and len(filled) * 2 < len(days)
+                and all(c in UNIT_MARKS for c in filled))
 
     def is_total_row(cells: list[str], name_idx: int) -> bool:
         """名前以外のセルが空でなく、全部が数字の行は集計の行（出勤者数・公休数 など）。"""
