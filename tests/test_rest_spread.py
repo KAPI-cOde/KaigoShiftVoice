@@ -151,3 +151,69 @@ def test_forced_dev_counts_only_what_the_pinned_cells_force():
     dev = {i.key: forced_dev(i, pins) for i in expand(rules[0], fac, staff, m)}
     assert dev["職員00"] == 5 and dev["職員01"] == 0
     assert forced_dev(next(i for i in expand(rules[0], fac, staff, m) if i.key == "職員00"), pinned_cells(rules, {"fixed"})) == 0
+
+
+def one_rest_more(tmp_path):
+    """公休が外れている人に、勤務の日の休みを足す一言の材料"""
+    from shiftvoice.build import month_rules
+    from shiftvoice.model import Rule
+    made(tmp_path)
+    store = Store(tmp_path / "f")
+    m = store.month(2026, 12)
+    who = next(n for n, row in m.table.items() if row.count("公") > 9)
+    day = next(d for d in range(5, 28) if m.table[who][d - 1] in ("早", "遅"))
+    new = Rule(id="n1", ver=1, name=f"{who}さん {day}日 休み", kind="cell", flex="wish", params={"in": ["公"]},
+               who=[who], when=[day], scope="once")
+    return store, m, who, day, month_rules(store, 2026, 12, with_premise=False) + [new], new
+
+
+def test_rest_count_already_off_is_not_made_worse(tmp_path):
+    """公休11日の人に別の日の休みを足しても、別の休みを振り替えて増やさない（直す前は12日になり知らせも無かった。指摘1）"""
+    from shiftvoice.resolve import resolve
+    store, m, who, day, rules, new = one_rest_more(tmp_path)
+    r = resolve(store.facility(), store.staff_on(2026, 12), rules, m, m.table, [new])
+    assert r.ok and r.table[who][day - 1] == "公"
+    assert r.table[who].count("公") == m.table[who].count("公")
+    assert r.window is not None and len(r.changes) <= 16, r.changes
+    assert not r.staged.note
+
+
+def test_rest_count_says_so_when_it_has_to_get_worse():
+    """どの休みも振り替えられない時は、離れたことを人と数で言う（指摘1）"""
+    from shiftvoice.model import Facility, Month, Rule, ShiftType, Staff
+    from shiftvoice.resolve import resolve
+    fac = Facility("x", "x", ["東"], [ShiftType("日", "日勤", "work"), ShiftType("公", "公休", "rest")], {})
+    staff = [Staff("青木", "東", ["日"]), Staff("石田", "東", ["日"])]
+    base = {"青木": ["公"] * 10 + ["日"] * 20, "石田": ["公"] * 9 + ["日"] * 21}
+    rules = [Rule("rest", 1, "公休の数", "count", "operational", {"shifts": ["公"], "min": 9, "max": 9}),
+             Rule("w", 1, "青木さん 希望休", "cell", "wish", {"in": ["公"]}, who=["青木"], when=list(range(1, 11)))]
+    new = Rule("n1", 1, "青木さん 20日 休み", "cell", "wish", {"in": ["公"]}, who=["青木"], when=[20], scope="once")
+    r = resolve(fac, staff, rules + [new], Month(2026, 11, [], {}), base, [new])
+    assert r.ok and r.table["青木"].count("公") == 11
+    assert r.staged.note == "青木さんの公休の数が10から11になり、ルールの9からさらに離れました"
+
+
+def test_rest_count_getting_worse_reaches_the_reply(sess):
+    """振り替えられずに離れた時は、一言の返事の知らせ（画面の赤い文）に出る（指摘1）"""
+    import json
+    from shiftvoice.names import Masker
+    from shiftvoice.reader import RecordedReader
+    sess.open()
+    who = "岡田"
+    row = sess.store.month(2026, 11).table[who]
+    rest = [d for d in range(1, 31) if row[d - 1] == "公"]
+    work = next(d for d in range(30, 0, -1) if row[d - 1] in ("早", "日", "遅"))
+    led = sess.store.ledger()   # 貼って作った施設と同じ運用の都合にし、全員の公休が1日外れている形にする
+    led.append("change", rule_id="r005", rule={"flex": "operational", "params": {"shifts": ["公"], "min": 8, "max": 8}})
+    led.append("add", rule={"id": "w1", "ver": 1, "name": "岡田さん 希望休", "kind": "cell", "flex": "wish", "params": {"in": ["公"]},
+                            "who": [who], "when": rest, "scope": "rule"})
+    sess.store.save_ledger(led)
+    text = f"{who}さん、{work}日は休みで"
+    masked, _ = Masker(sess.store.staff(), sess.store.facility()).mask(text)
+    item = {"type": "day_off", "days": [work], "reason": None, "staff": masked.split("さん")[0]}
+    sess.reader = RecordedReader({masked: json.dumps({"items": [item]}, ensure_ascii=False)})
+    r = sess.say(text)
+    if r.kind == "ask_period":
+        r = sess.answer(r.uid, "once")
+    assert r.kind == "applied", r.message
+    assert f"{who}さんの公休の数が{len(rest)}から{len(rest) + 1}になり、ルールの8からさらに離れました" in r.warning, r

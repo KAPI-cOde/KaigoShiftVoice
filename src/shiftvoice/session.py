@@ -1370,6 +1370,8 @@ class Session:
             label += f"。{names}に戻します" if back_ok else f"。{names}には戻せません（マスはそのままです）"
         who = sorted({c["staff"] for c in rr.changes})
         msg = f"{label}。{len(rr.changes)}マス動きます" + (f"（{'・'.join(who)}さん）" if who else "")
+        if rr.staged.note:   # 表が変わるのは［これで直す］の後でも、さらに外れるなら先に知らせる（Astra 2026-11-06 の指摘1）
+            msg += "。" + rr.staged.note
         offer = {"rules": p.rules, "scope": "once", "table": rr.table, "changes": rr.changes, "replace": drop,
                  "summary": label, "message": msg, "base_rev": led0.rev, "base_table": json.dumps(m.table),
                  "source": "話した"}
@@ -1430,6 +1432,8 @@ class Session:
             message = f"{p.summary}。勤務は変わらず、応援先だけ{n}マス変わります（{who}さん）"
         else:
             message = f"{p.summary}。動くマスはありません"
+        if rr.staged.note:
+            message += "。" + rr.staged.note
         offer = {"rules": p.rules, "scope": "once", "table": rr.table, "changes": rr.changes, "support": support,
                  "replace": drops, "summary": p.summary, "base_rev": self.store.ledger().rev, "base_table": json.dumps(m.table),
                  "source": "話した（できれば）" if maybe else "直した（配った後）", "message": message}

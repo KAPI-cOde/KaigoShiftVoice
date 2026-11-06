@@ -75,6 +75,22 @@ def focus_days(new_rules: list[Rule], facility: Facility, staff: list[Staff], mo
     return days
 
 
+def _off(b: dict) -> int:
+    """回数がルールからいくつ離れているか。"""
+    return max(0, b["value"] - b["hi"] if b["hi"] is not None else 0, b["lo"] - b["value"] if b["lo"] is not None else 0)
+
+
+def worse_note(was: dict[tuple[str, str], dict], broken: list[dict]) -> str:
+    """前の表で外れていた回数のルールが、直した表でさらに離れた人を言う。"""
+    out = []
+    for b in broken:
+        old = was.get((b["rule"], b["key"]))
+        if old and _off(b) > _off(old):
+            want = b["lo"] if b["lo"] == b["hi"] else f"{b['lo'] if b['lo'] is not None else ''}〜{b['hi'] if b['hi'] is not None else ''}"
+            out.append(f"{b['key']}さんの{b['name'].split('（')[0]}が{old['value']}から{b['value']}になり、ルールの{want}からさらに離れました")
+    return "。".join(out)
+
+
 @dataclass
 class ResolveResult:
     staged: StagedResult
@@ -113,8 +129,14 @@ def resolve(facility: Facility, staff: list[Staff], rules: list[Rule], month: Mo
     # （外れを直す点が入ると、一言と関係のないマスまで数十マス動いた。2026-11-02 に測った）。
     # 運用の都合も同じ。公休を守りきれなかった月は、1マスの一言でも狭い範囲の直しが全部失敗し、ひと月を解き直して
     # 54マス動いた（2026-11-06 通しの試し）
-    skip = {(b["rule"], b["key"]) for b in check_table(rules, facility, staff, month, base)
-            if b["flex"] in ("negotiable", "operational") and b["rule"] not in new_ids}
+    off = [b for b in check_table(rules, facility, staff, month, base)
+           if b["flex"] in ("negotiable", "operational") and b["rule"] not in new_ids]
+    skip = {(b["rule"], b["key"]) for b in off}
+    # 外れている回数を、一言でさらに悪くしない。公休10日の人に休みを足すと11日になり、知らせも出なかった（Astra 2026-11-06 の
+    # 指摘1）。別の休みを振り替えて保つ。範囲の中でできなければ広げ、それでも離れたら知らせる
+    counts = {r.id for r in rules if r.kind == "count"}
+    was = {(b["rule"], b["key"]): b for b in off if b["flex"] == "operational" and b["rule"] in counts}
+    hold = {k: b["value"] for k, b in was.items()}
     tries = []
     for w in WINDOWS:
         if focus is None and w is not None:
@@ -130,17 +152,20 @@ def resolve(facility: Facility, staff: list[Staff], rules: list[Rule], month: Mo
                     if d not in near:
                         fixed[(s.name, d)] = base[s.name][d - 1]
         r = solve_month(facility, staff, all_rules, month, hint=base, fixed_cells=fixed, max_dtime=dtime,
-                        skip=skip)
+                        skip=skip, hold=hold)
         tries.append({"window": w, "status": r.status, "seconds": round(r.seconds, 3)})
         if r.status != "ok":
             continue
         hard = [b for b in r.broken if b["flex"] in ("fixed", "wish", "operational") and (b["rule"], b["key"]) not in skip]
         new_broken = [b for b in r.broken if b["rule"] in new_ids]
-        if (hard or new_broken) and w is not None:
+        worse = worse_note(was, r.broken)
+        if (hard or new_broken or worse) and w is not None:
             continue  # 範囲の中では守れない。広げる
-        staged = StagedResult(r, [{"stage": 1, "status": "ok", "seconds": round(r.seconds, 3)}])
+        staged = StagedResult(r, [{"stage": 1, "status": "ok", "seconds": round(r.seconds, 3)}], note=worse or None)
         return ResolveResult(staged, w, changed_cells(base, r.table), tries)
     staged = solve_staged(facility, staff, all_rules, month, hint=base)
+    if staged.ok:
+        staged.note = "。".join(x for x in (staged.note, worse_note(was, staged.result.broken)) if x) or None
     rr = ResolveResult(staged, None, changed_cells(base, staged.result.table) if staged.ok else [], tries)
     rr.tries.append({"window": "staged", "status": staged.result.status, "seconds": round(staged.seconds, 3)})
     return rr

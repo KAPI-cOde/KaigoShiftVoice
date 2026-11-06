@@ -19,6 +19,7 @@ from .model import Facility, Month, Rule, Staff
 from .rules import Instance, _syms_of, cell_value, check_table, expand, with_overrides
 
 DEFAULT_WEIGHTS = {"wish": 100000, "operational": 20000, "negotiable": 5000}
+HOLD_CELLS = 10   # 外れている回数を悪くしないために動かしてよいマスの目安（hold）
 
 
 @dataclass
@@ -133,10 +134,12 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                 max_dtime: float | None = None,
                 skip: set[tuple[str, str]] | None = None,
                 dev_cap: int | None = None,
+                hold: dict[tuple[str, str], int] | None = None,
                 extra=None) -> SolveResult:
     """fixed_cells は 動かさないマス（人, 日）→ 記号。狭い範囲の直しで、範囲の外を止めるのに使う。
     skip は課さない場面（決まりの id, 場面の名前）。相談できる決まりで前の表で既に外れていた場面に使う。
-    dev_cap は、運用の都合の回数のルールを外す時の、1人あたりのずれの上限。"""
+    dev_cap は、運用の都合の回数のルールを外す時の、1人あたりのずれの上限。
+    hold は skip の場面のうち、今の値（場面 → 値）からルールと反対へ離れるのを罰する場面。"""
     st = facility.settings.get("solve", {})
     weights = {**DEFAULT_WEIGHTS, **facility.settings.get("weights", {})}
     quality = facility.settings.get("quality", {})
@@ -183,10 +186,17 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     switches: list[tuple[Instance, cp_model.IntVar | None]] = []
     for r in with_overrides(rules):
         for inst in expand(r, facility, staff, month):
-            if skip and (r.id, inst.key) in skip:
+            now = (hold or {}).get((r.id, inst.key))
+            if skip and (r.id, inst.key) in skip and now is None:
                 continue  # 前の表で既に外れていた場面は、直しても点にしない
             e = lin(inst)
             if isinstance(e, int):  # 定数だけの場面（前の月だけ）は課せない
+                continue
+            if now is not None:
+                # 直す点にはしないが、これ以上離れるなら休みを振り替える方を選ぶ。十数マス動かすほどなら離れて知らせる（resolve）
+                far = m.new_int_var(0, D, "")
+                m.add(far >= (e - now if inst.hi is not None and now > inst.hi else now - e))
+                penalties.append(HOLD_CELLS * facility.settings.get("keep_weight", 500) * far)
                 continue
             hard = r.flex in hard_flex
             if hard:
