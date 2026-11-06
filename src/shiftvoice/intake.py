@@ -308,7 +308,7 @@ def _self_fix(items: list[dict], text: str) -> list[dict]:
     out = []
     for it in items:
         a, b = it.get("from_day"), it.get("to_day")
-        if it.get("type") == "move" and a and b and it.get("shift") and re.search(
+        if it.get("type") == "move" and type(a) is int and type(b) is int and it.get("shift") and re.search(
                 rf"(?<!\d){a}日?[、,\s]*(?:あ|え|いや)?[、,\s]*(?:ごめん|違う|ちがう|間違え|まちがえ|じゃなく)[^\d]*(?<!\d){b}日", text):
             it = {"type": "set_cell", "staff": it.get("staff"), "days": [b], "shift": it["shift"], "strength": "wish",
                   "reason": it.get("reason")}

@@ -37,3 +37,9 @@ def test_leave_said_is_not_rest():
     it = [{"type": "set_cell", "staff": "職員10", "days": [7], "shift": "公"}]
     assert _tidy_leave(it, "職員10さん、7日は有給取るって。日勤のままになってたから直しといて。")[0]["shift"] == "有"
     assert _tidy_leave(it, "職員10さん、7日は有給じゃなくて公休で")[0]["shift"] == "公"
+
+
+def test_self_fix_uses_only_numbers():
+    from shiftvoice.intake import _self_fix
+    odd = [{"type": "move", "staff": "職員07", "shift": "研", "from_day": "(a+)+", "to_day": [26]}]
+    assert _self_fix(odd, "職員07です。25、あ、ごめん26日") == odd
