@@ -108,7 +108,7 @@ def large_workers(facility: Facility, staff: list[Staff], stage: int = 1) -> int
     3ユニット16人の12月で、外れた運用の都合17件・遅番の次の日の早番23回の表を「できました」と出した。計算の量を
     3倍にしても16件・20回のまま。8つ回すと、同じ計算の量で2件・0回、公休は全員9日になった（2026-11-06 に測った）。
     取り込んだ施設（設定に pasted_month がある）は、30人以下でも段1から回す。次の勤務までの間の罰が入るので探す所が広く、
-    実際の施設の形の18人の10月で、1人では短い並び52回・24秒、8つでは0回・14秒だった（2026-11-06）。見本の施設は
+    実際の施設の形の18人の10月で、1人では短い並び52回・24秒、8つ（計算の量40）では0回・17秒だった（2026-11-06）。見本の施設は
     取り込んでいないので、今までどおり1人で探す（表は変わらない）"""
     if len(staff) <= LARGE_STAFF and stage < 2 and "pasted_month" not in facility.settings:
         return 0
@@ -319,12 +319,13 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     if iw:
         # その月の職員が30人を超える時と段を下げる時は、決まった順で複数の作業者を回す。区切りの大きさも決めるので、
         # 同じ入力なら同じ表になる。近くを探し直す作業者が入り、1人で探すより短い並びとルールの外れが減る（2026-11-05・
-        # 11-06 に測った。docs/measurements.md）。計算の量は作業者の合計で数えるので、30人を超える月は LARGE_DTIME まで
-        # 増やす（30人以下で段を下げる時は施設の量のまま。16人の12月は20で足りた）
+        # 11-06 に測った。docs/measurements.md）。計算の量は作業者の合計で数えるので、30人を超える月と取り込んだ施設は
+        # LARGE_DTIME まで増やす（実際の施設の形の18人の10月で、20では日勤の次の日の早番が4回残り、40で0回。13.8→17.0秒）。
+        # 見本の施設が段を下げる時は施設の量のまま
         solver.parameters.num_workers = iw
         solver.parameters.interleave_search = True
         solver.parameters.interleave_batch_size = iw
-        if len(staff) > LARGE_STAFF:
+        if len(staff) > LARGE_STAFF or "pasted_month" in facility.settings:
             dtime = max(dtime, LARGE_DTIME)
     else:
         solver.parameters.num_workers = st.get("workers", 1)
