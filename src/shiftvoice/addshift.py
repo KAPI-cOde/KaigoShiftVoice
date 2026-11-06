@@ -43,7 +43,7 @@ _NOT_NAME = re.compile(r"勤務|シフト|職員|人|当番|待機|呼び出し|
 _NAME_SHAPE = re.compile(r"[一-龥ァ-ヺA-Za-z]{1,3}\d{1,2}|[一-龥ァ-ヺA-Za-z]{1,3}(?:番|勤)")
 MAX_NAME = 4   # 表のマス・印刷の幅に入る字数
 
-UNCHANGED = "足していません。表もルールも変えていません"
+UNCHANGED = "足していません"
 
 
 def tight(text: str) -> str:

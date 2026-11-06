@@ -505,7 +505,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         if t == "add_shift":
             # 手元で読んだ頼み（addshift.py）。読み取りの返事はこの型にならない。頼まれた時だけ置き、全員が入れる
             if it["name"] in facility.symbols or any(st.name == it["name"] for st in facility.shift_types):
-                raise Clarify(f"{it['name']}はもうある勤務です。足していません。表もルールも変えていません")
+                raise Clarify(f"{it['name']}はもうある勤務です。足していません")
             p.shift_type = {"symbol": it["name"], "name": it["name"], "kind": "work", "start": it["start"],
                             "hours": it["hours"], "on_request_only": True, "spoken": True}
             sums.append(f"{it['name']}（{said_times(p.shift_type)}）を足しました")
