@@ -27,15 +27,23 @@ _HALF_SAID = re.compile(r"(?<![0-9])\d{1,2}時半?(?:から|まで)?の?")   # �
 _ANSWER_TAIL = re.compile(r"(?:まで|です|で|ね|よ|でお願いします|お願いします)*")
 
 # 人・日・曜日・期間の話が入る一言は、新しい勤務の話ではない
-_NOT_ADD = re.compile(r"職員\d|ユニット\d|(?<![0-9])\d{1,2}日|\d+[人名回]|曜|平日|土日|週末|祝|毎日|毎週|毎月|今月|来月|"
+_NOT_ADD = re.compile(r"職員\d|ユニット\d|(?<![0-9])\d{1,2}日|\d+[人回]|\d+名(?!前)|曜|平日|土日|週末|祝|毎日|毎週|毎月|今月|来月|"
                       r"取り消|やめ|いらな|外し|減ら")
 _KIND = r"(?:勤務|シフト)"
-_VERB = (r"(?:足(?:す|して|したい|します|しといて|しておいて)|追加(?:する|して|したい|します|で)?|"
-         r"作(?:る|って|りたい|ります|っておいて))")
-_POLITE = r"(?:ください|下さい|ほしい|欲しい|お願いします|おねがいします|もらえる|くれる|ね|よ)*"
+_VERB = (r"(?:新しく|新規で?|新規に)?(?:足(?:す|して|したい|します|しといて|しておいて)|追加(?:する|して|したい|します|で)?|"
+         r"作(?:る|って|りたい|ります|っておいて)|作成(?:する|して|したい|します)?)")
+_POLITE = r"(?:ください|下さい|ほしい|欲しい|お願いします|おねがいします|もらえる|もらえますか|くれる|くれますか|ね|よ)*"
 _SAID = re.compile(rf"(?:新しい)?(?P<h>{_KIND}(?:の|に|で|として))?(?:新しい)?(?P<n>[一-龥々ァ-ヺーA-Za-z0-9]{{1,6}}?)"
-                   rf"(?P<l>っていう|て言う|という|って)?(?P<k>(?:新しい)?{_KIND})?(?:は|を|も|が)?(?:まで)?(?:で|の)?"
+                   rf"(?P<l>っていう|て言う|という|って)?の?(?P<k>(?:新しい)?{_KIND})?(?:は|を|も|が)?(?:まで)?(?:で|の)?"
                    rf"(?P<k2>{_KIND}を?)?{_VERB}{_POLITE}(?:時間は|時間が|時刻は)?(?:まで|です|で)*")
+# 名前を別の節で言う形（「8時から17時の勤務を新しく作って。名前は日8」「日8という名前で作って」）。前は読めずに組み立て役へ行き、
+# 無い画面を案内する断りが返った（2026-11-06 AI のテストプレイで4回中4回）。「勤務、日8を作って」は時刻がある時だけ
+_NAME_CH = r"[一-龥々ァ-ヺーA-Za-z0-9]"
+_CALLED = re.compile(rf"(?:名前|名称|呼び名|勤務名|シフト名)(?:は|が|を)(?P<a>{_NAME_CH}{{1,6}})|"
+                     rf"(?P<b>{_NAME_CH}{{1,6}})(?:っていう|て言う|という|って|の)?(?:名前|名称)(?:で|に)")
+_AFTER_KIND = re.compile(rf"(?:新しい)?{_KIND}を?(?P<a>{_NAME_CH}{{1,6}}?)(?:を|で)?{_VERB}")
+_NEW_KIND = re.compile(rf"新しい{_KIND}|{_KIND}を?新しく|{_KIND}を?新規")
+_ONCALL = re.compile(r"当番|待機|呼び出し|オンコール")
 # 勤務の名前にならない言葉（人・当番・休みの話は、今までどおり読み取りへ）
 _NOT_NAME = re.compile(r"勤務|シフト|職員|人|当番|待機|呼び出し|オンコール|ルール|休|有給|希望|残業|看護|介護|パート|応援|ヘルプ|"
                        r"スタッフ")
@@ -116,16 +124,49 @@ def add_shift_items(masked: str, facility, waiting: str | None = None) -> list[d
         a, b = times["span"]
         if not t[:a] and _ANSWER_TAIL.fullmatch(t[b:]):
             return [_item(waiting, times)]
-    if _NOT_ADD.search(t):
+    if _NOT_ADD.search(t) or _ONCALL.search(t):
         return None
     rest = t[:times["span"][0]] + t[times["span"][1]:] if times else _HALF_SAID.sub("", t)
     m = _SAID.fullmatch(re.sub(r"^(?:の|で|は|に|が)+", "", rest))
-    if not m:
+    got = _named(m["n"], times, bool(m["h"] or m["l"] or m["k"] or m["k2"]), facility) if m else None
+    if got is not None:
+        return got
+    said = _said_apart(re.sub(r"時間(?:は|が)|時刻は", "", rest), times)
+    if said is None:
         return None
-    name = m["n"]
+    return _named(said, times, True, facility) if said else _no_name(times)
+
+
+def _said_apart(rest: str, times: dict | None) -> str | None:
+    """全文の形（_SAID）に入らない、新しい勤務の頼み。名前（無ければ空）を返す。新しい勤務の頼みでなければ None。"""
+    want = re.search(_VERB, rest) or _NEW_KIND.search(rest)
+    m = _CALLED.search(rest)
+    if m and want:
+        return m["a"] or m["b"]
+    if not times or not re.search(_KIND, rest) or not want:
+        return "" if want and _NEW_KIND.search(rest) else None
+    m = _AFTER_KIND.search(rest)
+    return m["a"] if m and _NAME_SHAPE.fullmatch(_kanji_tail(m["a"])) else ""
+
+
+def _no_name(times: dict | None) -> list[dict]:
+    """名前を言っていない時は聞く。時刻を言っていれば、答えの名前で足す（session が次の一言を答えと読む）。"""
+    if not times:
+        return [{"type": "unclear", "question": f"新しい勤務の名前と時刻を、「8時から17時の日8を足して」のように言ってください。{UNCHANGED}"}]
+    return [{"type": "unclear", "question": f"新しい勤務の名前は何にしますか。「日8」のように言ってください。{UNCHANGED}",
+             "ask_more": {"need": "shift_name", "times": times}}]
+
+
+def _kanji_tail(name: str) -> str:
+    """名前の終わりの漢数字を数字にする（「日八」→「日8」。表のマスでそろえ、声の直しとも合わせる）。"""
+    return re.sub(r"(?<=.)[〇一二三四五六七八九]$", lambda m: str("〇一二三四五六七八九".index(m[0])), name)
+
+
+def _named(name: str, times: dict | None, marked: bool, facility) -> list[dict] | None:
+    """言われた名前を確かめて、足す形か聞き返しにする。勤務の名前にならなければ None。"""
+    name = _kanji_tail(name)
     if name[0].isdigit() or _NOT_NAME.search(name):
         return None
-    marked = bool(m["h"] or m["l"] or m["k"] or m["k2"])
     if any(name in (st.symbol, st.name) for st in facility.shift_types):
         # 「早番を足して」は今ある勤務を足す頼み（読み取りへ）。時刻や「勤務」の言葉がある時だけ、もうあると言う
         return [{"type": "unclear", "question": f"{name}はもうある勤務です。{UNCHANGED}"}] if times or marked else None
