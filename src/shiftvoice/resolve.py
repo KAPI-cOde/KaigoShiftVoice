@@ -23,10 +23,11 @@ WINDOWS = (3, 7, 14, None)
 def carry_rules(facility: Facility, base: dict[str, list[str]], rules: list[Rule],
                 opened: dict[tuple[str, int], set[str]] | None = None) -> list[Rule]:
     """前の表にある研修・有給を、そのマスの決まりとして残す。決まりがそのマスで外す（not_in）なら残さない。
-    話して足した勤務はふつうの勤務なので、そのマスを別の勤務にする頼みがあれば残さない。ルールがそのマスを開けている時
+    話して足した勤務はふつうの勤務なので、そのマスを別の勤務にする頼みがあれば残さない。有給も同じ。ルールがそのマスを開けている時
     （opened）も残さない。ルールが効いている間は前の表に寄せる点で残り、固定すると回数のルールとぶつかるため"""
     req = {st.symbol for st in facility.shift_types if st.on_request_only}
     spoken = {st.symbol for st in facility.shift_types if st.spoken}
+    leave = {st.symbol for st in facility.shift_types if st.kind == "leave"}
     out = []
     for name, row in base.items():
         for d, sym in enumerate(row, 1):
@@ -40,6 +41,9 @@ def carry_rules(facility: Facility, base: dict[str, list[str]], rules: list[Rule
                     r.kind == "cell" and "in" in r.params and sym not in r.params["in"] and
                     (not r.who or name in r.who) and (not r.when or d in r.when) for r in rules)):
                 continue
+            if sym in leave and any(r.kind == "cell" and "in" in r.params and sym not in r.params["in"] and
+                                    (not r.who or name in r.who) and (not r.when or d in r.when) for r in rules):
+                continue   # 有給のマスを別の勤務にする頼み（有給の日の言い直し・元の勤務に戻す）
             out.append(Rule(id=f"c-{name}-{d}", ver=1, name=f"表にある{sym}（{name}さん {d}日）",
                             kind="cell", flex="fixed", params={"in": [sym]}, who=[name], when=[d],
                             scope="once", meta={"carry": True}))

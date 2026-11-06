@@ -22,6 +22,7 @@ _DAYS = re.compile(_START + r"(\d{1,2})日?((?:と|、|,)\d{1,2}日?)*" + _END)
 _DIRECT = re.compile(_START + r"(?:すみません|ごめん|ごめんなさい)?(\d{1,2})日(?:は|の|を)?"
                      r"(?:じゃなくて|じゃなく|ではなくて|ではなく|でなくて)(\d{1,2})日" + _END)
 _ORDER = {"day_off", "set_cell", "avoid_cell"}
+BACK_WORDS = re.compile(r"(?:元|もと|前)の(?:勤務|シフト|まま)|(?:元|もと)に|戻")   # 「元の勤務に戻して」
 
 
 def _plain(masked: str) -> str:
@@ -118,3 +119,44 @@ def as_redo(items: list[dict], rules: dict) -> list[dict]:
     if not who or not all(_spoken(rules, who, d) for d in days):
         return items
     return [{**keep[0], "redo_from": list(days)}]
+
+
+def narrowed(r, gone: set[int]) -> dict:
+    """前の頼みから、gone の日を外す形（残る日が無ければ頼みごと外す）。"""
+    rest = [d for d in r.when if d not in gone]
+    name = re.sub(r"[\d・]+日", "・".join(map(str, rest)) + "日", r.name, count=1) if rest else r.name
+    return {"rule_id": r.id, "rest": rest, "name": name}
+
+
+def same_cell_drops(new_rules: list[dict], rules: dict) -> list[dict]:
+    """新しいマスの頼みに置き換わる、同じ人・同じ日の前の頼み。前は両方が残り、守れない方が「希望を外せる形で作りました」の
+    赤字を以後の直しのたびに出した（2026-11-06 AI のテストプレイで1回の場面で8回）。
+    置き換えるのは話した頼みだけで、作る前に貼った希望は残す。「〇日は早番にしない」は、ぶつかる前の頼みだけ置き換える。"""
+    out = []
+    for r in rules.values():
+        if r.kind != "cell" or not r.when or len(r.who or []) != 1 \
+                or not str(r.meta.get("source", "")).startswith(("話した", "直した")):
+            continue
+        gone: set[int] = set()
+        for rd in new_rules:
+            q = rd["params"]
+            if rd["kind"] == "cell" and r.who[0] in (rd.get("who") or []) \
+                    and ("in" in q or set(r.params.get("in", [])) & set(q.get("not_in", []))):
+                gone |= set(r.when) & set(rd.get("when") or [])
+        if gone:
+            out.append(narrowed(r, gone))
+    return out
+
+
+def same_count(rd: dict, r, scope: str, until: str | None) -> bool:
+    """新しい回数のルールが、同じ人・同じ勤務の前の回数のルール r に代わるか。前は3回と2回の2件が右の枠に並んだ
+    （2026-11-06 AI のテストプレイ）。話したルールだけで、言った側（上限・下限）を全部言い直している時に代わる。
+    毎月のルールを今月だけの数では消さない（来月の決めが消えるため。両方残り、今月は厳しい方が効く）。"""
+    if rd.get("kind") != "count" or r.kind != "count" or not rd.get("who") or sorted(rd["who"]) != sorted(r.who or []):
+        return False
+    p, q = rd["params"], r.params
+    if set(p.get("shifts") or []) != set(q.get("shifts") or []) or not str(r.meta.get("source", "")).startswith("話した"):
+        return False
+    if r.scope == "rule" and not r.meta.get("until") and (scope != "rule" or until):
+        return False
+    return {s for s in ("min", "max") if q.get(s) is not None} <= {s for s in ("min", "max") if p.get(s) is not None}

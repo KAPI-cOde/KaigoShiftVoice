@@ -177,3 +177,109 @@ def test_shift_name_answer_adds_the_shift(sess):
     sess.say("8時から17時の勤務を新しく作って")
     r = sess.say("名前は日8")
     assert r.kind == "applied" and sess.store.facility().shift("日8").hours == 9, r.message
+
+
+# 6 同じマスの2度目の頼み --------------------------------------------------------------
+
+def test_second_request_replaces_the_first(sess):
+    sess.reader = Fake({"職員09さん、12日は休み": [{"type": "day_off", "staff": "職員09", "days": [12], "reason": None}],
+                        "職員09さん、12日は有給": [{"type": "set_cell", "staff": "職員09", "days": [12], "shift": "有", "reason": None}],
+                        "職員07さん、15日は休み": [{"type": "day_off", "staff": "職員07", "days": [15], "reason": None}]})
+    assert sess.say("菊池さん、12日は休み").kind == "applied"
+    r = sess.say("菊池さん、12日は有給")
+    assert r.kind == "applied" and not r.warning and "置き換えました" in r.summary
+    assert [c["name"] for c in sess.state()["cards"] if c["kind"] == "cell" and c["who"] == ["菊池"]] == ["菊池さん 12日 有給"]
+    assert sess.store.month(2026, 11).table["菊池"][11] == "有"
+    assert not sess.say("岡田さん、15日は休み").warning           # 前は以後の直しのたびに赤字が出た
+    sess.undo(); sess.undo()
+    assert [c["name"] for c in sess.state()["cards"] if c["kind"] == "cell" and c["who"] == ["菊池"]] == ["菊池さん 12日 休み"]
+
+
+def test_leave_can_be_replaced_by_a_day_off(sess):
+    sess.reader = Fake({"職員09さん、12日は有給": [{"type": "set_cell", "staff": "職員09", "days": [12], "shift": "有", "reason": None}],
+                        "職員09さん、12日は休み": [{"type": "day_off", "staff": "職員09", "days": [12], "reason": None}]})
+    sess.say("菊池さん、12日は有給")
+    r = sess.say("菊池さん、12日は休み")
+    assert r.kind == "applied" and not r.warning and sess.store.month(2026, 11).table["菊池"][11] == "公"
+
+
+def test_spoken_shift_then_another_replaces(sess):
+    added_8(sess)
+    sess.reader = Fake({"10日の職員11さん、勤務Aに": [{"type": "set_cell", "staff": "職員11", "days": [10], "shift": "勤務A", "reason": None}],
+                        "10日の職員11さん、勤務Aじゃなくて早番に": [{"type": "set_cell", "staff": "職員11", "days": [10], "shift": "早", "reason": None}]})
+    sess.say("10日の小島さん、日8に")
+    r = sess.say("10日の小島さん、日8じゃなくて早番に")
+    assert r.kind == "applied" and not r.warning, r.message
+    assert sess.store.month(2026, 11).table["小島"][9] == "早"
+    assert [c["name"] for c in sess.state()["cards"] if c["kind"] == "cell" and c["who"] == ["小島"]] == ["小島さん 10日 早番"]
+
+
+def test_other_days_of_the_first_request_stay(sess):
+    sess.reader = Fake({"職員07さん、15日と16日は休み": [{"type": "day_off", "staff": "職員07", "days": [15, 16], "reason": None}],
+                        "職員07さん、16日は有給": [{"type": "set_cell", "staff": "職員07", "days": [16], "shift": "有", "reason": None}]})
+    sess.say("岡田さん、15日と16日は休み")
+    sess.say("岡田さん、16日は有給")
+    assert sorted(c["name"] for c in sess.state()["cards"] if c["kind"] == "cell" and c["who"] == ["岡田"]) == ["岡田さん 15日 休み", "岡田さん 16日 有給"]
+
+
+def test_avoid_keeps_a_request_it_does_not_touch(sess):
+    from shiftvoice.redo import same_cell_drops
+    sess.reader = Fake({"職員09さん、12日は休み": [{"type": "day_off", "staff": "職員09", "days": [12], "reason": None}]})
+    sess.say("菊池さん、12日は休み")
+    rules = sess.store.ledger().rules_at()
+    new = {"kind": "cell", "who": ["菊池"], "when": [12], "params": {"not_in": ["早"]}}
+    assert same_cell_drops([new], rules) == []
+
+
+# 7・8 回数の言い直しと「毎月のルールとして残しました」 ----------------------------------
+
+CAP3 = "職員11さん、29日までは夜勤を3回まで。今月だけ"
+NIGHT = {"type": "count_limit", "staff": "職員11", "shift": "夜", "reason": None}
+
+
+def counts(sess):
+    return [c for c in sess.state()["cards"] if c["kind"] == "count" and c["who"] == ["小島"] and c["params"].get("shifts") == ["夜"]]
+
+
+def test_count_replaced_by_the_new_number(sess):
+    sess.reader = Fake({CAP3: [{**NIGHT, "max": 3, "until_day": 29}],
+                        "職員11さんの夜勤、29日までは2回まで": [{**NIGHT, "max": 2, "until_day": 29}]})
+    sess.say("小島さん、29日までは夜勤を3回まで。今月だけ")
+    r = sess.say("小島さんの夜勤、29日までは2回まで")
+    assert r.kind == "applied", r.message
+    assert [c["params"]["max"] for c in counts(sess)] == [2]
+    sess.undo()
+    assert [c["params"]["max"] for c in counts(sess)] == [3]
+
+
+def test_count_for_the_month_replaces_the_dated_one(sess):
+    sess.reader = Fake({CAP3: [{**NIGHT, "max": 3, "until_day": 29}],
+                        "職員11さんの夜勤、今月は2回まで": [{**NIGHT, "max": 2}]})
+    sess.say("小島さん、29日までは夜勤を3回まで。今月だけ")
+    assert sess.say("小島さんの夜勤、今月は2回まで").kind == "applied"
+    assert [c["params"]["max"] for c in counts(sess)] == [2]
+
+
+def test_count_can_be_loosened(sess):
+    sess.reader = Fake({"職員11さんの夜勤、今月は2回まで": [{**NIGHT, "max": 2}], "職員11さんの夜勤、今月は3回まで": [{**NIGHT, "max": 3}]})
+    sess.say("小島さんの夜勤、今月は2回まで")
+    r = sess.say("小島さんの夜勤、今月は3回まで")
+    assert r.kind == "applied" and "もう守られて" not in r.message, r.message
+    assert [c["params"]["max"] for c in counts(sess)] == [3]
+
+
+def test_monthly_count_is_not_removed_by_this_month_only(sess):
+    sess.reader = Fake({"職員11さんの夜勤、毎月4回まで": [{**NIGHT, "max": 4}], "職員11さんの夜勤、今月は2回まで": [{**NIGHT, "max": 2}]})
+    sess.say("小島さんの夜勤、毎月4回まで")
+    sess.say("小島さんの夜勤、今月は2回まで")
+    assert sorted(c["params"]["max"] for c in counts(sess)) == [2, 4]
+
+
+def test_dated_kept_is_not_called_every_month(sess):
+    sess.reader = Fake({"職員11さんの夜勤、毎月2回まで": [{**NIGHT, "max": 2}],
+                        "職員11さんの夜勤、29日までは2回まで": [{**NIGHT, "max": 2, "until_day": 29}]})
+    sess.say("小島さんの夜勤、毎月2回まで")
+    rev = sess.store.ledger().rev
+    r = sess.say("小島さんの夜勤、29日までは2回まで")
+    assert "毎月のルールとして残しました" not in r.message and "もう守られています" in r.message
+    assert sess.store.ledger().rev == rev

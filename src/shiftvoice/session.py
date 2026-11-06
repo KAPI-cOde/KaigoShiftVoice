@@ -16,7 +16,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 
 from .addshift import add_shift_items, fix_spoken, hide_spoken, read_spoken, show_spoken
-from .build import build_original, clip_to_month, month_rules
+from .build import C3_MESSAGE, TIMEOUT_MESSAGE, build_original, clip_to_month, month_rules
 from .daycount import day_counts as _day_counts
 from .intake import WHO_UNKNOWN, Clarify, Proposal, to_proposal
 from .ledger import Ledger
@@ -24,7 +24,7 @@ from .model import Rule
 from .names import Masker
 from .period import other_month, other_month_message, read_answer, relative_days
 from .reader import LimitError, ReadError
-from .redo import as_redo, bare_redo, fill_answer
+from .redo import BACK_WORDS, as_redo, bare_redo, fill_answer, narrowed, same_cell_drops, same_count
 from .giveback import accepted_counts
 from .model import Acceptance
 from .resolve import changed_cells, resolve
@@ -507,8 +507,9 @@ class Session:
             offer = self._standby_offer(u, p, m)
             return offer if offer is not None else self._fix_offer(u, p, m)
         scope = u.get("scope") or p.scope
-        kept = self._kept(p, m)
-        if kept and scope == "once":
+        kept = self._kept(p, m, scope)
+        if kept and (scope == "once" or p.until):
+            # 期限つきの頼みは毎月のルールではないので、今月だけと同じに扱う（「毎月のルールとして残しました」が事実と違った）。
             # 今の表で、もう守られている指摘。今月だけなら表もルールも変えず、何と読んだかを添えてそう言う
             # （「明けの次の日ももう1日休み」で1マスも変わらないのに「直した」と出て、ルールが1件増えていた。2026-11-06）
             self.store.resolve_pending(self.year, self.month, u["id"])
@@ -549,7 +550,7 @@ class Session:
             return f"ルール「{r.name}」"
         return "職員の情報" if any(holds(s.to_dict()) for s in self.store.staff()) else ""
 
-    def _kept(self, p: Proposal, m) -> str:
+    def _kept(self, p: Proposal, m, scope: str | None = None) -> str:
         """読んだルールが、今の表でもう1か所も破れていなければ「今の表で、もう守られています（読んだ中身）」。
         日を決めた頼み（休みの希望など）と当番は当てない（守られていても、そのマスを留める意味がある）。"""
         if p.kind != "rule" or not p.rules or not m.table or any(rd["kind"] in ("cell", "layer") for rd in p.rules):
@@ -566,7 +567,9 @@ class Session:
             return ""
         # 今たまたま守られているだけのルール（「夜勤をこれ以上足さない」の今の回数まで など）は、この後の直しを縛るので
         # 当てない。前からの外せないルールがもう同じことを決めている時だけ「もう守られています」
-        cur = list(self.store.ledger().rules_at(between=self._span()).values())
+        # 回数の言い直しで置き換わる前のルールは、もう決めている物に数えない（2回を3回へゆるめる時に「もう守られています」と言わない）
+        cur = [r for r in self.store.ledger().rules_at(between=self._span()).values()
+               if not any(same_count(rd, r, scope or "once", p.until) for rd in p.rules)]
         by = [implied_by(rd, cur) for rd in p.rules]
         if not all(by):
             return ""
@@ -633,8 +636,20 @@ class Session:
                 n += 1
                 rd["scope"] = scope
                 rd["meta"] = {**rd.get("meta", {}), "said": u["text"], "who": self.who, "at": at,
+        replaced = ""
                               "reason": p.reason, "until": p.until or (end if scope == "once" else None),
                               "source": "話した", "uid": u["id"]}
+            now = led.rules_at(between=self._span())
+            drops = same_cell_drops(p.rules, now)   # 同じ人の同じ日の新しい頼みは、前の頼みを置き換える
+            counts = [] if u.get("dup") else [r for r in now.values()
+                                              if any(same_count(rd, r, scope, p.until) for rd in p.rules)]
+            replaced = "（前の頼みと置き換えました）" if drops else "（前のルールと置き換えました）" if counts else ""
+            for d in drops + [{"rule_id": r.id, "rest": []} for r in counts]:
+                if d["rest"]:
+                    led.append("change", rule_id=d["rule_id"], rule={"when": d["rest"], "name": d["name"]}, op_id=u["id"],
+                               meta={"kind": "replaced", "at": at})
+                else:
+                    led.append("remove", rule_id=d["rule_id"], op_id=u["id"], meta={"kind": "replaced", "at": at})
                 until = p.until or (end if scope == "once" else None)
                 tx = led.append("add", rule=rd, op_id=u["id"], frm=start, until=until,
                                 meta={"said": u["text"], "who": self.who, "at": at})
@@ -717,7 +732,7 @@ class Session:
                     extra["note"] = note
             self.store.save_staff(staff)           # 3 職員
         self.store.resolve_pending(self.year, self.month, u["id"])  # 4 未反映の発言
-        summary = p.summary + ("（前のルールと置き換えました）" if u.get("dup") == "replace" and u.get("dup_old") else "")
+        summary = p.summary + ("（前のルールと置き換えました）" if u.get("dup") == "replace" and u.get("dup_old") else replaced)
         if kept and added:
             summary = f"{kept}。毎月のルールとして残しました（来月からの表にも効きます）"
         return Reply("applied", u["id"], summary, changes=changes, rule_ids=[r.id for r in added],
@@ -1246,7 +1261,6 @@ class Session:
         """言い直し（「赤坂さんじゃなくて井上さん、10日が休みで」）。言い直された人の、同じ日に話したマスの頼みが
         1件に決まる時だけ、それを外して新しい頼みを入れる案を、表を変える前に確かめる。
         無ければ None（今どおり入れる）。2件以上なら聞き返す（どれを外すか決めない）。"""
-        import re
         rd = p.rules[0]
         days, w = set(rd["when"]), p.replace_from[0]
         led0 = self.store.ledger()
@@ -1328,7 +1342,7 @@ class Session:
         else:
             message = f"{p.summary}。動くマスはありません"
         offer = {"rules": p.rules, "scope": "once", "table": rr.table, "changes": rr.changes, "support": support,
-                 "summary": p.summary, "base_rev": self.store.ledger().rev, "base_table": json.dumps(m.table),
+                 "replace": drops, "summary": p.summary, "base_rev": self.store.ledger().rev, "base_table": json.dumps(m.table),
                  "source": "話した（できれば）" if maybe else "直した（配った後）", "message": message}
         self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
         return Reply("fix_offer", u["id"], message, changes=rr.changes, seconds=rr.seconds, summary=p.summary)
@@ -1383,6 +1397,12 @@ class Session:
         # 期限が過ぎたルール（期限が来て片付けた物）は、戻しても効かない。そう言って、続けるなら期間を言ってもらう
         # （前は「次から効きます」とだけ出して、効かなかった。敵対レビュー 2026-11-04）
         r = self.store.ledger().rules_at().get(rule_id)
+        drops = same_cell_drops(p.rules, led.rules_at(between=self._span()))   # 同じ人の同じ日の前の頼みは置き換える
+        for d in drops:
+            if d["rest"]:
+                led.append("change", rule_id=d["rule_id"], rule={"when": d["rest"], "name": d["name"]})
+            else:
+                led.append("remove", rule_id=d["rule_id"])
         until = (r.meta.get("until") if r else None)
         from .nextmonth import next_ym
         ny, nm = next_ym(self.year, self.month)
