@@ -20,7 +20,7 @@ from .intake import WHO_UNKNOWN, Clarify, Proposal, to_proposal
 from .ledger import Ledger
 from .model import Rule
 from .names import Masker
-from .period import read_answer, relative_days
+from .period import other_month, other_month_message, read_answer, relative_days
 from .reader import LimitError, ReadError
 from .giveback import accepted_counts
 from .model import Acceptance
@@ -314,6 +314,13 @@ class Session:
             said = dt.datetime.fromisoformat(u["at"]).date() if u.get("at") else self.now().date()
         except ValueError:
             said = self.now().date()
+        om = other_month(u["text"], self.month)
+        if om is not None:
+            # 開いている月と違う月の日付（11月を開いたまま「12月の15日と16日は希望休」）。Claude は日だけを返し、
+            # 開いている月の表に入っていた（2026-11-06 の確かめ）。送らずに、その月を開いてから言うように聞く
+            self._sent[u["id"]] = None
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("ask", u["id"], other_month_message(om, self.month, self.month % 12 + 1))
         masked, outside = relative_days(masked, said, self.year, self.month)
         if outside:
             word, d = outside[0]

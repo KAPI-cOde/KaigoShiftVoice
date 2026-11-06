@@ -5,14 +5,17 @@
 from __future__ import annotations
 
 import calendar
+import datetime as dt
+import re
 from dataclasses import replace
 
 from .build import month_rules
 from .giveback import _months_back, accepted_counts, build_pair
 from .giveback import settings as gb_settings
-from .intake import Clarify, to_proposal
+from .intake import WHO_UNKNOWN, Clarify, to_proposal
 from .ledger import LedgerError
 from .names import Masker
+from .period import other_month, other_month_message, relative_days
 from .nextmonth import copy_next_month, next_ym
 from .reader import LimitError, ReadError
 from .review import answer, history, review_cards, undo_answer
@@ -68,6 +71,56 @@ ANSWER_WORDS = {"archive": "片付けた", "extend": "延ばした", "keep": "�
                 "archive_partner": "もう片方を片付けた"}
 
 
+# ---- 表を作る前に入れる希望休（作者の作り方の最初の一歩。全員の希望休を入れてから表を作る） ----
+WISH_SOURCE = "作る前"          # 帳面の meta.source。翌月の表を作る前に入れた頼みの印
+WISH_MARKS = {"希", "希望", "希休", "希望休"}
+WISH_ONLY = "表を作る前に入れられるのは、日付の決まった休みや勤務の頼みです。ほかの頼みは{m}月の表を開いてから言ってください。何も入れていません"
+
+
+def _wish_span(y: int, m: int) -> tuple[str, str]:
+    return f"{y:04d}-{m:02d}-01", f"{y:04d}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
+
+
+def parse_wish_paste(text: str, roster: list[str], days: int) -> tuple[dict[str, list[int]], list[str]]:
+    """来月の希望を書いた表（名前と日の見出しと「希」）を読む。返すのは 名前 → 日 と、名簿にない名前。
+    取り込み（onboard.parse_paste）は空欄を公休にし「希」を公に読み替えるので、希望の紙には使わない
+    （空欄＝希望なし、希＝希望休、を分けたいため）。日の見出しは onboard と同じ読み方（1・1日・12/1・12月1日）"""
+    from .onboard import _cell_text, _clean_name, _day_number, _nfkc
+    import csv
+    import io
+    text = _nfkc(text or "")
+    delim = "\t" if "\t" in text else ","
+    rows = [[_cell_text(c) for c in r] for r in csv.reader(io.StringIO(text), delimiter=delim)]
+    rows = [r for r in rows if any(r)]
+    cols: dict[int, int] | None = None
+    out: dict[str, list[int]] = {}
+    unknown: list[str] = []
+    for cells in rows:
+        nums = {j: _day_number(c) for j, c in enumerate(cells) if c}
+        nums = {j: d for j, d in nums.items() if d is not None}
+        if cols is None or (len(nums) >= 3 and len(nums) >= len([c for c in cells if c]) - 2):
+            if len(nums) >= 3:   # 見出しの行（日の番号が並ぶ行）
+                cols = {j: d for j, d in nums.items() if 1 <= d <= days}
+                continue
+        if cols is None:
+            continue
+        marks = [d for j, d in cols.items() if j < len(cells) and re.sub(r"\s", "", cells[j]) in WISH_MARKS]
+        if not marks:
+            continue
+        name = next((n for n in roster for c in cells[:min(cols)] if c and _clean_name(c) in (n, n + "さん")), None)
+        if name is None:
+            name = next((n for n in roster for c in cells[:min(cols)] if c and _clean_name(c).startswith(n)), None)
+        if name is None:
+            raw = next((c for c in cells[:min(cols)] if c and not c.isdigit()), "")
+            if raw:
+                unknown.append(_clean_name(raw))
+            continue
+        out.setdefault(name, [])
+        out[name] = sorted(set(out[name]) | set(marks))
+    return out, unknown
+
+
+
 class NextFlow:
     def __init__(self, store: Store, year: int, month: int):
         """year, month は今の月（11月）。進む先は翌月（12月）。"""
@@ -108,7 +161,7 @@ class NextFlow:
                 "once_names": v["once_names"],
 
                 "done": v["cursor"] >= n, "summary": summary,
-                "history": history(led)}
+                "history": history(led), **self.wishes()}
 
     def answer(self, rule_id: str, what: str, new_until: str | None = None, split: bool = False) -> dict:
         answer(self.store, self.ny, self.nm, rule_id, what, new_until=new_until, split=split)
@@ -253,3 +306,125 @@ class NextFlow:
         self.store.save_acceptances(items)
         self.store.save_month(m)
         return {"ok": True, "plan": plan}
+
+    def wishes(self) -> dict:
+        """翌月の表を作る前に入れた頼みの一覧と、まだ1件も入っていない人（画面の一覧）。"""
+        start, end = _wish_span(self.ny, self.nm)
+        led = self.store.ledger()
+        items = [{"rule_id": r.id, "name": r.name, "said": r.meta.get("said"), "who": r.who or []}
+                 for r in led.rules_at(between=(start, end)).values()
+                 if r.meta.get("source") in (WISH_SOURCE, WISH_SOURCE + "（貼った表）") and r.meta.get("from") == start]
+        have = {w for x in items for w in x["who"]}
+        try:
+            roster = [s.name for s in self.store.staff_on(self.ny, self.nm)]
+        except Exception:  # noqa: BLE001 名簿が読めない時は「まだの人」を出さない
+            roster = []
+        return {"wishes": items, "wish_missing": [n for n in roster if n not in have], "wish_month": self.nm}
+
+    def _add_wish_rules(self, rules: list[dict], said: str, source: str, op_id: str) -> list[str]:
+        """頼みを翌月だけのルールとして帳面に足す。同じ人・同じ日・同じ中身が入っていれば足さない。返すのは足した名前"""
+        start, end = _wish_span(self.ny, self.nm)
+        led = self.store.ledger()
+        cur = list(led.rules_at(between=(start, end)).values())
+        at = dt.datetime.now().isoformat(timespec="seconds")
+        from .session import _next_id
+        n = _next_id(led)
+        added = []
+        for rd in rules:
+            if any(r.kind == rd["kind"] and r.params == rd["params"] and (r.who or None) == (rd.get("who") or None)
+                   and r.when == rd.get("when") for r in cur):
+                continue
+            rd = {**rd, "id": f"r{n}", "scope": "once",
+                  "meta": {**rd.get("meta", {}), "said": said, "at": at, "source": source, "until": end}}
+            n += 1
+            led.append("add", rule=rd, op_id=op_id, frm=start, until=end, meta={"said": said, "at": at})
+            added.append(rd["name"])
+        if added:
+            self.store.save_ledger(led)
+        return added
+
+    def wish(self, text: str, reader, split: bool = False) -> dict:
+        """表を作る前の一言（「岡田さん、15と16は法事で休み」）。翌月だけの頼みとして帳面に入れ、表は作らない。
+        作るのは［〇月の表を作る］の時（その時に、入った頼みを守って作る）"""
+        self._ensure()
+        text = (text or "").strip()
+        out = self.review(split)
+        if not text:
+            return {**out, "wish_error": "希望休を話すか、文字で入れてください"}
+        om = other_month(text, self.nm)
+        if om is not None:   # 違う月の頼み。Claude へ送らずに聞く
+            return {**out, "wish_error": other_month_message(om, self.nm, what="何も入れていません")}
+        fac = self.store.facility()
+        staff = self.store.staff_on(self.ny, self.nm)
+        masker = Masker(self.store.staff(), fac)
+        masked, unknown = masker.mask(text)
+        if unknown:
+            if unknown[0] in masker.leftover:
+                return {**out, "wish_error": f"名前が読み取れません（{unknown[0]}）。{masker.leftover[unknown[0]]}さんのように、名前に「さん」を付けて言い直してください。何も入れていません"}
+            return {**out, "wish_error": f"名簿にない名前です（{'・'.join(unknown)}）。何も入れていません"}
+        masked, outside = relative_days(masked, dt.date.today(), self.ny, self.nm)
+        if outside:
+            word, d = outside[0]
+            return {**out, "wish_error": f"「{word}」は{d.month}月{d.day}日で、{self.nm}月の外です。{self.nm}月の何日かで言ってください。何も入れていません"}
+        dec = self.store.month(self.ny, self.nm)
+        try:
+            raw = reader.read(masked)
+            if not re.search(r"職員\d{2}", masked) and any(
+                    isinstance(it, dict) and it.get("staff") not in (None, [], "") for it in raw):
+                return {**out, "wish_error": WHO_UNKNOWN.replace("表もルールも変えていません", "何も入れていません")}
+            items = masker.unmask(raw)
+            p = to_proposal(items, text, fac, staff, dec)
+        except LimitError as e:
+            return {**out, "wish_error": str(e)}
+        except ReadError:
+            if getattr(reader, "calls_claude", True) is False:
+                return {**out, "wish_error": "Claude の鍵が入っていないので、一言では入れられません（Claude へは送っていません）。希望を書いた表を下に貼ると、鍵なしで入れられます"}
+            return {**out, "wish_error": "読み取りに失敗しました。何も入れていません"}
+        except Clarify as e:
+            return {**out, "wish_error": str(e)}
+        ok = (p.kind == "cells" and p.rules and not p.staff_changes and not p.removes and not p.covers
+              and all(r["kind"] == "cell" and r.get("when") and r.get("who")
+                      and not (r.get("meta") or {}).get("moved_to") and not (r.get("meta") or {}).get("moved_from")
+                      for r in p.rules))
+        if not ok:
+            return {**out, "wish_error": WISH_ONLY.format(m=self.nm)}
+        start, _ = _wish_span(self.ny, self.nm)
+        led = self.store.ledger()
+        added = self._add_wish_rules(p.rules, text, WISH_SOURCE, f"wish-{start[:7]}-{led.rev + 1}")
+        out = self.review(split)
+        if not added:
+            return {**out, "wish_note": f"{self.nm}月はもう入っています"}
+        return {**out, "wish_note": "入れました　" + "、".join(added)}
+
+    def wish_paste(self, text: str, split: bool = False) -> dict:
+        """来月の希望を書いた表を貼った（Excel の「希」）。Claude は呼ばない"""
+        self._ensure()
+        staff = self.store.staff_on(self.ny, self.nm)
+        dec = self.store.month(self.ny, self.nm)
+        got, unknown = parse_wish_paste(text, [s.name for s in staff], dec.days)
+        if not got:
+            return {**self.review(split), "wish_error": "「希」の入ったマスが見つかりませんでした。"
+                    "1行目に日の番号（1から）、左の列に名前、希望の日に「希」を書いた表を貼ってください。何も入れていません"}
+        rules = [{"name": f"{n}さん {'・'.join(map(str, ds))}日 希望休", "kind": "cell", "flex": "wish",
+                  "params": {"in": ["公"]}, "who": [n], "when": ds} for n, ds in got.items()]
+        start, _ = _wish_span(self.ny, self.nm)
+        led = self.store.ledger()
+        added = self._add_wish_rules(rules, "貼った希望の表", WISH_SOURCE + "（貼った表）",
+                                     f"wish-{start[:7]}-{led.rev + 1}")
+        out = self.review(split)
+        note = f"{len(added)}人分を入れました" if added else f"{self.nm}月はもう入っています"
+        if unknown:
+            note += f"。名簿にない名前は入れていません（{'・'.join(unknown)}）"
+        return {**out, "wish_note": note}
+
+    def unwish(self, rule_id: str, split: bool = False) -> dict:
+        """一覧の［取り消す］。作る前に入れた頼みだけ外せる"""
+        start, _ = _wish_span(self.ny, self.nm)
+        led = self.store.ledger()
+        r = led.rules_at().get(rule_id)
+        if r is None or not str(r.meta.get("source", "")).startswith(WISH_SOURCE) or r.meta.get("from") != start:
+            return {**self.review(split), "wish_error": "取り消す頼みが見つかりません"}
+        led.append("remove", rule_id=rule_id, op_id=f"unwish-{rule_id}-{led.rev + 1}",
+                   meta={"kind": "wish_removed", "at": dt.datetime.now().isoformat(timespec="seconds")})
+        self.store.save_ledger(led)
+        return {**self.review(split), "wish_note": f"取り消しました　{r.name}"}

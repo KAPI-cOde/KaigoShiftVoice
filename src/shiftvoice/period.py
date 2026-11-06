@@ -97,3 +97,27 @@ def relative_days(text: str, today: dt.date, year: int, month: int) -> tuple[str
 def resolve_relative_days(text: str, today: dt.date, year: int, month: int) -> str:
     """relative_days の置き換えた文だけ（試験で、送る文と同じ文を作るのに使う）。"""
     return relative_days(text, today, year, month)[0]
+
+
+_ZEN = str.maketrans("０１２３４５６７８９", "0123456789")
+# 「12月の15日」「12月15日」「12月は15と16」。「11月」の中の「1月」は拾わない。「12月から」「12月いっぱい」「1月31日まで」
+# 「12月1日から」は、ほかの月からの変更や期限の言い方なので数えない
+_MONTH_DAY = re.compile(r"(?<![0-9])(\d{1,2})月(?:の|は|に)?\s*(\d{1,2})(?:日)?(?![0-9])(?!日?(?:まで|から|以降|より|迄))")
+
+
+def other_month(text: str, month: int) -> int | None:
+    """一言が、開いている月（month）と違う月の日付を言っていれば、その月。言っていなければ None。
+    11月の表を開いたまま「12月の15日と16日は希望休」と言うと、Claude は日だけを返し、11月の表に入っていた
+    （2026-11-06 の確かめ。16マス動いた）。Claude へ送る前に手元で見つけて聞き返す"""
+    for m in _MONTH_DAY.finditer(text.translate(_ZEN)):
+        mo = int(m.group(1))
+        if 1 <= mo <= 12 and mo != month:
+            return mo
+    return None
+
+
+def other_month_message(said: int, month: int, next_month: int | None = None, *, what: str = "表もルールも変えていません") -> str:
+    """聞き返しの文。言った月が翌月なら、画面のボタン［〇月へ］で開く道を言う。"""
+    if next_month is not None and said == next_month:
+        return f"{said}月の頼みです。［{said}月へ］で{said}月を開いてから言ってください。{what}"
+    return f"{said}月の頼みです。いま開いているのは{month}月です。{said}月の表で言ってください。{what}"

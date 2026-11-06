@@ -593,6 +593,12 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
                                             split=bool(data.get("split")))
                         elif self.path == "/api/next/undo":
                             out = fl.undo(data.get("rule_id", ""), split=bool(data.get("split")))
+                        elif self.path == "/api/next/wish":     # 表を作る前の希望休（一言）
+                            out = fl.wish(data.get("text", ""), self.box.session.reader, split=bool(data.get("split")))
+                        elif self.path == "/api/next/wish_paste":   # 来月の希望を書いた表（「希」）
+                            out = fl.wish_paste(data.get("text", ""), split=bool(data.get("split")))
+                        elif self.path == "/api/next/unwish":
+                            out = fl.unwish(data.get("rule_id", ""), split=bool(data.get("split")))
                         elif self.path == "/api/next/build":
                             out = fl.build()
                         elif self.path == "/api/next/adopt":

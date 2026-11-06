@@ -145,6 +145,15 @@
   .btns select { font: inherit; font-size: 13px; border: 1px solid #000; border-radius: 3px; padding: 6px 8px; background: #fff; }
   .rv-card .ext button.on { background: #000; color: #fff; }
   .rv-err { color: #c0392b; font-size: 13px; min-height: 18px; }
+  /* 表を作る前の希望休（作者の作り方の最初の一歩） */
+  .wishbox .ttl { font-size: 20px; }
+  .wishbox .wl { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+  .wishbox .wl div { font-size: 15px; display: flex; gap: 12px; align-items: baseline; }
+  .wishbox .wl .said { font-size: 12px; color: #444; }
+  .wishbox .wnote { font-size: 13px; margin-top: 8px; min-height: 18px; }
+  .wishbox .wnote.err { color: #c0392b; }
+  .wishbox button.linkish { padding: 0; font-size: 13px; }
+  .wishbox textarea { width: 100%; box-sizing: border-box; height: 90px; font: inherit; font-size: 12px; border: 1px solid #000; border-radius: 3px; padding: 6px 8px; margin-top: 8px; }
   .sumrows { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; }
   .sumrows button { text-align: left; padding: 10px 14px; font-size: 15px; }
   .big { padding: 10px 26px; font-size: 15px; }
@@ -1336,6 +1345,11 @@ var chText = "";         // 変える欄の文字（失敗した時に残す）
 var chRec = null;        // 変える欄の録音
 var rvErr = "";
 var BR = null;           // /api/next/build の返事
+var wishText = "";       // 表を作る前の希望休の欄の文字
+var wishNote = "";       // 入れた・取り消した知らせ
+var wishErr = false;
+var wishPasteOpen = false;
+var wishPaste = "";
 var adopted = false;
 var waitTimer = null;
 
@@ -1352,6 +1366,7 @@ function get12() { return fetch("/api/next/review" + (splitAdded ? "?split=1" : 
 function openReview() {
   show12(true);
   BR = null; adopted = false; R = null; splitAdded = false;
+  wishNote = ""; wishErr = false;
   renderReview();   // 前の計算が終わるまで待つことがあるので、待つ間は一言出す（白い画面にしない）
   get12().then(function (r) { R = r; detailOpen = false; extOpen = false; chOpen = false; rvErr = ""; renderReview(); });
 }
@@ -1471,6 +1486,7 @@ function renderReview() {
       rows.appendChild(b);
     });
     wrap.appendChild(rows);
+    if (!(S && S.public) && R.wishes) wrap.appendChild(wishBox());
     var go = el("button", "primary big", R.month + "月の表を作る");
     go.type = "button";
     go.addEventListener("click", startBuild);
@@ -1516,9 +1532,89 @@ function chStop() {
   fetch("/api/voice", { method: "POST", headers: { "Content-Type": "application/octet-stream", "X-Text-Only": "1" },
                         body: pcm.buffer })
     .then(function (x) { return x.json(); }).then(function (res) {
-      if (res.error) { rvErr = res.error; } else { chText = res.text; rvErr = ""; }
+      if (res.error) { rvErr = res.error; renderReview(); return; }
+      rvErr = "";
+      if (R && R.done) { wishText = res.text; renderReview(); sendWish(); return; }   // 希望休の欄の声は、文字にしたらそのまま入れる
+      chText = res.text;
       renderReview();
     }).catch(function () { rvErr = "声を文字にできませんでした。文字で入れてください"; renderReview(); });
+}
+
+// 表を作る前の希望休。一言ずつ入れると一覧に並び、［〇月の表を作る］で守って作る（表はまだ作らない）
+function wishSet(res) {
+  if (!res) return;
+  R = res; rvErr = "";
+  wishErr = !!res.wish_error;
+  wishNote = res.wish_error || res.wish_note || "";
+  renderReview();
+}
+function sendWish() {
+  var t = wishText.trim();
+  if (!t) return;
+  next("wish", { text: t, split: splitAdded }).then(function (res) {
+    if (res && !res.wish_error) wishText = "";
+    wishSet(res);
+  });
+}
+function wishBox() {
+  var m = R.wish_month;
+  var card = el("div", "rv-card wishbox");
+  var l1 = el("div", "l1");
+  l1.appendChild(el("span", "lbl", "表を作る前に"));
+  l1.appendChild(el("span", "ttl", m + "月の希望休　" + R.wishes.length + "件"));
+  card.appendChild(l1);
+  card.appendChild(el("div", "ln", "1人ずつ話すか書いて入れると、下に並びます。［" + m + "月の表を作る］で、入れた希望休を守って作ります"));
+  var cx = el("div", "ext");
+  var ci = el("input", "chtext"); ci.type = "text"; ci.id = "wishtext"; ci.value = wishText;
+  ci.placeholder = "例　岡田さん、15と16は法事で休み";
+  ci.addEventListener("input", function () { wishText = ci.value; ok.disabled = !ci.value.trim(); });
+  ci.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); sendWish(); } });
+  cx.appendChild(ci);
+  if (S && S.has_voice) {
+    var ct = el("button", chRec ? "on" : "", chRec ? "話し終えた" : "話す"); ct.type = "button";
+    ct.addEventListener("click", function () { chRec ? chStop() : chStart(); });
+    cx.appendChild(ct);
+  }
+  var ok = el("button", "primary", "入れる"); ok.type = "button"; ok.id = "wishsend"; ok.disabled = !wishText.trim();
+  ok.addEventListener("click", sendWish);
+  cx.appendChild(ok);
+  card.appendChild(cx);
+  card.appendChild(el("div", "wnote" + (wishErr ? " err" : ""), wishNote));
+  if (R.wishes.length) {
+    var wl = el("div", "wl");
+    R.wishes.forEach(function (w) {
+      var row = el("div", "");
+      row.appendChild(el("span", "", w.name));
+      if (w.said) row.appendChild(el("span", "said", "「" + w.said + "」"));
+      var x = el("button", "linkish", "取り消す"); x.type = "button";
+      x.addEventListener("click", function () { next("unwish", { rule_id: w.rule_id, split: splitAdded }).then(wishSet); });
+      row.appendChild(x);
+      wl.appendChild(row);
+    });
+    card.appendChild(wl);
+  }
+  var miss = R.wish_missing || [];
+  card.appendChild(el("div", "ln small", miss.length ? "まだ入っていない人 " + miss.length + "人　" + miss.join("・")
+                                              : "全員の希望休が入りました"));
+  var pb = el("button", "linkish", wishPasteOpen ? "貼る欄をたたむ" : "希望を書いた表（「希」）を貼って入れる");
+  pb.type = "button";
+  pb.addEventListener("click", function () { wishPasteOpen = !wishPasteOpen; renderReview(); });
+  var pl = el("div", "ln small wpaste"); pl.appendChild(pb); card.appendChild(pl);
+  if (wishPasteOpen) {
+    var ta = el("textarea"); ta.id = "wishpaste"; ta.value = wishPaste;
+    ta.placeholder = "Excel で、1行目に日の番号、左の列に名前、希望の日に「希」を書いた表を選んでコピーし、ここに貼ってください";
+    ta.addEventListener("input", function () { wishPaste = ta.value; pg.disabled = !ta.value.trim(); });
+    card.appendChild(ta);
+    var pg = el("button", "", "取り込む"); pg.type = "button"; pg.disabled = !wishPaste.trim();
+    pg.addEventListener("click", function () {
+      next("wish_paste", { text: wishPaste, split: splitAdded }).then(function (res) {
+        if (res && !res.wish_error) { wishPaste = ""; wishPasteOpen = false; }
+        wishSet(res);
+      });
+    });
+    var pr = el("div", "btns"); pr.appendChild(pg); card.appendChild(pr);
+  }
+  return card;
 }
 
 function startBuild() {
