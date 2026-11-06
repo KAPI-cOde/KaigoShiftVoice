@@ -109,3 +109,10 @@ def test_施設を行き来しても開いている施設の名簿で文字に�
     assert again["state"]["has_voice"] is True
     speak(base)
     assert set(voice.names[-1]) == KOMOREBI
+
+
+def test_話して足した勤務の名前も手がかりに渡す(srv):
+    base, voice, _ = srv
+    call(base, "/api/say", {"text": "8時から17時の日8を足して"})
+    speak(base)
+    assert "日8" in voice.names[-1]                          # 渡さないと「日8」が「非8」になった（2026-11-06 AI のテストプレイ）

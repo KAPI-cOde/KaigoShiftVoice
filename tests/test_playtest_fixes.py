@@ -91,3 +91,38 @@ def test_new_kind_without_name_or_times_says_how(sess):
 def test_add_keeps_other_requests_for_the_reader(sess, said):
     from shiftvoice.addshift import add_shift_items
     assert add_shift_items(said, sess.store.facility()) is None
+
+
+# 3 声の「日8」 -----------------------------------------------------------------------
+
+def added_8(sess):
+    assert sess.say("8時から17時の日8を足して").kind == "applied"
+
+
+@pytest.mark.parametrize("said", ["10日の小島さん、日八に", "10日の小島さん非8に", "10日の小島さん、非八に", "10日の小島さん、日８に",
+                                  "10日の小島さん、にちはちに", "10日の小島さん、ひはちに", "10日の小島さん、ニチハチに"])
+def test_near_names_become_the_added_shift(tmp_path, sess, said):
+    from shiftvoice.addshift import fix_spoken
+    added_8(sess)
+    assert fix_spoken(said, sess.store.facility()) == "10日の小島さん、日8に".replace("、", "、" if "、" in said else "")
+
+
+def test_heard_name_reaches_the_table(sess):
+    added_8(sess)
+    sess.reader = Fake({"10日の職員11さん、勤務Aに": [{"type": "set_cell", "staff": "職員11", "days": [10], "shift": "勤務A",
+                                                  "strength": "wish", "reason": None}]})
+    r = sess.say("10日の小島さん、日八に")
+    assert r.kind == "applied" and sess.store.month(2026, 11).table["小島"][9] == "日8"
+    assert sess.reader.sent[0].messages[-1]["content"].count("勤務A") >= 1
+
+
+@pytest.mark.parametrize("said", ["10日8時に集合", "十日八時から", "平日8人", "毎日八回", "10日の小島さん、日勤に"])
+def test_numbers_are_not_the_added_shift(sess, said):
+    from shiftvoice.addshift import fix_spoken
+    added_8(sess)
+    assert fix_spoken(said, sess.store.facility()) == said
+
+
+def test_nothing_changes_without_an_added_shift(sess):
+    from shiftvoice.addshift import fix_spoken
+    assert fix_spoken("10日の小島さん、日八に", sess.store.facility()) == "10日の小島さん、日八に"

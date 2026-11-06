@@ -15,7 +15,7 @@ import re
 import datetime as dt
 from dataclasses import dataclass, field
 
-from .addshift import add_shift_items, hide_spoken, read_spoken, show_spoken
+from .addshift import add_shift_items, fix_spoken, hide_spoken, read_spoken, show_spoken
 from .build import build_original, clip_to_month, month_rules
 from .daycount import day_counts as _day_counts
 from .intake import WHO_UNKNOWN, Clarify, Proposal, to_proposal
@@ -322,7 +322,7 @@ class Session:
 
     # 話す
     def say(self, text: str) -> Reply:
-        text = text.strip()
+        text = fix_spoken(text.strip(), self.store.facility())
         u = self.store.add_pending(self.year, self.month, text, at=self.now().isoformat(timespec="seconds"),
                                    status="new")
         return self._stamp(self._read(u))

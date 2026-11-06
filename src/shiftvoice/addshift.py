@@ -198,6 +198,36 @@ def _words(st) -> set[str]:
     return {st.name} | ({st.symbol} if len(st.symbol) >= 2 or st.symbol.isascii() or "\u2460" <= st.symbol <= "\u2473" else set())
 
 
+# 足した勤務の名前の聞き違い・書き違い。名前の「日」は「ひ」とも読まれ（「日8」が声で「非8」になる）、数字は全角・漢数字・
+# かなで出る。そのまま送ると「日八」を日勤と読み、表が黙って違う勤務になった（2026-11-06 AI のテストプレイ）
+_HEAD_SOUNDS = {"日": ("非", "比", "飛", "緋", "にち", "ニチ", "ひ", "ヒ")}
+_DIGIT_WORDS = {"0": "〇零", "1": "一", "2": "二", "3": "三", "4": "四", "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"}
+_DIGIT_KANA = {"1": "いち", "2": "に", "3": "さん", "4": "よん", "5": "ご", "6": "ろく", "7": "なな", "8": "はち", "9": "きゅう"}
+_KANJI_NUM = "〇零一二三四五六七八九十"
+
+
+def _spoken_forms(name: str) -> re.Pattern | None:
+    """足した勤務の名前の言い換えの形。名前の終わりが1桁の数字の時だけ作る（中番・A勤に言い換えは無い）。
+    「10日8時」「二十日八時」「平日8人」のように、日付や数の続きは当てない。"""
+    if len(name) < 2 or not name[-1].isdigit() or name[-2].isdigit():
+        return None
+    head, d = name[:-1], name[-1]
+    heads = [head] + [s + head[1:] for s in _HEAD_SOUNDS.get(head[0], ())]
+    kana = _DIGIT_KANA.get(d, "")
+    tails = [d, chr(ord("０") + int(d)), *_DIGIT_WORDS[d], kana, "".join(chr(ord(c) + 96) for c in kana)]
+    forms = "|".join(map(re.escape, sorted({h + t for h in heads for t in tails if t} - {name}, key=len, reverse=True)))
+    return re.compile(rf"(?<![0-9０-９{_KANJI_NUM}A-Za-z])(?:{forms})(?![0-9０-９{_KANJI_NUM}時分回人名件日連月週])")
+
+
+def fix_spoken(text: str, facility) -> str:
+    """一言の中の、足した勤務の名前に近い書き方を、足した勤務の名前に直す。足した勤務が無ければ文はそのまま。"""
+    for st in spoken_shifts(facility):
+        forms = _spoken_forms(st.name)
+        if forms is not None:
+            text = forms.sub(st.name, text)
+    return text
+
+
 def hide_spoken(masked: str, facility) -> tuple[str, dict[str, str]]:
     """一言の中の足した勤務の名前を「勤務A」に置き換える。返すのは送る文と、{勤務A: 記号}（言っていなければ文はそのまま）。"""
     t = masked.translate(_ZEN)

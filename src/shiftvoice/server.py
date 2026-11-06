@@ -26,6 +26,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .addshift import spoken_shifts
 from .nextmonth import next_ym
 from .onboard import (OnboardError, ParseError, Proposal, Pasted, SymbolPlan, _short_id, _template, create_facility, infer,
                       parse_paste, plan_symbols, timed_kind)
@@ -366,8 +367,10 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
             import numpy as np
             n = int(self.headers.get("Content-Length") or 0)
             samples = np.frombuffer(self.rfile.read(n), dtype="<f4")
-            # 名前の手がかりは、いま開いている施設の名簿（［自分の施設で始める］や切り替えの後も、その施設の名前で聞く）
-            names = [s.name for s in self.box.session.store.staff()]
+            # 名前の手がかりは、いま開いている施設の名簿（［自分の施設で始める］や切り替えの後も、その施設の名前で聞く）。
+            # 話して足した勤務の名前も渡す（渡さないと「日8」が「非8」になる）
+            store = self.box.session.store
+            names = [s.name for s in store.staff()] + [st.name for st in spoken_shifts(store.facility())]
             text, secs = self.box.voice.transcribe(samples, names)
             if not text:
                 return self._json(200, {"error": "聞き取れませんでした。もう一度話すか、文字で入れてください",
