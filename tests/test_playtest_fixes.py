@@ -415,3 +415,26 @@ def test_back_without_a_day_confirms_then_restores(sess):
     assert r.kind == "fix_offer" and "頼む前の勤務に戻します" in r.message, r.message
     sess.accept(r.uid)
     assert sess.store.month(2026, 11).table["田村"][a - 1] == was
+
+
+# 10 今月だけのルールを右の欄のいちばん上に --------------------------------------------
+
+@pytest.mark.parametrize("card,want", [({"kind": "count", "scope": "once", "meta": {}}, True),
+                                       ({"kind": "count", "scope": "rule", "meta": {"until": "2026-11-29"}}, True),
+                                       ({"kind": "count", "scope": "rule", "meta": {}}, False),
+                                       ({"kind": "count", "scope": "rule", "meta": {"until": "2026-12-31"}}, False),
+                                       ({"kind": "cell", "scope": "once", "meta": {"until": "2026-11-30"}}, False)])
+def test_month_only_cards(card, want):
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if not shutil.which("node"):
+        pytest.skip("node が無い")
+    html = (Path(__file__).parents[1] / "src/shiftvoice/static/index.html").read_text(encoding="utf-8")
+    fn = re.search(r"function monthOnly\(c\) \{.*?\n\}", html, re.S)[0]
+    js = f"var S={{year:2026,month:11}};{fn};console.log(JSON.stringify(monthOnly({json.dumps(card)})))"
+    assert json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout) is want
+    top = html[html.index("function renderCards()"):]
+    assert top.index("only.forEach") < top.index("cleanEntry(box)")     # 毎月のルールの上に出す
+    assert '"今月だけ"' in html[html.index("function makeCard"):html.index("function renderSaid")]

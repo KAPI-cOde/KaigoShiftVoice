@@ -72,7 +72,7 @@
   .card .per .str { color: #555; margin-right: 6px; }
   .ptt { font-size: 12px; color: #555; align-self: center; white-space: nowrap; }
   .card .why { font-size: 12px; margin-top: 2px; }
-  .card .new { font-size: 11px; border: 1px solid #000; border-radius: 3px; padding: 0 5px; margin-left: 6px; font-weight: 700; }
+  .card .new { font-size: 11px; border: 1px solid #000; border-radius: 3px; padding: 0 5px; margin-left: 6px; font-weight: 700; white-space: nowrap; display: inline-block; }
   .card .detail { margin-top: 6px; padding-top: 6px; border-top: 1px solid #ddd; font-size: 12px; }
   .card .detail div { margin-bottom: 2px; }
   .card .nums .numline { font-weight: 700; font-size: 13px; }
@@ -633,14 +633,24 @@ function fmtUntil(u) {
   return parseInt(m[2], 10) + "月" + parseInt(m[3], 10) + "日まで";
 }
 
+// 今月だけのルール（今月の中で終わる回数や並び）。日付つきのマスの頼みは表に出るので数えない
+function monthOnly(c) {
+  var u = (c.meta && c.meta.until) || "";
+  var ym = S.year + "-" + (S.month < 10 ? "0" : "") + S.month;
+  return c.kind !== "cell" && (c.scope === "once" || u.slice(0, 7) === ym);
+}
+
 function renderCards() {
   var box = document.getElementById("cards");
   box.textContent = "";
-  var rules = S.cards.filter(function (c) { return c.scope === "rule"; });
+  // 今月だけのルールはいちばん上に出す（前は一覧に出ず、入ったことが見えなかった。2026-11-06 作者の答え）
+  var only = S.cards.filter(monthOnly).reverse();
+  only.forEach(function (c) { box.appendChild(makeCard(c)); });
+  var rules = S.cards.filter(function (c) { return c.scope === "rule" && !monthOnly(c); });
   var said = rules.filter(function (c) { return c.meta && c.meta.said; }).reverse();
   var base = rules.filter(function (c) { return !(c.meta && c.meta.said); });
   var list = said.concat(base);
-  if (!list.length) box.appendChild(el("div", "empty", "ルールはまだありません"));
+  if (!list.length && !only.length) box.appendChild(el("div", "empty", "ルールはまだありません"));
   if (list.length <= GROUP_AT) { cleanEntry(box); list.forEach(function (c) { box.appendChild(makeCard(c)); }); }
   else renderGrouped(box, list);
   renderArchived(box);
@@ -902,6 +912,7 @@ function makeCard(c) {
     b.type = "button";
     var top = el("div", "top");
     var nm = el("span", "nm", c.name);
+    if (monthOnly(c)) nm.appendChild(el("span", "new", "今月だけ"));
     if (newIds[c.id]) nm.appendChild(el("span", "new", "新しいルール"));
     top.appendChild(nm);
     var per = el("span", "per", m.until ? fmtUntil(m.until) : "毎月");
