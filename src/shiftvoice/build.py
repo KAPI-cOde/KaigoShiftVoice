@@ -83,7 +83,7 @@ def impossible_wishes(facility: Facility, rules: list[Rule], month: Month) -> tu
             if o.kind == "cell" and o.flex == "fixed" and o.who == [who] and o.params.get("in") and not want & set(o.params["in"]):
                 for d in set(o.when or []) & set(r.when) - bad:
                     bad.add(d)
-                    notes.append(f"{who}さんの{d}日は「{o.name}」を守るので、希望休を外しました")
+                    notes.append(f"{who}さんの{d}日は「{o.name}」があるので、希望休を守れませんでした")
         if set(r.when) - bad:
             out.append(replace(r, when=[d for d in r.when if d not in bad]) if bad else r)
     return out, notes
