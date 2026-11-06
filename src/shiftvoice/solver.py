@@ -5,8 +5,8 @@
 - 決まりは rules.expand の場面ごとにスイッチを持つ。fixed は常に守る
 - 段1は 本人の希望（wish）と運用の都合（operational）も外せなくして解く。相談できる決まりは重みつきで外せる
 - 再現性のため、種・並列数・計算の量（max_deterministic_time）は施設の設定から取る。秒数では区切らない
-- その月の職員が30人を超える時と、段を下げて解く時（段2〜4）は、作業者を8つ決まった順で回す（同じ入力なら同じ表。
-  large_workers）
+- その月の職員が30人を超える時と、段を下げて解く時（段2〜4）と、取り込んだ施設では、作業者を8つ決まった順で回す
+  （同じ入力なら同じ表。large_workers）
 """
 from __future__ import annotations
 
@@ -106,8 +106,11 @@ def large_workers(facility: Facility, staff: list[Staff], stage: int = 1) -> int
     30人以下に減った施設は今までどおり1人で探す）。
     段を下げる時は、運用の都合のルールが外せるスイッチになって探す所が広がり、1人では悪い表から抜け出せなかった。
     3ユニット16人の12月で、外れた運用の都合17件・遅番の次の日の早番23回の表を「できました」と出した。計算の量を
-    3倍にしても16件・20回のまま。8つ回すと、同じ計算の量で2件・0回、公休は全員9日になった（2026-11-06 に測った）"""
-    if len(staff) <= LARGE_STAFF and stage < 2:
+    3倍にしても16件・20回のまま。8つ回すと、同じ計算の量で2件・0回、公休は全員9日になった（2026-11-06 に測った）。
+    取り込んだ施設（設定に pasted_month がある）は、30人以下でも段1から回す。次の勤務までの間の罰が入るので探す所が広く、
+    実際の施設の形の18人の10月で、1人では短い並び52回・24秒、8つでは0回・14秒だった（2026-11-06）。見本の施設は
+    取り込んでいないので、今までどおり1人で探す（表は変わらない）"""
+    if len(staff) <= LARGE_STAFF and stage < 2 and "pasted_month" not in facility.settings:
         return 0
     return int(facility.settings.get("solve", {}).get("interleave_workers") or INTERLEAVE_WORKERS)
 

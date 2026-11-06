@@ -1,6 +1,7 @@
 """職員が30人を超える施設は、表を作る計算で、決まった順で複数の作業者を回す（2026-11-05）。
 1人で探すと、大きな施設では時間内に段1の表が見つからなかったり、短い並びと相談できるルールの外れが残ったりした。
-30人以下の施設は設定に何も足さないので、段1では今までどおり1人で探す（表は1マスも変わらない）。段を下げて解く時
+30人以下の施設は設定に何も足さないので、見本の施設は段1では今までどおり1人で探す（表は1マスも変わらない）。取り込んだ施設は
+30人以下でも段1から回す（2026-11-06。tests/test_excel_nights_no_ake.py）。段を下げて解く時
 （段2〜4）は、30人以下でも作業者を回す（2026-11-06。tests/test_rest_spread.py の貼ったままの3ユニット）。API は呼ばない。"""
 from pathlib import Path
 
@@ -165,3 +166,24 @@ def test_作業者を回す時に一言の直しでアプリが落ちない(tmp_
                          timeout=300)
     assert out.returncode == 0, out.stderr[-500:]
     assert 0 < int(out.stdout.strip()) <= 12
+
+
+def test_作業者を回す時は手がかりを渡さず_前の表に近づける罰は残す(monkeypatch):
+    """手がかりを渡すと OR-Tools 9.15 が落ちる形があるので、作業者を回す時は渡さない。前の表に近づける罰は残すので、
+    ルールの無い月なら前の表のまま返る（Astra 2026-11-06 の勧め。直接確かめる）"""
+    seen = []
+
+    class Spy(cp_model.CpSolver):
+        def solve(self, model, *a, **k):
+            seen.append((self.parameters.num_workers, len(model.Proto().solution_hint.vars)))
+            return super().solve(model, *a, **k)
+
+    monkeypatch.setattr(solver_mod.cp_model, "CpSolver", Spy)
+    fac, staff, m = _tiny({"workers": 1, "max_deterministic_time": 2.0}, n=16)
+    before = {s.name: ["遅" if (i + d) % 3 == 0 else "早" if (i + d) % 3 == 1 else "公" for d in range(31)]
+              for i, s in enumerate(staff)}
+    one = solver_mod.solve_month(fac, staff, [], m, stage=1, hint=before)
+    three = solver_mod.solve_month(fac, staff, [], m, stage=3, hint=before)
+    assert seen[0][0] == 1 and seen[0][1] > 0
+    assert seen[1] == (8, 0)
+    assert one.table == three.table == before

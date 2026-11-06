@@ -7,7 +7,8 @@ from shiftvoice.build import month_rules
 from shiftvoice.onboard import create_facility, infer, parse_paste
 from shiftvoice.rules import check_table
 from shiftvoice.ruledetail import rule_detail
-from shiftvoice.store import Store
+from shiftvoice.solver import large_workers
+from shiftvoice.store import SEED, Store
 
 FX = Path(__file__).parent / "fixtures" / "pastes"
 PASTE = (FX / "excel_nights_no_ake.tsv").read_text(encoding="utf-8")
@@ -66,3 +67,13 @@ def test_作った翌月の表で夜勤の翌日に勤務を置かず_説明も�
     d = rule_detail(two.id, rules, fac, staff, m, m.table)
     assert "夜勤の次の日が公休なら、その次の日も公休" in str(d)
 
+
+def test_取り込んだ施設は30人以下でも最初の段から作業者を回す(tmp_path):
+    """1人で探すと、次の勤務までの間の罰の入った取り込みの施設で良い表に届かなかった（実際の施設の形の18人の10月で
+    短い並び52回。8つ回すと0回）。見本の施設は取り込んでいないので1人のまま"""
+    prop = infer(parse_paste(PASTE), 2026, 11, {})
+    create_facility(prop, tmp_path / "f", name="試験", next_year=2026, next_month=12)
+    store = Store(tmp_path / "f")
+    assert large_workers(store.facility(), store.staff_on(2026, 12)) == 8
+    seed = Store(SEED)
+    assert large_workers(seed.facility(), seed.staff_on(2026, 11)) == 0
