@@ -351,7 +351,11 @@ def _sequence(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: M
     p = orig.params
     a = _names(fac, _syms(p["if"], fac))
     who = _who_wa(orig.who)
-    if "next_not_in" in p:
+    if "next2_in" in p:
+        t = "か".join(_names(fac, [x]) for x in _syms(p["then"], fac))
+        b = "か".join(_names(fac, [x]) for x in _syms(p["next2_in"], fac))
+        line = f"{who}{a}の次の日が{t}なら、その次の日も{b}"
+    elif "next_not_in" in p:
         b = _names(fac, _syms(p["next_not_in"], fac))
         line = f"{who}{a}の次の日に{b}を置かない"
     elif "prev_in" in p:
@@ -370,7 +374,10 @@ def _sequence(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: M
         first = i.terms[0].day
         places.append(f"{name}さん {first}日" if first >= 1 else f"{name}さん 前の月の末日")
     listing = "・".join(places[:3]) + ("ほか" if len(places) > 3 else "")
-    if "next_not_in" in p:
+    if "next2_in" in p:
+        now = [f"今の表で、{a}・{t}の次の日が{b}でない所が{len(bad)}か所（{listing}）" if bad
+               else f"今の表では、{a}・{t}の次の日はどれも{b}です"]
+    elif "next_not_in" in p:
         now = [f"今の表で、{a}の次の日が{b}の所は{len(bad)}か所" + (f"（{listing}）" if bad else "")]
     elif "prev_in" in p:
         now = [f"今の表で、前の日が{b}でない{a}が{len(bad)}か所（{listing}）" if bad

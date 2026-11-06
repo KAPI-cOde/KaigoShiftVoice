@@ -92,7 +92,7 @@ def _params_overlap(k: str, p: dict, q: dict) -> bool:
                 and ("in" in p) == ("in" in q)
                 and bool(_syms_of(p.get("in") or p.get("not_in")) & _syms_of(q.get("in") or q.get("not_in"))))
     if k == "sequence":
-        side = lambda d: next((x for x in ("next_in", "next_not_in", "prev_in") if x in d), None)
+        side = lambda d: next((x for x in ("next2_in", "next_in", "next_not_in", "prev_in") if x in d), None)
         return (bool(_syms_of(p.get("if")) & _syms_of(q.get("if"))) and side(p) == side(q)
                 and bool(_syms_of(p.get(side(p))) & _syms_of(q.get(side(q)))))
     if k == "coverage":
@@ -359,6 +359,17 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
             if lo is None and hi is None:
                 continue
             out.append(Instance(rule, s.name, terms, lo, hi))
+    elif k == "sequence" and "next2_in" in p:
+        # 2日先の並び。if の記号の翌日が then なら、その次の日は next2_in（明けを休みと書く施設の「夜勤・休み・休み」）。
+        # x[d,if] + x[d+1,then] - x[d+2,next2] <= 1。前の月の末の2日にもまたがる（月の外の日は前の月の表の値）
+        a, t, c = _syms(p["if"], facility), _syms(p["then"], facility), _syms(p["next2_in"], facility)
+        first = -1 if not rule.when else 1
+        for s in people:
+            for d in range(first, month.days - 1):
+                if d >= 1 and rule.when and d not in rule.when:
+                    continue
+                terms = [Term(s.name, d, a, 1), Term(s.name, d + 1, t, 1), Term(s.name, d + 2, c, -1)]
+                out.append(Instance(rule, f"{s.name}/{d}", terms, None, 1))
     elif k == "sequence":
         # if の記号の翌日（または前日）の中身
         a = _syms(p["if"], facility)

@@ -15,6 +15,7 @@ import csv
 import datetime as dt
 import hashlib
 import io
+import itertools
 import re
 import time
 import unicodedata
@@ -72,10 +73,16 @@ SOLVE_KEYS = ("workers", "seed", "max_deterministic_time", "resolve_max_determin
 ALWAYS_TYPES = ("公", "有", "研")   # 表に出ていなくても、頼まれた時に置けるよう勤務の種類に必ず入れる物
 LONG_REST_RATIO = 1.5   # 公休がいちばん多い日数のこの倍以上の人は、途中入職・長い休みかもしれない
 RATE_LINE = 0.9   # 夜明公の決まりを候補にする割合
+NIGHT_SEEN_MIN = 5   # 明けを書かない施設で、夜勤の後の並びをルールにするのに要る回数（少ないと偶然の並びを決まりにする）
 SERIAL_RANGE = (40000, 60000)   # Excel の日付の通し番号（1900年式）の範囲
 # 表の上の行や日付の行の名前の欄にある言葉のうち、ユニットの名前ではない物（表の題と見出し）
 NOT_UNIT = re.compile(r"勤務|シフト|予定|様式|令和|平成|\d{4}|\d年|\d月|表$|名$|スタッフ|職員|曜")
 UNIT_WORD = re.compile(r"ユニット|棟|フロア|\d階")
+# 予定・行事の行（祝日の印や「敬老会」などの行事を書く行）。人の行として読むと、知らない記号と公休だらけの人が出た
+# （2026-11-06 実際の施設の Excel の形の試し。「予定」の行が人に、その上の「日付」がユニットになった）
+SCHEDULE_ROW = re.compile(r"予定|行事|イベント|催し|日程")
+# 「U1」「A棟」「2F」のような、ユニットの見出しらしい名前。見出しの行に欠員の印（欠）などがあっても見出しと読む
+UNIT_CODE = re.compile(r"[A-Za-z]{1,2}\d{1,2}|\d{1,2}[FＦ]|[A-Za-z]")
 
 _WEEKDAY = re.compile(r"^[(（]?[月火水木金土日](?:曜日?)?[)）]?$")
 _DAY = re.compile(r"^(?:\d{4}[/-])?(?:(\d{1,2})[/-])?(\d{1,2})日?(?:[(（][月火水木金土日][)）])?$")
@@ -302,7 +309,12 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
 
     def is_label(name: str) -> bool:
         return (not name or any(w in name for w in SUMMARY_WORDS) or name in shift_names or name in NOTE_WORDS
-                or name.isdigit())
+                or name.isdigit() or bool(SCHEDULE_ROW.search(name)))
+
+    def marked_unit_row(name: str, days: list[str]) -> bool:
+        """ユニットの見出しの行に、日ごとの印（欠員の「欠」など）がある形。勤務の記号が1つも無く、名前がユニットらしい。"""
+        return ((bool(UNIT_WORD.search(name)) or bool(UNIT_CODE.fullmatch(name)))
+                and not any(c in shift_names for c in days if c))
 
     def is_total_row(cells: list[str], name_idx: int) -> bool:
         """名前以外のセルが空でなく、全部が数字の行は集計の行（出勤者数・公休数 など）。"""
@@ -378,7 +390,8 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
                 marks.append({"line": lineno, "k": "other", "left": left_cells})
                 continue
             days = [cells[c] if c < len(cells) else "" for c in cols]
-            if not any(_not_arrow(c) for c in days) and kind != "sym":   # 応援の矢印と行き先だけの行も見出し（table_tsv）
+            if (not any(_not_arrow(c) for c in days) or marked_unit_row(name, days)) and kind != "sym":
+                # 応援の矢印と行き先だけの行も見出し（table_tsv）
                 if not _is_role_heading(name):
                     items.append(("unit", name))
                     marks.append({"line": lineno, "k": "unit", "left": left_cells, "unit": _unit_name(name)})
@@ -1135,6 +1148,35 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
             if ok / len(ake_next) >= RATE_LINE:
                 add(f"{names[ak]}の翌日は公休", "sequence", "fixed", {"if": [ak], "next_in": ["公"]},
                     f"{names[ak]}の翌日は{len(ake_next)}回中{ok}回が公休")
+
+    # 明けを書かない施設（夜勤の翌日を「公」と書き、夜勤が2日続くこともある）。明けのルールが1つも作られず、作った表で
+    # 夜勤の翌日に早番・日勤・遅番が入った（2026-11-06 実際の施設の形の試し。10月の表で7回）。貼った表で夜勤の翌日に
+    # 来た記号を数え、夜勤か休みだけなら、その並びと、夜勤の後の休みの翌日も休みか、夜勤が何日まで続くかをルールにする
+    if not ake_syms:
+        rest_syms = [s.symbol for s in by_sym.values() if s.kind == "rest"]
+        for sym in night_syms:
+            nexts = [row[d + 1] for row in table.values() for d in range(n - 1) if row[d] == sym]
+            calm = [x for x in nexts if x in night_syms or x in rest_syms]
+            if len(nexts) < NIGHT_SEEN_MIN or len(calm) / len(nexts) < RATE_LINE:
+                continue
+            follow = [x for x in dict.fromkeys(calm)]
+            add(f"{names[sym]}の翌日は" + "か".join(names[x] for x in follow), "sequence", "fixed",
+                {"if": [sym], "next_in": follow},
+                f"{names[sym]}の翌日は{len(nexts)}回中{len(calm)}回が" + "か".join(names[x] for x in follow)
+                + "（明けの記号が表に無いので、夜勤の翌日の休みを明けと見ます）")
+            two = [row[d + 2] for row in table.values() for d in range(n - 2)
+                     if row[d] == sym and row[d + 1] in rest_syms]
+            if len(two) >= NIGHT_SEEN_MIN:
+                ok = sum(1 for x in two if x in rest_syms)
+                if ok / len(two) >= RATE_LINE:
+                    add(f"{names[sym]}の後の休みの翌日も休み", "sequence", "fixed",
+                        {"if": [sym], "then": list(rest_syms), "next2_in": list(rest_syms)},
+                        f"{names[sym]}の翌日が休みの時、その次の日は{len(two)}回中{ok}回が休み")
+            runs = [len(list(g)) for row in table.values() for k, g in itertools.groupby(row) if k == sym]
+            longest = max(runs, default=0)
+            if longest >= 2:
+                add(f"{names[sym]}は続けて{longest}日まで", "max_run", "fixed", {"shifts": [sym], "max": longest},
+                    f"{names[sym]}が続いたのは長くて{longest}日（{runs.count(longest)}回）")
 
     # 連勤の上限。数え方は ShiftType.counts_as_workday。答えの無い記号は勤務の日として数える（ゆるい側）
     def works(sym: str) -> bool:
