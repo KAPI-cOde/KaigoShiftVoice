@@ -10,7 +10,7 @@
    "symbol": "早",
    "name": "早番",
    "kind": "work",
-   "start": "07:00",
+   "start": "06:45",
    "hours": 9
   },
   {
@@ -24,7 +24,7 @@
    "symbol": "遅",
    "name": "遅番",
    "kind": "work",
-   "start": "11:00",
+   "start": "13:15",
    "hours": 9
   },
   {
