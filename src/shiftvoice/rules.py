@@ -192,26 +192,38 @@ def _coverage_dates(rules: list[Rule]) -> list[Rule]:
     def slot(r: Rule) -> tuple:
         p = r.params
         return (frozenset(_syms_of(p.get("shifts"))), p.get("scope"), tuple(sorted(p.get("units") or [])))
-    # 同じ勤務・同じ数え方（施設全体か、どのユニットか）の日付の人数を同じ日に言い直した時は、新しい方だけを効かせる。
-    # 古い方まで毎日のルールをゆるめると、古い数が毎日のルールの強さで残った（Astra 2026-11-07 朝。「施設全体3人」の後の
-    # 「施設全体1人」が段3で3人になった）
-    # 新しい方は一言ごとに見る（「3人から4人」は1つの一言から下限と上限の2本になる。1本ずつ見ると上限だけが残り、下限が
-    # 効かなかった。片側ずつ見ると、「0人」の後の「3人以上」で古い0人の上限が残り、0人の表が通った。Astra）
-    def said(r: Rule) -> str:
-        return r.meta.get("uid") or r.id
-    latest = {slot(r) + (d,): said(r) for i, r in dated for d in r.when}
+    # 同じ勤務・同じ数え方（施設全体か、どのユニットか）の日付の人数は、日ごとに古い順に重ねて、その日の数（下限・上限）に
+    # まとめる。新しく言った側が古い側に代わり、古い側が新しい数と両立しなければ消す。（Astra 2026-11-07 朝。「施設全体3人」の
+    # 後の「施設全体1人」で古い3人が残った・「0人」の後の「3人以上」で古い0人の上限が残り0人の表が通った・「3人以上」と
+    # 「4人まで」を別に言うと合わせて効かなかった・「3人から4人」の下限が効かなかった）
+    eff: dict[tuple, tuple] = {}   # (数え方, 日) → (下限, 上限, いちばん新しい日付のルールの並び, 勤務)
+    for i, r in dated:
+        rl, rh = _bounds(r.params)
+        for d in r.when:
+            lo, hi, _, _ = eff.get((slot(r), d), (None, None, -1, None))
+            if rl is not None:
+                lo = rl
+                if hi is not None and hi < rl:
+                    hi = None
+            if rh is not None:
+                hi = rh
+                if lo is not None and lo > rh:
+                    lo = None
+            eff[(slot(r), d)] = (lo, hi, i, r.params.get("shifts"))
     out = []
     for j, g in enumerate(rules):
         over = []
         if g.kind == "coverage":
-            for i, r in dated:
-                if i == j or (g.when and i < j):
-                    continue   # 自分自身と、自分より古い日付のルールには譲らない
-                if _syms_of(r.params.get("shifts")) != _syms_of(g.params.get("shifts")):
+            gsyms = frozenset(_syms_of(g.params.get("shifts")))
+            for (sl, d), (lo, hi, last, shifts) in eff.items():
+                if sl[0] != gsyms or (g.when and d not in g.when):
                     continue
-                days = sorted(d for d in set(r.when) & set(g.when or r.when) if latest[slot(r) + (d,)] == said(r))
-                if days:
-                    over.append({"params": r.params, "days": days})
+                if g.when and sl != slot(g) and last < j:
+                    continue   # 別の数え方の、自分より古い日付のルールには譲らない
+                p = {"shifts": shifts, "scope": sl[1], "lo": lo, "hi": hi}
+                if sl[2]:
+                    p["units"] = list(sl[2])
+                over.append({"params": p, "days": [d]})
         if over:
             g = copy.copy(g)
             g.meta = {**g.meta, "dated_over": over}
@@ -220,6 +232,8 @@ def _coverage_dates(rules: list[Rule]) -> list[Rule]:
 
 
 def _bounds(p: dict) -> tuple[int | None, int | None]:
+    if "op" not in p:   # その日の日付の人数をまとめた数（_coverage_dates）
+        return p.get("lo"), p.get("hi")
     n = p["n"]
     return {"==": (n, n), ">=": (n, None), "<=": (None, n)}[p["op"]]
 
@@ -246,8 +260,12 @@ def _dated_bounds(q: dict, r: dict, gname: str, lo, hi, g_units: list[str], all_
     if r_each == q_each:
         if r_each and gname not in r_units:
             return lo, hi
-        for side in _cov_yield(r, q):
-            lo, hi = loosen(lo, hi, side, floor if side == "min" else rhi)
+        qlo, qhi = _bounds(q)   # 両立しない側だけ（_cov_yield と同じ。日付の数が q の数より小さければ下限、大きければ上限）
+        ref_lo, ref_hi = floor, (rhi if rhi is not None else rlo)
+        if qlo is not None and ref_lo is not None and ref_lo < qlo:
+            lo, hi = loosen(lo, hi, "min", floor)
+        if qhi is not None and ref_hi is not None and ref_hi > qhi:
+            lo, hi = loosen(lo, hi, "max", rhi)
         return lo, hi
     if r_each:   # q は施設全体
         k = len(r_units)

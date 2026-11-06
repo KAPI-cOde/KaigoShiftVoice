@@ -296,3 +296,12 @@ def test_0人の後に3人以上と言い直すと古い0人は効かない():
 def test_何日を除きの人数は聞き返す(made, tmp_path):
     r, new = _say(made, tmp_path, "28日を除き早番を3人", [{"type": "coverage", "shift": "早", "min": 3, "max": None}])
     assert r.kind != "applied" and new == []
+
+
+def test_3人以上と4人までを別の一言で言うと合わせて効く():
+    """毎日各ユニット1人、28日に「施設全体で3人以上」、続けて「施設全体で4人まで」。新しい一言だけで毎日のルールをゆるめると
+    ユニットの上限1人が戻り、段1で作れず段3で2人になった（Astra 2026-11-07 朝の4回目。3×7）"""
+    daily = cov("r1", "fixed", "==", 1)
+    lo = replace(cov("lo", "operational", ">=", 3, scope="all", when=[28]), meta={"uid": "u1"})
+    hi = replace(cov("hi", "operational", "<=", 4, scope="all", when=[28]), meta={"uid": "u2"})
+    assert 3 <= sum(early_by_day([daily, lo, hi])[28].values()) <= 4
