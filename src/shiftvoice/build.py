@@ -46,6 +46,24 @@ STAGE_NOTE = {
 }
 
 
+def broken_text(broken: list[dict], names: set[str], limit: int = 6) -> str:
+    """段を下げて作った時に、実際に外れた本人の希望と運用の都合を一文で言う。人ごとの数のルールは、人と数まで言う。"""
+    groups: dict[str, list[dict]] = {}
+    for b in broken:
+        if b["flex"] in ("operational", "wish"):
+            groups.setdefault(b["name"], []).append(b)
+    parts = []
+    for name, items in groups.items():
+        who = [b for b in items if b["key"] in names]
+        if len(who) != len(items):
+            parts.append(f"{name}が{len(items)}か所")
+            continue
+        ones = [f"{b['key']}さん{b['value']}" for b in who[:limit]] + ([f"ほか{len(who) - limit}人"] if len(who) > limit else [])
+        same = items[0]["lo"] is not None and items[0]["lo"] == items[0]["hi"]
+        parts.append(f"{name}{'（' + str(items[0]['lo']) + '）' if same else ''}が{'・'.join(ones)}")
+    return "外れたのは、" + "、".join(parts) if parts else ""
+
+
 def solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month,
                  **kw) -> StagedResult:
     """段の順で解く。秒は全段の合計で数え、段ごとの状態を残す。"""
@@ -79,7 +97,8 @@ def solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], mont
     for st in order:
         r = run(st)
         if r.status == "ok":
-            return StagedResult(r, stages, note=STAGE_NOTE[st])
+            detail = broken_text(r.broken, {s.name for s in staff})
+            return StagedResult(r, stages, note=STAGE_NOTE[st] + ("。" + detail if detail else ""))
         timed_out = timed_out or r.status == "timeout"
     return StagedResult(r, stages, message=TIMEOUT_MESSAGE if timed_out else C3_MESSAGE)
 

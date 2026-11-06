@@ -1100,7 +1100,7 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     merge_notes = [f"{nm}さんは2行（兼務）あったので、1人にまとめました（同じ日に両方の行に記号がある時は1行目の記号）"
                    for nm in pasted.merged]
     rest_notes = [f"{nm}さん 公休{v}日（ほかの人は{mode}日）。月の途中から入った人や長く休んだ人なら、"
-                  f"作った後に一言で直してください（例「{nm}さん、公休は{mode}日」）" for nm, v in long_rest.items()]
+                  f"作った後に一言で直してください（例「{nm}さん、公休は月{mode}日」）" for nm, v in long_rest.items()]
     add("公休の数", "count", "operational", {"shifts": ["公"], "min": mode, "max": mode},
         f"公休は{len(rests)}人中{hit}人が{mode}日" + note,
         who=[nm for nm, v in rests.items() if v == mode] if outliers else None)

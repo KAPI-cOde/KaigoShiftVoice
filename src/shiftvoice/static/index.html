@@ -2194,7 +2194,7 @@ function startCreate() {
     var msg = res.existing
       ? (res.message || "『" + nm + "』はもう作ってあるので、前に作った施設を開きました。今回貼った表は使っていません。新しく作る時は別の名前にしてください")
       : nm + "の" + res.month + "月の表ができました。気づいたことを一言で直せます";
-    var warn = (res.notes || []).filter(function (x) { return x.indexOf("1回も入っていません") >= 0 || x.indexOf("守りきれなかった") >= 0; });
+    var warn = (res.notes || []).filter(function (x) { return x.indexOf("1回も入っていません") >= 0 || x.indexOf("守りきれなかった") >= 0 || x.indexOf("外せる形") >= 0; });
     if (warn.length) msg += "。" + warn.join("。");
     SU = null;
     resetForFacility(res.state, msg);

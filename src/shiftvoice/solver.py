@@ -156,6 +156,7 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     hard_flex = {"fixed"} if stage >= 4 else ({"fixed", "wish", "operational"} if stage == 1 else
                                               {"fixed", "operational"} if stage == 2 else {"fixed", "wish"})
     penalties = []
+    devs = []
     switches: list[tuple[Instance, cp_model.IntVar | None]] = []
     for r in with_overrides(rules):
         for inst in expand(r, facility, staff, month):
@@ -180,6 +181,22 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                 w = r.weight or (weights[r.flex] if not r.light else facility.settings.get("light_weight", 100))
                 penalties.append(w * (1 - b))
                 switches.append((inst, b))
+                if r.kind == "count" and r.flex == "operational":
+                    # 外した後のずれにも罰を付ける。外すかどうかだけだと、外す人を少なくするために1人へ全部寄り、
+                    # 公休9日の施設で1人だけ19日の表ができた（2026-11-06 通しの試し）。いちばん大きいずれを罰して薄く分ける。
+                    # ずれの2乗と段階の罰は時間内に解ききれず、31日全休や17日の人が出たので使わない（同じ日に測った）
+                    dev = m.new_int_var(0, D, "")
+                    if inst.lo is not None:
+                        m.add(dev >= inst.lo - e)
+                    if inst.hi is not None:
+                        m.add(dev >= e - inst.hi)
+                    devs.append(dev)
+                    penalties.append(w // 4 * dev)
+
+    if devs:
+        worst = m.new_int_var(0, D, "")
+        m.add_max_equality(worst, devs)
+        penalties.append(weights["operational"] * 10 * worst)
 
     # 質の物差し（施設の設定。既定は控えめ）
     work = set(facility.workday_symbols())
