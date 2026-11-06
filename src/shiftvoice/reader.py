@@ -1,6 +1,6 @@
 """読み取り（8章）。伏せた発言を型に当てはめて JSON で返す。
 
-- 本物は Haiku 5.5（思考なし・effort low・出力400トークンまで）。鍵は環境変数 ANTHROPIC_API_KEY から SDK が読む
+- 本物は Haiku 5.5（思考なし・effort low・出力800トークンまで）。鍵は環境変数 ANTHROPIC_API_KEY から SDK が読む
 - 試験は録った返事（RecordedReader）で回す。送る文は名前を伏せた後の文だけ（試験 R9）
 - 呼べない・途中で切れた・JSON が読めない時は ReadError。表も帳面も変えず［送り直す］を出す（13章）
 - 返事は候補まで。型・番号・数字は手元の intake で確かめてから当てる
@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 MODEL = "claude-haiku-5-5"
-MAX_TOKENS = 400
+MAX_TOKENS = 800   # 400 では、8人の勤務を1回で言った一言の返事が途中で切れ、読み取りに失敗した（2026-11-07 の通しの試し）
 
 TYPES = ("day_off", "set_cell", "avoid_cell", "move", "swap", "forbid_sequence", "pair_apart",
          "count_limit", "coverage", "weekday_pref", "consecutive_limit", "rest_after_night", "around_off",

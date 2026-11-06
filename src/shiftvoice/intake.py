@@ -196,6 +196,11 @@ def _said_dates(text: str) -> list[int]:
     return out
 
 
+def _syms_of_rule(r) -> list[str]:
+    v = r.params.get("shifts")
+    return v if isinstance(v, list) else [v]
+
+
 def _typical_scope(n: int, syms: list[str], month: Month, staff: list[Staff], units: list[str]) -> str | None:
     """言った人数が、今の表のいつもの数（施設全体で1日に何人か・1つのユニットで1日に何人か）のどちらに当たるか。
     片方だけに当たる時だけ返す。「夜勤は毎日ちょうど2人」が、取り込みのユニットごとの数え方にそろえられて
@@ -641,6 +646,10 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         elif t == "day_off":
             who = _names(it.get("staff"), names)
             ds = _days(it.get("days"), month)
+            if len(ds) == 1 and re.search(rf"公休(?:は|を)?(?:今月|月)?(?:は|に)?{ds[0]}日(?!は|に|の|、|だけ)", text):
+                # 「公休は今月は10日」を「10日 休み」と読んだ（2回目の通しの試し）。日数か日付かを聞く
+                raise Clarify(f"公休の日数（月{ds[0]}日）ですか、{ds[0]}日の休みですか。日数なら「全員、公休は月{ds[0]}日」の"
+                              "ように言ってください")
             fl = _cell_strength(it.get("strength"), text, t) if len(real) == 1 else _flex(it.get("strength"), "wish")
             p.rules.append({"name": f"{_who(who)} {'・'.join(map(str, ds))}日 休み"
                                     + {"fixed": "（必ず）", "negotiable": "（できれば）"}.get(fl, ""),
@@ -678,6 +687,10 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             p.rules.extend(rs)
             sums.append(s)
         elif t == "forbid_sequence":
+            if re.search(r"日以内|日以上|間隔|あいだ|空け|あけ", text) and not re.search(r"次の日|翌日", text):
+                # 「夜勤のあと3日以内に次の夜勤を入れないで」を「夜勤の次の日に夜勤を置かない」（全員の2連夜勤の禁止）に
+                # していた（2回目の通しの試し）。勤務の間を何日空けるかは、まだ扱えない
+                raise Clarify("勤務と勤務の間を何日空けるかは、まだ扱えません。表は変えていません")
             who = _names(it.get("staff"), names)
             a = _sym(it.get("first"), facility)
             nx = it.get("next")
@@ -730,6 +743,15 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             who = _names(it.get("staff"), names)
             sym = _sym(it.get("shift"), facility)
             wds = [w for w in (it.get("weekdays") or []) if w in WEEKDAYS]
+            if it.get("avoid") is False and facility.shift(sym).kind == "work" and re.search(r"だけ|のみ|以外は", text):
+                # 「夜勤は金曜と土曜だけ」は、ほかの曜日に入れない頼み。毎週その曜日を夜勤にする頼みにすると、
+                # 104マス動いた（2回目の通しの試し）。ほかの曜日に入れない形にする（同じ頼みが別にあれば足さない）
+                rest = [w for w in WEEKDAYS if w not in wds]
+                if any(o.get("type") == "weekday_pref" and o.get("avoid") is not False and o.get("shift") == it.get("shift")
+                       and set(o.get("weekdays") or []) >= set(rest) for o in real):
+                    continue
+                it = {**it, "avoid": True, "weekdays": rest}
+                wds = rest
             if not wds:
                 raise Clarify("曜日が読めませんでした。何曜日か教えてください")
             avoid = it.get("avoid", True) is not False
@@ -782,8 +804,15 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 r"どのユニットも|各ユニット|ユニットごと|それぞれのユニット|ユニットにつき|ユニットあたり|ユニット当たり|1ユニット", text))
             shifts = list(base.params["shifts"]) if base is not None else [sym]
             # 曜日の無い毎日の人数だけ、今の表のいつもの数に当てる（「土日は早番を2人に」は変えたい頼みなので当てない）
+            n_said = lo if lo is not None else hi
+            same_all = any(r.kind == "coverage" and r.params.get("scope") == "all" and not r.params.get("weekdays")
+                           and not r.when and set(_syms_of_rule(r)) == set(shifts) and r.params.get("n") == n_said
+                           for r in rules or [])
+            # 施設全体の同じ人数のルールがもうあれば施設全体（作った表が段を下げて崩れていると、いつもの数を表から
+            # 当てられず、「夜勤は毎日ちょうど2人」がユニットごと2人のままだった。2回目の通しの試し）
             typical = (None if said_units or whole or each_said or it.get("weekdays") else
-                       _typical_scope(lo if lo is not None else hi, shifts, month, staff, list(facility.units)))
+                       "all" if same_all and len(facility.units) > 1 else
+                       _typical_scope(n_said, shifts, month, staff, list(facility.units)))
             if said_units or each_said:
                 scope = "each_unit"
             elif whole or typical == "all":
@@ -993,5 +1022,22 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         p.scope = "rule" if p.until else read_period(text)
     else:  # 職員の情報は言われた月から。聞かない
         p.scope = "rule"
+    if kind == "cells" and "か" in text:
+        # 「篠原さん、5日は休みか早番」を、休みと早番の2つの指定（ぶつかる）にしていた（2回目の通しの試し）。同じ人の
+        # 同じ1日に2つの「その勤務にする」がある時は、どちらかでよい1つのマスの頼みにまとめる
+        merged, seen = [], {}
+        for r in p.rules:
+            key = (tuple(r.get("who") or []), tuple(r.get("when") or []))
+            if r.get("kind") == "cell" and "in" in r.get("params", {}) and len(r.get("when") or []) == 1 \
+                    and len(r.get("who") or []) == 1 and key in seen:
+                first = seen[key]
+                first["params"] = {"in": list(dict.fromkeys(first["params"]["in"] + r["params"]["in"]))}
+                first["name"] = f"{_who(first['who'])} {first['when'][0]}日は" + "か".join(
+                    facility.shift(x).name for x in first["params"]["in"])
+                continue
+            if r.get("kind") == "cell" and "in" in r.get("params", {}):
+                seen[key] = r
+            merged.append(r)
+        p.rules = merged
     p.summary = "、".join(sums) if sums else "、".join(r["name"] for r in p.rules if "moved_to" not in r.get("meta", {}))
     return p

@@ -249,3 +249,64 @@ def test_ただの名指しのゆるい上限は今までどおりもう守ら�
     eff = with_overrides(month_rules(Store(tmp_path / "f"), 2026, 12, with_premise=False))
     general = next(x for x in eff if x.kind == "max_run" and not x.who and x.params["shifts"] == "work")
     assert not general.meta.get("except_who")
+
+
+# ---- 2回目の通しの試し（2026-11-07 2時、直した版で同じ10月をもう一度作った）で見つかった形
+def test_施設全体の同じ人数のルールがあれば施設全体(made, tmp_path, monkeypatch):
+    """作った表が段を下げて崩れていると、いつもの数を表から当てられず「夜勤は毎日ちょうど2人」がユニットごと2人のままだった"""
+    import shiftvoice.intake as I
+    monkeypatch.setattr(I, "_typical_scope", lambda *a, **k: None)   # 表から当てられない時
+    import shutil
+    shutil.copytree(made, tmp_path / "src")
+    st = Store(tmp_path / "src")
+    led = st.ledger()
+    led.append("add", rule={"id": "t-all", "ver": 1, "name": "夜勤の人数（施設全体の下限）", "kind": "coverage", "flex": "fixed",
+                            "params": {"shifts": ["夜"], "scope": "all", "op": ">=", "n": 2}, "who": None, "when": None,
+                            "scope": "rule"})
+    st.save_ledger(led)
+    (tmp_path / "b").mkdir()
+    r, new = _say(tmp_path / "src", tmp_path / "b", "夜勤は毎日ちょうど2人。毎月", [{"type": "coverage", "shift": "夜", "min": 2, "max": 2}])
+    assert r.kind == "applied", r.message
+    assert [x.params["scope"] for x in new] == ["all"]
+
+
+def test_読み取りの返事の長さは8人分を言える():
+    """8人の勤務を1回で言った一言の返事が、400トークンで途中で切れて読み取りに失敗した"""
+    from shiftvoice import reader
+    assert reader.MAX_TOKENS >= 800
+
+
+def test_夜勤は金曜と土曜だけは毎週夜勤にしない(made, tmp_path):
+    """「夜勤は金曜と土曜だけ」に「金土曜は夜勤にする」が足され、104マス動いた"""
+    items = [{"type": "weekday_pref", "staff": "青木", "weekdays": ["sun", "mon", "tue", "wed", "thu"], "shift": "夜", "avoid": True},
+             {"type": "weekday_pref", "staff": "青木", "weekdays": ["fri", "sat"], "shift": "夜", "avoid": False}]
+    r, new = _say(made, tmp_path, "青木さん、日曜から木曜は夜勤にしないで。夜勤は金曜と土曜だけ。毎月", items)
+    assert r.kind == "applied", r.message
+    assert [(x.params.get("not_in"), sorted(x.params["weekdays"])) for x in new] == \
+        [(["夜"], sorted(["sun", "mon", "tue", "wed", "thu"]))]
+    (tmp_path / "b").mkdir()
+    r, new = _say(made, tmp_path / "b", "石田さん、夜勤は金曜と土曜だけ。毎月",
+                  [{"type": "weekday_pref", "staff": "石田", "weekdays": ["fri", "sat"], "shift": "夜", "avoid": False}])
+    assert r.kind == "applied", r.message
+    assert [(x.params.get("not_in"), sorted(x.params["weekdays"])) for x in new] == \
+        [(["夜"], sorted(["sun", "mon", "tue", "wed", "thu"]))]
+
+
+def test_公休の日数を日付の休みと読んだら聞き返す(made, tmp_path):
+    r, new = _say(made, tmp_path, "青木さん、公休は今月は10日", [{"type": "day_off", "staff": "青木", "days": [10]}])
+    assert r.kind != "applied" and "公休の日数" in (r.message or "") and new == []
+
+
+def test_夜勤の間を空ける頼みを2連夜勤の禁止にしない(made, tmp_path):
+    r, new = _say(made, tmp_path, "全員、夜勤のあと3日以内に次の夜勤を入れないで",
+                  [{"type": "forbid_sequence", "staff": None, "first": "夜", "next": "夜", "strength": "negotiable"}])
+    assert r.kind != "applied" and "何日空けるか" in (r.message or "") and new == []
+
+
+def test_休みか早番は1マスのどちらか(made, tmp_path):
+    """「5日は休みか早番」が、休みと早番の2つの指定（ぶつかる）になった"""
+    items = [{"type": "day_off", "staff": "青木", "days": [5]}, {"type": "set_cell", "staff": "青木", "days": [5], "shift": "早"}]
+    r, new = _say(made, tmp_path, "青木さん、5日は休みか早番", items)
+    assert r.kind == "applied", r.message
+    assert [(x.params, x.when) for x in new] == [({"in": ["公", "早"]}, [5])]
+    assert Store(tmp_path / "f").month(2026, 12).table["青木"][4] in ("公", "早")
