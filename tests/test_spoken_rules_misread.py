@@ -310,3 +310,17 @@ def test_休みか早番は1マスのどちらか(made, tmp_path):
     assert r.kind == "applied", r.message
     assert [(x.params, x.when) for x in new] == [({"in": ["公", "早"]}, [5])]
     assert Store(tmp_path / "f").month(2026, 12).table["青木"][4] in ("公", "早")
+
+
+def test_日付を決めた頼みの日は同じ人の曜日の頼みより優先():
+    """「土日は事務所に入れない」と「18日（日）は事務所の日直」がぶつかり、表が作れず段を下げてほかの人の頼みまで外れた"""
+    from shiftvoice.model import Facility, Month, ShiftType, Staff
+    from shiftvoice.rules import expand
+    fac = Facility("x", "x", ["東"], [ShiftType("事", "事務所", "work"), ShiftType("公", "公休", "rest")], {})
+    staff = [Staff("赤坂", "東", ["事"])]
+    m = Month(2026, 10, [], {})
+    wk = Rule("w", 1, "赤坂さん 土日曜は事務所に入れない", "weekday", "wish", {"weekdays": ["sat", "sun"], "not_in": ["事"]}, who=["赤坂"])
+    cell = Rule("c", 1, "赤坂さん 18日 事務所", "cell", "wish", {"in": ["事"]}, who=["赤坂"], when=[18])
+    eff = next(r for r in with_overrides([wk, cell]) if r.id == "w")
+    days = sorted(int(i.key.split("/")[1]) for i in expand(eff, fac, staff, m))
+    assert 18 not in days and 17 in days and 25 in days

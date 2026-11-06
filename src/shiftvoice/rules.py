@@ -142,7 +142,7 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
     全員向けが動かせない決まり（公休の数 など）の時は外さない。
     その前に、同じ相手に2本ある帳面の回数のルールは新しい方を残す（_replace_same）。"""
     import copy
-    rules = _run_exceptions(_coverage_units(_coverage_days(_replace_same(rules))))
+    rules = _weekday_dated(_run_exceptions(_coverage_units(_coverage_days(_replace_same(rules)))))
     named: dict[tuple, list[tuple[Rule, str, dict]]] = {}   # 勤務 → [(元のルール, 人, {"min": 値, "max": 値})]
     for r in rules:
         if r.kind == "count" and r.who and not r.when and r.flex in ("operational", "fixed"):
@@ -174,6 +174,27 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
             r = copy.copy(r)
             r.meta = {**r.meta, "except_min": sorted(ex_min), "except_max": sorted(ex_max)}
         out.append(r)
+    return out
+
+
+def _weekday_dated(rules: list[Rule]) -> list[Rule]:
+    """人の曜日の頼み（「赤坂さん、土日は事務所に入れない」）は、同じ人の日付を決めた頼み（「18日（日）は事務所の日直」）の
+    日には効かせない。日付の頼みの方が新しく細かい作成者の決めなので。前は2つがぶつかって表が作れず、段を下げて関係のない人の
+    頼みまで外れた（2026-11-07 実際の施設の表を画面の口で作った2回目の通しの試し）"""
+    import copy
+    dated: dict[str, set[int]] = {}
+    for r in rules:
+        if r.kind == "cell" and r.who and r.when and r.flex in ("fixed", "wish", "operational") and not r.meta.get("derived"):
+            for w in r.who:
+                dated.setdefault(w, set()).update(r.when)
+    if not dated:
+        return rules
+    out = []
+    for g in rules:
+        if g.kind == "weekday" and g.who and any(w in dated for w in g.who):
+            g = copy.copy(g)
+            g.meta = {**g.meta, "dated": {w: sorted(dated[w]) for w in g.who if w in dated}}
+        out.append(g)
     return out
 
 
@@ -477,9 +498,10 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
                 out.append(Instance(rule, f"{s.name}/{last[0]}-翌月1", terms, None, m))
     elif k == "weekday":
         wd = set(p["weekdays"])
+        dated = rule.meta.get("dated", {})   # 同じ人の日付を決めた頼みのある日（_weekday_dated）。曜日の頼みはその日に譲る
         for s in people:
             for d in _days(rule, month):
-                if month.weekday(d) not in wd:
+                if month.weekday(d) not in wd or d in dated.get(s.name, ()):
                     continue
                 if "not_in" in p:
                     out.append(Instance(rule, f"{s.name}/{d}", [Term(s.name, d, _syms(p["not_in"], facility))], None, 0))
