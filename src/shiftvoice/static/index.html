@@ -903,6 +903,7 @@ function renderSaid() {
 }
 
 var sentExplained = false;
+var spokenExplained = false;
 function renderReply(r) {
   renderReplyBody(r);
   if (!r || !r.sent_known) return;   // 一言の返事だけ。Claude へ送った文（伏せた後）を灰色で1行
@@ -911,6 +912,7 @@ function renderReply(r) {
     ? "Claude へは送っていません"
     : "Claude へ送った文　" + r.sent);
   if (!sentExplained && r.sent) { line.appendChild(el("div", "sentnote", "名簿の名前は番号に置き換えて送ります")); sentExplained = true; }
+  if (!spokenExplained && /勤務[A-Z]/.test(r.sent || "")) { line.appendChild(el("div", "sentnote", "足した勤務は「勤務A」のように置き換えて送ります")); spokenExplained = true; }
   box.appendChild(line);
 }
 
