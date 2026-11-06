@@ -252,7 +252,7 @@ def test_コピーは曜日と日付の下にユニットの見出しの行を�
     assert rows[0][1:3] == ["日", "月"] and rows[1][1:3] == ["1", "2"]
     east, west = rows[2], rows[3 + 8]
     assert east[0] == "東ユニット" and west[0] == "西ユニット"
-    assert east[12] == "↓" and all(c == "" for i, c in enumerate(east[1:], 1) if i != 12)
+    assert east[12] == "↓西" and all(c == "" for i, c in enumerate(east[1:], 1) if i != 12)
     assert rows[3][0] == "青木" and rows[3][12] == "遅"       # マスは記号だけ（Excel に貼れる形のまま）
     assert all(len(r) == 1 + st["days"] for r in rows)
 

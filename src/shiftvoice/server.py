@@ -211,10 +211,12 @@ def codespaces_host(port: int) -> str | None:
 WEEKDAY_JA = {"sun": "日", "mon": "月", "tue": "火", "wed": "水", "thu": "木", "fri": "金", "sat": "土"}
 
 
-def table_tsv(st: dict, paste_symbols: dict | None = None) -> str:
+def table_tsv(st: dict, paste_symbols: dict | None = None, layout: dict | None = None) -> str:
     """開いている月の表をタブ区切りにする（Excel の左上のマスに貼れる形）。
     1行目は曜日、2行目は日付、3行目から「名前＋各日の記号」。ユニットが2つ以上なら、画面と同じくユニットの見出しの行を
-    職員の行の前に挟み、その日の欄に応援の矢印を入れる（施設の Excel の並べ方。左上のマスに貼って行がそろうように）。
+    職員の行の前に挟み、その日の欄に応援の矢印と行き先（↓南）を入れる（施設の Excel の並べ方。左上のマスに貼って行がそろうように）。
+    layout（施設の設定。取り込んだ表の並べ方）があれば、貼った表と同じ行と列に出す（ユニットの列・日の列の位置・曜日の行の
+    有無と上下・見出しの行の有無。貼り戻す時に人と日がずれないように）。見出しの行が無い形には応援は入らない（support_left_out）。
     マスは記号だけ（応援先の字は入れない）。人数の行は入れない（施設の Excel には自分の式の行があり、貼ると上書きするため）。
     待機当番などの欄の行は最後に、その日の担当の名前（さんは外す）を入れる。
     paste_symbols（施設の設定。アプリの記号 → 取り込んだ表での書き方）があれば、勤務の記号をその書き方に戻す。
@@ -230,27 +232,57 @@ def table_tsv(st: dict, paste_symbols: dict | None = None) -> str:
 
     staff, days = st["staff"], st["days"]
     units = list(dict.fromkeys(s["unit"] for s in staff))
-    multi = len(units) > 1
-    rows = [[""] + [WEEKDAY_JA.get(w, "") for w in st["weekdays"]],
-            [""] + [str(d) for d in range(1, days + 1)]]
-    for unit in units:
-        if multi:
+    lay = layout or {}
+    cols = lay.get("cols") or [1]
+    pos = (cols + [cols[-1] + i for i in range(1, days)])[:days]   # 日ごとの列。貼った表より長い月は右へ続ける
+    name_col, unit_col = lay.get("name_col", 0), lay.get("unit_col")
+    lefts = lay.get("lefts") or {}
+
+    def line(left: list[str], vals: list[str]) -> list[str]:
+        out = list(left) + [""] * (pos[-1] + 1 - len(left))
+        for p, v in zip(pos, vals):
+            out[p] = v
+        return out
+
+    def label(name: str, unit: str = "") -> list[str]:
+        out = [""] * cols[0]
+        out[name_col] = name
+        if unit_col is not None:
+            out[unit_col] = unit
+        return out
+
+    wk = line([""] * cols[0], [WEEKDAY_JA.get(w, "") for w in st["weekdays"]])
+    dates = line(lay.get("head") or [""] * cols[0], [str(d) for d in range(1, days + 1)])
+    where = lay.get("weekday", "above")
+    rows = [wk, dates] if where == "above" else [dates, wk] if where == "below" else [dates]
+
+    def person(s: dict) -> list[str]:
+        row = st["table"].get(s["name"]) or []
+        return line(lefts.get(s["name"]) or label(s["name"], s["unit"]),
+                    [back.get(row[d], row[d]) if d < len(row) else "" for d in range(days)])
+
+    if lay.get("unit_rows", len(units) > 1):
+        for unit in units:
             arrows = {}
             for x in st.get("support") or []:
-                if x["from"] == unit and x["arrow"] not in arrows.get(x["day"], ""):
-                    arrows[x["day"]] = arrows.get(x["day"], "") + x["arrow"]
-            rows.append([unit if "ユニット" in unit else unit + "ユニット"] + [arrows.get(d, "") for d in range(1, days + 1)])
-        for s in staff:
-            if s["unit"] != unit:
-                continue
-            row = st["table"].get(s["name"]) or []
-            rows.append([s["name"]] + [back.get(row[d], row[d]) if d < len(row) else "" for d in range(days)])
+                go = x["arrow"] + x["to"]
+                if x["from"] == unit and go not in arrows.get(x["day"], ""):
+                    arrows[x["day"]] = arrows.get(x["day"], "") + go
+            rows.append(line(label(unit if "ユニット" in unit else unit + "ユニット"),
+                             [arrows.get(d, "") for d in range(1, days + 1)]))
+            rows += [person(s) for s in staff if s["unit"] == unit]
+    else:
+        rows += [person(s) for s in staff]
     for layer in (st.get("layers") or {}).values():
-        line = [layer.get("name") or "待機当番"]
-        for d in range(1, days + 1):
-            line.append("・".join(n.removesuffix("さん") for n in (layer.get("assign") or {}).get(str(d), [])))
-        rows.append(line)
+        rows.append(line(label(layer.get("name") or "待機当番"),
+                         ["・".join(n.removesuffix("さん") for n in (layer.get("assign") or {}).get(str(d), []))
+                          for d in range(1, days + 1)]))
     return "\n".join("\t".join(cell(c) for c in r) for r in rows) + "\n"
+
+
+def support_left_out(st: dict, layout: dict | None) -> int:
+    """コピーに入らない応援の件数。貼った表に見出しの行が無い形は、矢印を書く行が無い。"""
+    return len(st.get("support") or []) if layout and not layout.get("unit_rows") else 0
 
 
 class Box:
@@ -552,7 +584,10 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
                     settings = self.box.session.store.facility().settings
                     back = settings.get("paste_symbols") or {}
                     merged = settings.get("paste_merged") or {}
-                    body = table_tsv(self.box.session.state(), back).encode("utf-8")
+                    layout = settings.get("paste_layout")
+                    st = self.box.session.state()
+                    body = table_tsv(st, back, layout).encode("utf-8")
+                    left_out = support_left_out(st, layout)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/tab-separated-values; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
@@ -560,6 +595,8 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
                     self.send_header("X-Restored-Symbols", urllib.parse.quote(json.dumps(back, ensure_ascii=False)))
                 if merged:   # 貼った表で書き方が2つ以上あり、1つにまとめて出す記号（休と希 など）
                     self.send_header("X-Merged-Symbols", urllib.parse.quote(json.dumps(merged, ensure_ascii=False)))
+                if left_out:   # 貼った表の形に矢印を書く行が無く、コピーに入らない応援の件数
+                    self.send_header("X-Support-Left-Out", str(left_out))
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)

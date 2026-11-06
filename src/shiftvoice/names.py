@@ -68,8 +68,9 @@ class Masker:
     leftover: dict[str, str] = field(default_factory=dict)   # 伏せきれなかった呼び方・頭 → 名前（直前の mask の結果）
 
     def __post_init__(self):
+        self.width = max(2, len(str(len(self.staff))))   # 番号の桁。100人を超えたら全員3桁にそろえる（職員10と職員100を見分ける）
         for i, s in enumerate(self.staff, 1):
-            code = f"職員{i:02d}"
+            code = f"職員{i:0{self.width}d}"
             self.to_code[s.name] = code
             self.to_name[code] = s.name
         for i, u in enumerate(self.facility.units, 1):
@@ -102,7 +103,7 @@ class Masker:
         for u, code in self.unit_code.items():
             t = re.sub(re.escape(u) + r"(?=ユニット|フロア|[、。,.\s　のはがにでもとへやを]|$)", code, t)
             t = t.replace(code + "ユニット", code)
-        t = re.sub(r"(職員\d{2})(?=[0-9０-９])", r"\1 ", t)   # 番号と日付がつながらないように（職員17 15日）
+        t = re.sub(rf"(職員\d{{{self.width}}})(?=[0-9０-９])", r"\1 ", t)   # 番号と日付がつながらないように（職員17 15日）
         # 区切りが無くて伏せきれなかった呼び方・名前の頭が残っていたら、送らずに聞き返す（レビュー c の指摘。
         # 「ゆうちゃ来週休み」「遠藤午後休み」のように、後ろに続く言葉の幅は字を足しても塞ぎきれない）
         self.leftover = {}
@@ -116,7 +117,7 @@ class Masker:
         unknown = []
         for mm in re.finditer(r"([一-龥々ァ-ヶA-Za-z]{1,6})" + HONORIFIC, t):
             m = mm.group(1)
-            if re.fullmatch(r"職員\d{0,2}", m):
+            if re.fullmatch(r"職員\d{0,3}", m):
                 continue
             if m in NOT_NAMES or m in FAMILY_WORDS:
                 # 置き換えの後に残った名前でない語は、直前が区切り・数字・呼び方の終わり・文の頭の時だけ通す（閉じる側）
@@ -164,7 +165,7 @@ class Masker:
         名前の無い一言に Claude が聞き返す時、伏せ方の言い方（「職員NN」「職員番号」）を書くことがあるので、
         使う人の言葉（「〇〇さん」「名前」）に直す（2026-11-05、本物の Haiku の返事に出た）。"""
         if isinstance(obj, str):
-            s = re.sub(r"職員\d{2}", lambda m: self.to_name.get(m.group(0), m.group(0)), obj)
+            s = re.sub(rf"職員\d{{{self.width}}}", lambda m: self.to_name.get(m.group(0), m.group(0)), obj)
             for u, code in self.unit_code.items():
                 s = s.replace(code, u)
             s = re.sub(r"職員(?:NN|ＮＮ|nn|XX|ＸＸ|xx|○○|〇〇)(?:さん)?", "〇〇さん", s)

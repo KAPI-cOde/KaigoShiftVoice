@@ -2249,7 +2249,7 @@ function printNote() {
 }
 window.addEventListener("beforeprint", printNote);
 // コピーの知らせに足す文。施設の書き方に戻した記号（取り込んだ施設だけ）と、最後に入る係の行（係がある月だけ）
-function copyExtra(restored, merged) {
+function copyExtra(restored, merged, leftOut) {
   var out = "";
   var show = function (w) { return w === "" ? "空欄" : "「" + w + "」"; };
   if (restored) {
@@ -2271,14 +2271,15 @@ function copyExtra(restored, merged) {
   }
   var names = Object.keys((S && S.layers) || {}).map(function (k) { return (S.layers[k] && S.layers[k].name) || "待機当番"; });
   if (names.length) out += "。" + names.join("・") + "の行も最後に入ります";
+  if (leftOut) out += "。貼った表の形には矢印を書く行が無いので、ユニットの応援" + leftOut + "件は入りません。応援先は画面と印刷で見られます";
   return out;
 }
 document.getElementById("copytsv").addEventListener("click", function () {
   fetch("/api/table.tsv").then(function (r) {
-    var h = r.headers.get("X-Restored-Symbols"), hm = r.headers.get("X-Merged-Symbols");
-    return r.text().then(function (t) { return [t, h, hm]; });
+    var h = r.headers.get("X-Restored-Symbols"), hm = r.headers.get("X-Merged-Symbols"), ho = r.headers.get("X-Support-Left-Out");
+    return r.text().then(function (t) { return [t, h, hm, ho]; });
   }).then(function (got) {
-    var tsv = got[0], extra = copyExtra(got[1], got[2]);
+    var tsv = got[0], extra = copyExtra(got[1], got[2], got[3]);
     var fallback = function () { showCopyNote("自動でコピーできませんでした。下の文字を選んでコピーし、Excel の表の左上のマスに貼ってください" + extra, tsv); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(tsv).then(function () {

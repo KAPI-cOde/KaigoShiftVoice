@@ -785,7 +785,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     not_name = NOT_NAMES | FAMILY_WORDS | {"みな", "みんな", "お客", "医者", "先生", "看護", "介護", "職員", "ケアマネ",
                             "施設長", "事務", "主任", "スタッフ", "お子", "おばあ", "おじい"} | {sh.name[:2] for sh in facility.shift_types}
     masker = Masker(staff, facility)
-    named = {masker.to_name[c] for c in re.findall(r"職員\d{2}", masker.mask(text)[0]) if c in masker.to_name}
+    named = {masker.to_name[c] for c in re.findall(r"職員\d{2,3}", masker.mask(text)[0]) if c in masker.to_name}
     said = bool(named) or any(
         not any(w.endswith(n) for n in not_name)
         for w in re.findall(r"([ぁ-ゖァ-ヺー一-龥々]{1,6}?)(?:さん|くん|ちゃん)", text))

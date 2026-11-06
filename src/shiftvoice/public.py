@@ -170,7 +170,7 @@ def _strip_known(run: str) -> list[str]:
 
 def name_like(masked: str) -> str | None:
     """送る前の文（名簿の名前は 職員NN に伏せてある）に、名簿に無い名前らしい語があればその語を返す。"""
-    t = re.sub(r"職員\d{2}", "　", masked)
+    t = re.sub(r"職員\d{2,3}", "　", masked)
     t = re.sub(r"ユニット\d+", "　", t)
     for mm in _KANJI_RUN.finditer(t):
         for frag in _strip_known(mm.group(0)):
@@ -203,7 +203,7 @@ def latin_like(masked: str) -> str | None:
 
 def kana_name_like(masked: str) -> str | None:
     """文の頭・読点の後に、ひらがなの語＋助詞（「はるかは」）がある時、その語がよく使う語でなければ返す。"""
-    t = re.sub(r"職員\d{2}(?:さん)?", "、", masked)
+    t = re.sub(r"職員\d{2,3}(?:さん)?", "、", masked)
     for mm in _KANA_HEAD.finditer(t):
         w = mm.group(1)
         if w not in KANA_HEAD_OK:

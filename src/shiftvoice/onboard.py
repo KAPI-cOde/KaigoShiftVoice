@@ -102,6 +102,7 @@ class Pasted:
     spelled: dict[str, dict[str, int]] = field(default_factory=dict)   # 読み替えた後の記号 → {貼った書き方（空欄は ""）: 回数}
     merged: list[str] = field(default_factory=list)         # 2行（兼務）あって1人にまとめた名前
     asked: dict[str, str] = field(default_factory=dict)     # 記号表の時刻が別名の読み方と合わず、知らない記号にした書き方 → 時刻から読んだ勤務（夜→明）
+    layout: dict | None = None        # 貼った表の並べ方（持ち出す時に同じ行と列へ出す）。標準様式と日の見出しが無い表は None
 
 
 @dataclass
@@ -126,6 +127,7 @@ class Proposal:
     merge_notes: list[str] = field(default_factory=list)    # 兼務の2行を1人にまとめた知らせ（警告ではない）
     paste_symbols: dict[str, str] = field(default_factory=dict)   # アプリの記号 → 貼った表での書き方（同じ物は入れない。空欄は ""）
     paste_merged: dict[str, dict] = field(default_factory=dict)   # 書き方が2つ以上あった記号 → {"to": 持ち出す書き方, "from": [ほかの書き方]}
+    paste_layout: dict | None = None                         # 貼った表の並べ方（Pasted.layout）
     symbol_plan: "SymbolPlan | None" = None                  # シフト記号表から読んだ仮の答え（画面に1行ずつ出す）
 
 
@@ -252,6 +254,11 @@ def _merge_rows(a: list[str], b: list[str]) -> list[str]:
     return [x if x or not y else y for x, y in zip(a, b)]
 
 
+def _not_arrow(c: str) -> bool:
+    """応援の矢印（「↓」「↓南」「↑東↓南」）でない中身があるセルか。"""
+    return bool(c) and c[0] not in "↓↑"
+
+
 def parse_paste(text: str, symbols: str = "") -> Pasted:
     """symbols はシフト記号表の文字（任意）。あれば、別名で読む書き方のうち時刻が合わない物（明けの側の「夜」）を、
     別名で決めずに知らない記号として残す（asked_symbols）。"""
@@ -302,6 +309,8 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
     skipped = 0
     has_kind = False   # 標準様式（1人が2〜3行で、行の種類の列がある表）か
     n_header: int | None = None
+    layout: dict | None = None
+    lefts: dict[str, list[str]] = {}   # 名前 → 日より左の列の中身
     if header and header[0][0][0] > 0:
         (cols, blanks), hcells = header
         n_header = len(cols)
@@ -342,7 +351,7 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
                 skipped += 1
                 continue
             days = [cells[c] if c < len(cells) else "" for c in cols]
-            if not any(c.strip("↓↑") for c in days) and kind != "sym":   # 応援の矢印だけの行も見出し（table_tsv）
+            if not any(_not_arrow(c) for c in days) and kind != "sym":   # 応援の矢印と行き先だけの行も見出し（table_tsv）
                 if not _is_role_heading(name):
                     items.append(("unit", name))
                 continue
@@ -355,8 +364,14 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
                                  "その列を外してコピーしてください")
             ulabel = _clean_name(cells[uc]) if uc is not None and uc < len(cells) else ""
             items.append(("staff", lineno, name, days, ulabel))
+            lefts.setdefault(name, cells[:cols[0]])
             if kind == "sym":
                 has_kind = True
+        if not has_kind:
+            layout = {"cols": cols, "name_col": nc, "unit_col": uc, "head": hcells[:cols[0]], "lefts": lefts,
+                      "unit_rows": any(it[0] == "unit" for it in items),
+                      "weekday": ("above" if start >= 2 and _is_weekday_row(rows[start - 2][1])
+                                  else "below" if body and _is_weekday_row(body[0][1]) else None)}
     else:
         if header:
             n_header = len(header[0][0])
@@ -369,7 +384,7 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
                 skipped += 1
                 continue
             rest = cells[k + 1:]
-            if any(c.strip("↓↑") for c in rest):
+            if any(_not_arrow(c) for c in rest):
                 items.append(("staff", lineno, name, rest, ""))
             elif not _is_role_heading(name):
                 items.append(("unit", name))
@@ -463,7 +478,7 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
                   unknown_symbols=unknown, had_header=header is not None,
                   aliases=aliases, unit_of=unit_of, unit_list=unit_list, blank_by=blank_by,
                   spelled={k: dict(v) for k, v in spelled.items()}, merged=merged_names,
-                  asked={c: t for c, t in asked.items() if c in unknown})
+                  asked={c: t for c, t in asked.items() if c in unknown}, layout=layout)
 
 
 # ---------------------------------------------------------------- 雛形
@@ -1095,7 +1110,8 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
                     problems=problems, suggestions=suggestions, suggestion_why=suggestion_why,
                     raw=pasted.table, staff_evidence=staff_evidence,
                     long_rest=long_rest, rest_mode=mode, rest_notes=rest_notes, merge_notes=merge_notes,
-                    paste_symbols=_paste_symbols(pasted, same), paste_merged=_paste_merged(pasted, same))
+                    paste_symbols=_paste_symbols(pasted, same), paste_merged=_paste_merged(pasted, same),
+                    paste_layout=pasted.layout)
 
 
 def _answer_problems(pasted: Pasted, same: dict[str, str], answers: dict, month: int) -> list[str]:
@@ -1282,6 +1298,8 @@ def create_facility(proposal: Proposal, root: Path, *, name: str, next_year: int
         settings["paste_symbols"] = dict(proposal.paste_symbols)   # 持ち出す時に、施設の書き方へ戻す
     if proposal.paste_merged:
         settings["paste_merged"] = dict(proposal.paste_merged)     # 1つにまとまる書き方（コピーの知らせで伝える）
+    if proposal.paste_layout:
+        settings["paste_layout"] = proposal.paste_layout           # 持ち出す時に、貼った表と同じ行と列へ出す
     fac = {"id": _short_id(name), "name": name.strip(), "units": list(proposal.units),
            "shift_types": shift_types, "settings": settings}
     atomic_write_json(root / "facility.json", fac)

@@ -140,6 +140,7 @@ class Month:
     support: dict[str, str] = field(default_factory=dict)      # 応援 "名前/日" → その日だけ入るユニット
     dist_table: dict[str, list[str]] | None = None   # 配った時の表（配った表から何マス直したかを画面と印刷で言う）
     dist_at: str | None = None                        # 配った時刻（"2026-11-04T21:30"）
+    dist_support: dict[str, str] | None = None        # 配った時の応援（None は応援を残す前に配った月）
 
     @property
     def days(self) -> int:
@@ -156,7 +157,7 @@ class Month:
                 "prev_tail": self.prev_tail, "table": self.table, "layers": self.layers,
                 "rev": self.rev, "built_rev": self.built_rev, "history": self.history,
                 "distributed": self.distributed, "rest_adjust": self.rest_adjust, "support": self.support,
-                "dist_table": self.dist_table, "dist_at": self.dist_at}
+                "dist_table": self.dist_table, "dist_at": self.dist_at, "dist_support": self.dist_support}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Month":
@@ -165,7 +166,8 @@ class Month:
                    table=d.get("table"), layers=d.get("layers", {}), rev=d.get("rev"),
                    built_rev=d.get("built_rev"), history=list(d.get("history", [])),
                    distributed=d.get("distributed", False), rest_adjust=dict(d.get("rest_adjust", {})),
-                   support=dict(d.get("support", {})), dist_table=d.get("dist_table"), dist_at=d.get("dist_at"))
+                   support=dict(d.get("support", {})), dist_table=d.get("dist_table"), dist_at=d.get("dist_at"),
+                   dist_support=d.get("dist_support"))
 
 
 @dataclass
