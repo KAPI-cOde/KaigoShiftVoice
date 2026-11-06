@@ -16,7 +16,7 @@
 
   table.grid { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 13px; }
   .grid th, .grid td { border: 1px solid #ddd; text-align: center; padding: 0; height: 26px; }
-  .grid th.name, .grid td.name { width: 190px; text-align: left; padding: 0 6px; white-space: nowrap; overflow: hidden; border-right: 1px solid #000; }
+  .grid th.name, .grid td.name { width: 180px; text-align: left; padding: 0 6px; white-space: nowrap; overflow: hidden; border-right: 1px solid #000; }
   .grid thead th { height: 38px; font-weight: 400; line-height: 1.2; }
   .grid thead th small { display: block; font-size: 10px; }
   .grid th.off { background: #eee; }
@@ -28,7 +28,12 @@
   .grid tr.unithead td.name { cursor: default; }
   .grid td .sup { font-size: 9px; font-weight: 400; margin-left: 1px; }
   .grid .mark { font-size: 10px; margin-left: 4px; font-weight: 700; }
-  .grid td.cell { transition: background-color 1.2s ease; }
+  /* 人ごとの勤務の回数の列（表の右端。数字は小さく静かに。色は足さない） */
+  .grid th.cnt, .grid td.cnt { width: 20px; font-size: 10px; color: #555; font-weight: 400; overflow: hidden; }
+  .grid td.cnt.zero { color: #bbb; }
+  .grid th.cnt.cfirst, .grid td.cnt.cfirst { border-left: 1px solid #000; }
+  .grid thead tr.wdrow th.cnt { font-size: 10px; }
+  .grid td.cell { white-space: nowrap; transition: background-color 1.2s ease; }
   .grid td.glow { background: #fff3a0; font-weight: 700; box-shadow: inset 0 0 0 2px #d4a800; }
 
   .said { margin-top: 10px; min-height: 22px; }
@@ -233,6 +238,7 @@
     h2 { font-size: 16px; }
     table.grid { font-size: 10px; }
     .grid .name { width: 110px; }
+    .grid th.cnt, .grid td.cnt { width: 16px; }
     .grid th, .grid td { height: 20px; }
     .grid td.glow, .grid td.diff { background: none !important; font-weight: 400; }
     .grid td.k-early, .grid td.k-day, .grid td.k-late, .grid td.k-night, .grid td.k-ake, .grid td.k-leave { background: none !important; }   /* 紙は今どおり白黒（土日祝の列だけ灰色） */
@@ -393,6 +399,45 @@ function spokenTimes(sym) {
   return say(a) + "〜" + say(a + (Number(s.hours) || 0) * 60);
 }
 
+// ---- 人ごとの勤務の回数（表の右端の列。マスから数える。計算やコピーの中身は変えない）
+// 列は、勤務の種類（早・日・遅・夜など）・公休・有給。明けは夜勤と同じ数なので出さない。研修や話して足した勤務は、その月に入っている時だけ出す
+// COUNTS-BEGIN
+function shiftCountCols(symbols, rows) {
+  var used = {};
+  rows.forEach(function (r) { (r || []).forEach(function (x) { if (x) used[x] = (used[x] || 0) + 1; }); });
+  var core = { "早": 1, "日": 1, "遅": 1, "夜": 1 };
+  var order = { work: 0, rest: 1, leave: 2 };
+  var cols = (symbols || []).filter(function (x) {
+    if (!(x.kind in order)) return false;                 // 明け（ake）は出さない
+    return x.kind !== "work" || core[x.symbol] || used[x.symbol];
+  }).map(function (x, i) { return { sym: x.symbol, name: x.name, i: i }; });
+  var kindOf = {};
+  (symbols || []).forEach(function (x) { kindOf[x.symbol] = order[x.kind]; });
+  cols.sort(function (a, b) { return kindOf[a.sym] - kindOf[b.sym] || a.i - b.i; });
+  return cols;
+}
+function shiftCountsOf(row, cols) {
+  return cols.map(function (c) { return (row || []).filter(function (x) { return x === c.sym; }).length; });
+}
+// COUNTS-END
+function cntHead(cols, tag, ttl) {
+  return cols.map(function (c, i) {
+    var th = el(tag, "cnt" + (i === 0 ? " cfirst" : ""), tag === "th" ? c.sym : "");
+    if (ttl) th.title = c.name + "の回数";
+    return th;
+  });
+}
+function cntBlank(tr, cols) {
+  cols.forEach(function (c, i) { tr.appendChild(el("td", "cnt" + (i === 0 ? " cfirst" : ""), "")); });
+}
+function cntCells(tr, row, cols) {
+  shiftCountsOf(row, cols).forEach(function (n, i) {
+    var td = el("td", "cnt" + (i === 0 ? " cfirst" : "") + (n === 0 ? " zero" : ""), String(n));
+    td.title = cols[i].name + " " + n + "回";
+    tr.appendChild(td);
+  });
+}
+
 function renderLegend() {
   var items = (S.shift_names || []).map(function (x) {
     if (x[0] === x[1]) return [x[0], spokenTimes(x[0]) || x[1]];   // 話して足した勤務は記号と名前が同じなので、時刻を添える
@@ -424,6 +469,11 @@ function renderTable() {
   }
   var t = el("table", "grid");
   var thead = el("thead");
+  var ordered = [];
+  unitNames().forEach(function (u) {
+    S.staff.forEach(function (st) { if (st.unit === u) ordered.push(st); });
+  });
+  var cols = shiftCountCols(S.symbols, ordered.map(function (st) { return S.table[st.name] || []; }));
   // 施設の Excel の並べ方（作者 2026-11-06）。上に曜日の行と日付の行、ユニットごとに見出しの行と職員の行、下に人数の行
   var wr = el("tr", "wdrow"), hr = el("tr", "dayrow");
   var corner = el("th", "name", "");
@@ -435,6 +485,10 @@ function renderTable() {
     wr.appendChild(el("th", off ? "off" : "", WD[wd] || ""));
     hr.appendChild(el("th", off ? "off" : "", String(d)));
   }
+  if (cols.length) {
+    cols.forEach(function (c, i) { wr.appendChild(el("th", "cnt" + (i === 0 ? " cfirst" : ""), "")); });   // 幅は1行目の欄で決まるので、欄は1つずつ置く
+    cntHead(cols, "th", true).forEach(function (th) { hr.appendChild(th); });
+  }
   thead.appendChild(wr);
   thead.appendChild(hr);
   t.appendChild(thead);
@@ -445,13 +499,9 @@ function renderTable() {
     var o = supOut[x.from] = supOut[x.from] || {};
     (o[x.day] = o[x.day] || []).push(x);
   });
-  var ordered = [];
-  unitNames().forEach(function (u) {
-    S.staff.forEach(function (st) { if (st.unit === u) ordered.push(st); });
-  });
   var prevUnit = null;
   ordered.forEach(function (st) {
-    if (multiUnit() && prevUnit !== st.unit) tb.appendChild(unitHead(st.unit, supOut[st.unit] || {}));
+    if (multiUnit() && prevUnit !== st.unit) tb.appendChild(unitHead(st.unit, supOut[st.unit] || {}, cols));
     prevUnit = st.unit;
     var tr = el("tr");
     var nm = el("td", "name");
@@ -491,6 +541,7 @@ function renderTable() {
       })(st.name, d2);
       tr.appendChild(td);
     }
+    cntCells(tr, row, cols);
     tb.appendChild(tr);
   });
   Object.keys(S.layers || {}).forEach(function (lid) {
@@ -506,15 +557,16 @@ function renderTable() {
       if (wd3 === "sat" || wd3 === "sun" || S.holidays.indexOf(d3) >= 0) td3.className += " off";
       sr.appendChild(td3);
     }
+    cntBlank(sr, cols);
     tb.appendChild(sr);
   });
   t.appendChild(tb);
-  t.appendChild(countRows());
+  t.appendChild(countRows(cols));
   wrap.appendChild(t);
 }
 
 // ユニットの見出しの行。応援が出る日の欄に矢印（行き先のユニットが下なら↓、上なら↑）
-function unitHead(unit, out) {
+function unitHead(unit, out, cols) {
   var tr = el("tr", "unithead");
   tr.appendChild(el("td", "name", unit.indexOf("ユニット") >= 0 ? unit : unit + "ユニット"));
   for (var d = 1; d <= S.days; d++) {
@@ -525,11 +577,12 @@ function unitHead(unit, out) {
     if (xs.length) td.title = xs.map(function (x) { return x.name + "さんが" + x.to + "へ応援"; }).join("、");
     tr.appendChild(td);
   }
+  cntBlank(tr, cols || []);
   return tr;
 }
 
 // 日ごとの勤務の人数の行（ユニットごとと施設全体）。人数のルールに足りない日は太字と下線
-function countRows() {
+function countRows(cols) {
   var tf = el("tfoot");
   var rows = S.day_counts || [];
   var prev;
@@ -546,6 +599,7 @@ function countRows() {
       if (r.short.indexOf(d) >= 0) { td.className += " short"; td.title = "ルールの人数に足りません"; }
       tr.appendChild(td);
     }
+    cntBlank(tr, cols || []);
     tf.appendChild(tr);
   });
   return tf;
@@ -1728,12 +1782,14 @@ function renderResult() {
   var offDay = function (d) { var wd = b.weekdays[d - 1]; return wd === "sat" || wd === "sun" || b.holidays.indexOf(d) >= 0; };
   var t = el("table", "grid");
   var thead = el("thead"), hr = el("tr");
+  var rcols = shiftCountCols(S.symbols, names.map(function (n) { return give[n] || []; }));
   hr.appendChild(el("th", "name", ""));
   for (var d = 1; d <= b.days; d++) {
     var th = el("th", offDay(d) ? "off" : "", String(d));
     th.appendChild(el("small", "", WD[b.weekdays[d - 1]] || ""));
     hr.appendChild(th);
   }
+  cntHead(rcols, "th", true).forEach(function (th) { hr.appendChild(th); });
   thead.appendChild(hr); t.appendChild(thead);
   var tb = el("tbody"), prevUnit = null;
   names.forEach(function (n) {
@@ -1743,6 +1799,7 @@ function renderResult() {
       var uh = el("tr", "unithead");
       uh.appendChild(el("td", "name", u.indexOf("ユニット") >= 0 ? u : u + "ユニット"));
       for (var ud = 1; ud <= b.days; ud++) uh.appendChild(el("td", "", ""));
+      cntBlank(uh, rcols);
       tb.appendChild(uh);
     }
     if (u !== undefined) prevUnit = u;
@@ -1758,6 +1815,7 @@ function renderResult() {
       if (bsym !== sym) cls += " diff";
       tr.appendChild(el("td", cls, sym));
     }
+    cntCells(tr, give[n] || [], rcols);
     tb.appendChild(tr);
   });
   t.appendChild(tb);
