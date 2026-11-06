@@ -106,6 +106,27 @@ def large_workers(facility: Facility, staff: list[Staff]) -> int:
     return int(facility.settings.get("solve", {}).get("interleave_workers") or INTERLEAVE_WORKERS)
 
 
+def pinned_cells(rules: list[Rule], flexes: set[str]) -> dict[tuple[str, int], set[str]]:
+    """外せないマスの決まり（人と日が決まった cell の in）が置ける記号。"""
+    out: dict[tuple[str, int], set[str]] = {}
+    for r in with_overrides(rules):
+        if r.kind == "cell" and r.flex in flexes and r.params.get("in"):
+            for w in r.who or []:
+                for d in r.when or []:
+                    out[(w, d)] = out.get((w, d), set(r.params["in"])) & set(r.params["in"])
+    return out
+
+
+def forced_dev(inst: Instance, pins: dict[tuple[str, int], set[str]]) -> int:
+    """外せないマスだけで決まる、回数のルールからのずれ（14日の希望休と公休9日なら5）。"""
+    least = most = 0
+    for t in inst.terms:
+        p = pins.get((t.staff, t.day))
+        most += t.coef if p is None or p & set(t.symbols) else 0
+        least += t.coef if p and p <= set(t.symbols) else 0
+    return max(0, least - inst.hi if inst.hi is not None else 0, inst.lo - most if inst.lo is not None else 0)
+
+
 def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month, *,
                 hint: dict[str, list[str]] | None = None, stage: int = 1,
                 fixed_cells: dict[tuple[str, int], str] | None = None,
@@ -157,6 +178,7 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
 
     hard_flex = {"fixed"} if stage >= 4 else ({"fixed", "wish", "operational"} if stage == 1 else
                                               {"fixed", "operational"} if stage == 2 else {"fixed", "wish"})
+    pins = pinned_cells(rules, hard_flex)
     penalties = []
     switches: list[tuple[Instance, cp_model.IntVar | None]] = []
     for r in with_overrides(rules):
@@ -186,7 +208,8 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                     # 外した後のずれに上限を付ける。外すかどうかだけだと、外す人を少なくするために1人へ全部寄り、公休9日の施設で
                     # 1人だけ19日の表ができた（2026-11-06 通しの試し）。上限が無い時も、ずれの分だけ罰する。ずれの2乗・段階の罰・
                     # いちばん大きいずれの罰は、希望休が入ると時間内に解ききれず、30日全休の人が出たので使わない（同じ日に測った）
-                    dev = m.new_int_var(0, D if dev_cap is None else dev_cap, "")
+                    # 希望休などで避けられない分は、その人にだけ上限へ足す。1人の希望で全員の上限を広げると、ほかの人へ寄った
+                    dev = m.new_int_var(0, D if dev_cap is None else max(dev_cap, forced_dev(inst, pins)), "")
                     if inst.lo is not None:
                         m.add(dev >= inst.lo - e)
                     if inst.hi is not None:

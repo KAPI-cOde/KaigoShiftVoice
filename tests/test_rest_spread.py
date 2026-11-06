@@ -118,3 +118,36 @@ def test_fixed_cell_on_a_wish_day_only_drops_that_day(nov):
     assert f"{a}さんの10日は" in r.note
     t = r.result.table
     assert t[a][9] == "早" and t[a][7] == "公" and t[b][9] == "公"
+
+
+def small(wish_days: int, **settings):
+    """職員16人が毎日10人勤務する30日の月（公休の平均は11日強）。公休9日のルールは守れず、職員00さんが1日からの希望休を持つ"""
+    from shiftvoice.model import Facility, Month, Rule, ShiftType, Staff
+    fac = Facility("x", "x", ["東"], [ShiftType("日", "日勤", "work"), ShiftType("公", "公休", "rest")],
+                   {"solve": {"max_deterministic_time": 1}, **settings})
+    staff = [Staff(f"職員{i:02}", "東", ["日"]) for i in range(16)]
+    rules = [Rule("rest", 1, "公休の数", "count", "operational", {"shifts": ["公"], "min": 9, "max": 9}),
+             Rule("cov", 1, "毎日日勤10人", "coverage", "fixed", {"shifts": ["日"], "scope": "all", "op": "==", "n": 10}),
+             Rule("wish", 1, "職員00さん 希望休", "cell", "wish", {"in": ["公"]}, who=["職員00"],
+                  when=list(range(1, wish_days + 1)))]
+    return fac, staff, rules, Month(2026, 11, [], {})
+
+
+def test_one_long_wish_does_not_lift_the_limit_for_everyone():
+    """公休9日に14日の希望休が1件。直す前は上限が無制限まで外れ、公休28日の人が出た（Astra 2026-11-06 の指摘2）"""
+    from shiftvoice.build import solve_staged
+    r = solve_staged(*small(14))
+    assert r.ok and r.result.stage == 3
+    rests = {n: row.count("公") for n, row in r.result.table.items()}
+    assert rests.pop("職員00") == 14
+    assert max(rests.values()) <= 12, rests   # ほかの人は、希望の分まで広げず3日のずれまで
+
+
+def test_forced_dev_counts_only_what_the_pinned_cells_force():
+    from shiftvoice.rules import expand
+    from shiftvoice.solver import forced_dev, pinned_cells
+    fac, staff, rules, m = small(14)
+    pins = pinned_cells(rules, {"fixed", "wish"})
+    dev = {i.key: forced_dev(i, pins) for i in expand(rules[0], fac, staff, m)}
+    assert dev["職員00"] == 5 and dev["職員01"] == 0
+    assert forced_dev(next(i for i in expand(rules[0], fac, staff, m) if i.key == "職員00"), pinned_cells(rules, {"fixed"})) == 0

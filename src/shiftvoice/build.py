@@ -99,7 +99,9 @@ def solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], mont
     return out
 
 
-DEV_CAPS = (1, 2, 3, None)   # 運用の都合の回数のルールを外す時の、1人あたりのずれの上限。小さい方から試す
+# 運用の都合の回数のルールを外す時の、1人あたりのずれの上限。小さい方から試す。3の次がすぐ無制限だと、公休9日の施設で
+# 14日の希望休が1件あるだけで2人が公休26日・28日になった（Astra 2026-11-06 の指摘2）
+DEV_CAPS = (1, 2, 3, 5, 8, 13, None)
 
 
 def _solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month,
