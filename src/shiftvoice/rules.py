@@ -228,6 +228,9 @@ def _cov_yield(new: dict, old: dict) -> set[str]:
     return out
 
 
+_STRENGTH = ["negotiable", "operational", "wish", "fixed"]   # 弱い順
+
+
 def _coverage_units(rules: list[Rule]) -> list[Rule]:
     """ユニットを名指しした人数のルール（「東の早番は毎日2人」。params の units）は、同じ勤務・同じ曜日の、ユニットごとの
     別のルールより優先する（人を名指しした回数のルールと同じ考え。with_overrides）。
@@ -267,6 +270,8 @@ def _coverage_units(rules: list[Rule]) -> list[Rule]:
             q = g.params
             if g.kind != "coverage" or q.get("scope") != "each_unit" or not q.get("units") or _cov_key(q) != _cov_key(p):
                 continue
+            if _STRENGTH.index(new.flex) < _STRENGTH.index(g.flex):
+                continue   # 弱い新しいルール（できれば）では、強い前のルール（動かせない人数）を譲らせない（Astra）
             sides = _cov_yield(p, q)
             if not sides:
                 continue

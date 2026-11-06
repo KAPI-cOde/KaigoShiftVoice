@@ -125,3 +125,59 @@ def test_後から言った全ユニット向けの人数に_前の名指しの�
     # 名指しの方が新しい時は、これまでどおり名指しが勝つ
     eff = {r.id: r for r in with_overrides([strict, named])}
     assert eff["n001"].meta.get("skip_max") == ["U1", "U3"] and not eff["r009"].meta.get("skip_max")
+
+
+# ---- Astra（2026-11-07）が上の直しの副作用として見つけた形
+def test_1ユニットにつきはユニットごと(made, tmp_path):
+    r, new = _say(made, tmp_path, "1ユニットにつき夜勤は毎日2人", [{"type": "coverage", "shift": "夜", "min": 2, "max": 2}])
+    assert r.kind == "applied", r.message
+    assert [x.params["scope"] for x in new] == ["each_unit"]
+
+
+def test_期限のまでは有給の上限にしない(made, tmp_path):
+    r, new = _say(made, tmp_path, "青木さん、月末までに有給を1日", [{"type": "leave_count", "staff": "青木", "count": 1}])
+    assert r.kind == "applied", r.message
+    assert [x.params for x in new] == [{"shifts": ["有"], "min": 1, "max": 1}]
+
+
+def test_別の件のできればで強い回数を弱めない(made, tmp_path):
+    items = [{"type": "count_limit", "staff": ["青木"], "shift": "夜", "min": None, "max": 0, "strength": "operational"},
+             {"type": "count_limit", "staff": ["青木"], "shift": "早", "min": None, "max": 3, "strength": "negotiable"}]
+    r, new = _say(made, tmp_path, "青木さんは夜勤0回、できれば早番も3回まで", items)
+    assert r.kind == "applied", r.message
+    assert sorted((x.params["shifts"][0], x.flex) for x in new) == [("夜", "operational"), ("早", "negotiable")]
+
+
+def test_含めての連続は全部の勤務の連勤(made, tmp_path):
+    r, new = _say(made, tmp_path, "全員、夜勤も含めて5日連続で働かせないで", [{"type": "consecutive_limit", "staff": None, "max": 4}])
+    assert r.kind == "applied", r.message
+    assert [x.params for x in new] == [{"shifts": "work", "max": 4}]
+
+
+def test_1日につきの人数は日付にしない(made, tmp_path):
+    r, new = _say(made, tmp_path, "夜勤は1日につき2人", [{"type": "coverage", "shift": "夜", "min": 2, "max": 2}])
+    assert r.kind == "applied", r.message
+    assert [x.params["n"] for x in new] == [2]
+
+
+def test_日付と曜日を言った人数も毎週にせず聞き返す(made, tmp_path):
+    r, new = _say(made, tmp_path, "28日の日曜は早番5人", [{"type": "coverage", "shift": "早", "min": 5, "max": None,
+                                                          "weekdays": ["sun"]}])
+    assert r.kind != "applied" and "日付を決めた人数" in (r.message or "") and new == []
+
+
+def test_合わせての別の意味は1本にしない(made, tmp_path):
+    items = [{"type": "count_limit", "staff": ["青木"], "shift": "遅", "min": None, "max": 8},
+             {"type": "count_limit", "staff": ["青木"], "shift": "日", "min": None, "max": 8}]
+    r, new = _say(made, tmp_path, "青木さん、遅番に合わせて日勤も月8回まで", items)
+    assert r.kind == "applied", r.message
+    assert sorted(tuple(x.params["shifts"]) for x in new) == [("日",), ("遅",)]
+
+
+def test_弱い新しい人数で動かせない名指しの人数を外さない():
+    named = Rule("r010", 1, "東の夜勤は2人", "coverage", "fixed",
+                 {"shifts": ["夜"], "scope": "each_unit", "op": ">=", "n": 2, "units": ["U1"]})
+    weak = Rule("n003", 1, "各ユニットできれば夜勤1人", "coverage", "negotiable",
+                {"shifts": ["夜"], "scope": "each_unit", "op": "==", "n": 1})
+    eff = {r.id: r for r in with_overrides([named, weak])}
+    assert not eff["r010"].meta.get("skip_min")

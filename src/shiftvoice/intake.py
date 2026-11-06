@@ -168,22 +168,24 @@ def _count_strength(v, text: str, single: bool) -> str:
     ほかは施設の運用（operational）にそろえる（「今月は夜勤0で」が wish だと全員向けの下限に負ける）。"""
     if single and any(w in text for w in FIXED_WORDS):
         return "fixed"
-    if any(w in text for w in MAYBE_WORDS):
+    if single and any(w in text for w in MAYBE_WORDS):
         # 「できれば」は配慮の強さ。読み取りが wish（本人の希望。運用より強い）や operational と返しても、配慮にする
-        # （「日勤はできれば毎日3人」が本人の希望の強さで入り、夜勤2人の決まりを押しのけた。2026-11-07 の通しの試し）
+        # （「日勤はできれば毎日3人」が本人の希望の強さで入り、夜勤2人の決まりを押しのけた。2026-11-07 の通しの試し）。
+        # 頼みが2件以上ある時は、どの件の「できれば」か分からないので、読み取りの値を残す（Astra）
         return "negotiable"
-    if v in ("wish", "negotiable") and any(w in text for w in OWN_WORDS):
+    if v in ("wish", "negotiable") and any(w in text for w in OWN_WORDS + MAYBE_WORDS):
         return v
     return "operational"
 
 
 # 日付を決めた一言（「28日は」「今月の1日だけ」）の日。「1日2人」「1日あたり」の1日（1日ごと）と、「3日続けて」「2日間」は除く
-_DATE_IN_TEXT = re.compile(r"(?<![0-9０-９])([0-9]{1,2})日(?![勤間続連分]|[0-9]|あたり|ごと)")
+_DATE_IN_TEXT = re.compile(r"(?<![0-9０-９])([0-9]{1,2})日(?![勤間続連分]|[0-9]|あたり|当たり|ごと|につき|まで|以内|以上)")
 
 
 def _said_dates(text: str) -> list[int]:
     text = unicodedata.normalize("NFKC", text or "")
-    return [int(d) for d in _DATE_IN_TEXT.findall(text) if not re.search(rf"(?<![0-9]){d}日(?:に|で)?[0-9]", text)]
+    return [int(d) for d in _DATE_IN_TEXT.findall(text)
+            if not re.search(rf"(?<![0-9]){d}日(?:に|で)?[0-9一二三四五六七八九十]", text)]
 
 
 def _typical_scope(n: int, syms: list[str], month: Month, staff: list[Staff], units: list[str]) -> str | None:
@@ -217,7 +219,9 @@ def _said_run_shift(text: str, facility: Facility) -> str | None:
     for st in facility.shift_types:
         if st.kind != "work":
             continue
-        if st.name and st.name in text and st.symbol not in found:
+        # 勤務の名前のすぐ後に「3日続け」「連続」が来る時だけ（「夜勤も含めて5日連続」は全部の勤務の連勤。Astra）
+        if st.name and re.search(re.escape(st.name) + r"[をはがの]?[0-9０-９一二三四五六七八九十]*日?(?:続け|連続)", text) \
+                and st.symbol not in found:
             found.append(st.symbol)
     return found[0] if len(found) == 1 else None
 
@@ -577,7 +581,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     real = [it for it in items if it.get("type") != "none"]
     if not real:
         raise Clarify("表を変える頼みが見つかりませんでした。もう一度言ってください")
-    if (len(real) == 2 and all(it["type"] == "count_limit" for it in real) and re.search(r"合わせて|あわせて|併せて|合計", text)
+    if (len(real) == 2 and all(it["type"] == "count_limit" for it in real)
+            and re.search(r"と[^、。に]{0,8}(?:合わせて|あわせて|併せて|合計)|合計", text)
             and real[0].get("staff") == real[1].get("staff") and real[0].get("shift") != real[1].get("shift")
             and (real[0].get("min"), real[0].get("max"), real[0].get("until_day")) ==
                 (real[1].get("min"), real[1].get("max"), real[1].get("until_day"))):
@@ -732,7 +737,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             lo, hi = _num(it.get("min")), _num(it.get("max"))
             if lo is None and hi is None:
                 raise Clarify("何人にするか教えてください")
-            if _said_dates(text) and not it.get("weekdays"):
+            if _said_dates(text):
                 # 日付を決めた人数（「28日は早番を5人」）は、まだ扱えない。読み取りの型に日付の欄が無く、毎日の人数として
                 # 入って表を大きく崩した（2026-11-07 の通しの試し）。黙って毎日にせず、その日の人で言ってもらう
                 raise Clarify("日付を決めた人数は、まだ扱えません。その日の人を決める一言で言ってください"
@@ -758,7 +763,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             # 2026-11-06 作者）。ユニットの名前は伏せる前の一言から手元で探す（Claude へ送る指示文は変えない）
             said_units = _said_units(text, facility, it.get("unit"))
             whole = len(facility.units) > 1 and not said_units and _said_whole(text)
-            each_said = len(facility.units) > 1 and bool(re.search(r"どのユニットも|各ユニット|ユニットごと|それぞれのユニット", text))
+            each_said = len(facility.units) > 1 and bool(re.search(
+                r"どのユニットも|各ユニット|ユニットごと|それぞれのユニット|ユニットにつき|ユニットあたり|ユニット当たり|1ユニット", text))
             shifts = list(base.params["shifts"]) if base is not None else [sym]
             # 曜日の無い毎日の人数だけ、今の表のいつもの数に当てる（「土日は早番を2人に」は変えたい頼みなので当てない）
             typical = (None if said_units or whole or each_said or it.get("weekdays") else
@@ -849,7 +855,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             lv = _leave_sym(facility)
             if lv is None:
                 raise Clarify(NO_LEAVE)
-            if re.search(r"多くても|まで|以内|上限|超えない|超えないで", text):
+            if re.search(r"多くても|上限|超えない|[0-9０-９一二三四五六七八九十]+日(?:まで|以内)", text):
                 # 「有給は多くても月2日まで」は上限。下限と読むと有給が増えた（2026-11-07 の通しの試し）
                 p.rules.append({"name": f"{who[0]}さん 有給は月{n}日まで", "kind": "count", "flex": "operational",
                                 "params": {"shifts": [lv], "max": n}, "who": who, "when": None})
