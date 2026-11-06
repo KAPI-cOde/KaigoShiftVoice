@@ -19,6 +19,7 @@ import time
 
 from ortools.sat.python import cp_model
 
+from .interval import crosses_midnight
 from .model import WEEKDAYS, Facility, Month, Rule, Staff
 from .resolve import carry_rules, changed_cells
 from .rules import check_table
@@ -235,6 +236,8 @@ def _short_gap(facility: Facility, a: str, b: str, limit: float) -> bool:
     except KeyError:
         return False
     if sa.start is None or sa.hours is None or sb.start is None:
+        return False
+    if crosses_midnight(sa) and crosses_midnight(sb):   # 日をまたぐ勤務どうし（夜→夜）は数えない（2026-11-07）
         return False
     return 24 + _hour(sb.start) - (_hour(sa.start) + sa.hours) < limit
 

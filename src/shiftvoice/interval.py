@@ -18,6 +18,12 @@ def _clock(s: str) -> float:
     return int(h) + int(m) / 60
 
 
+def crosses_midnight(t) -> bool:
+    """始まりの時刻＋長さが24時間を超える（日をまたぐ）勤務か。"""
+    st, hrs = _get(t, "start"), _get(t, "hours")
+    return bool(st and hrs and _clock(st) + hrs > 24)
+
+
 def short_pairs(shift_types, line_hours: float = DEFAULT_HOURS) -> dict[tuple[str, str], float]:
     """線より短い（前の日の記号, 次の日の記号）→ 線との差（時間）。時刻と長さのある、夜勤でない勤務だけ。"""
     timed = [t for t in shift_types
@@ -26,6 +32,8 @@ def short_pairs(shift_types, line_hours: float = DEFAULT_HOURS) -> dict[tuple[st
     out: dict[tuple[str, str], float] = {}
     for a in timed:
         for b in timed:
+            if crosses_midnight(a) and crosses_midnight(b):   # 日をまたぐ勤務どうし（夜→夜）は数えない（2026-11-07）
+                continue
             rest = 24 - (_clock(_get(a, "start")) + _get(a, "hours")) + _clock(_get(b, "start"))
             if rest < line_hours:
                 out[(_get(a, "symbol"), _get(b, "symbol"))] = line_hours - rest

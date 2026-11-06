@@ -90,3 +90,21 @@ def test_imported_default_has_short_rest_but_hidamari_not(tmp_path):
     sr = c.short_rest
     assert sr["after"] < sr["before"], sr
     assert (sr["month"], sr["next_month"], sr["line"]) == (11, 12, 14)
+
+
+NIGHT_TYPES = TYPES + [{"symbol": "夜", "name": "夜勤", "kind": "work", "start": "16:30", "hours": 16}]   # 明けを書かない施設
+
+
+def test_night_to_night_is_not_a_short_run():
+    """日をまたぐ勤務どうし（夜→夜）は、明けを書かない施設でも次の勤務までの間の並びに数えない。夜→早 と 遅→早 は残す。"""
+    from shiftvoice.standby import _short_gap
+    pairs = short_pairs(NIGHT_TYPES, 14)
+    assert ("夜", "夜") not in pairs
+    assert ("遅", "早") in pairs and ("夜", "早") in pairs
+    table = {"甲": ["夜", "夜", "夜", "公"], "乙": ["遅", "早", "公", "公"]}
+    total, by = count_short(table, NIGHT_TYPES, 14)
+    assert (total, by) == (1, {"遅番→早番": 1})
+    fac = Facility.from_dict({"id": "t", "name": "小さな施設", "units": ["A"], "shift_types": NIGHT_TYPES,
+                              "settings": {}})
+    assert _short_gap(fac, "夜", "夜", 14) is False
+    assert _short_gap(fac, "遅", "早", 14) is True
