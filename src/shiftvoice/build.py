@@ -95,7 +95,14 @@ def impossible_wishes(facility: Facility, rules: list[Rule], month: Month) -> tu
             if nights and want and want <= rest:
                 # 明けを「公」と書く施設では、希望休の日が夜勤の明けになると、休めていないのに希望どおりに見えた（2026-11-07
                 # 実際の施設の表を画面の口で作った通しの試しで4日）。希望休の前の日は夜勤にしない（希望休と同じ強さ）
-                before = [d - 1 for d in r.when if d >= 2]
+                # 前の日に動かせない夜勤を頼んであれば、その日は足さない（足すとぶつかって段が下がり、関係のない人の
+                # 希望休まで外れた。Astra）。その希望休は明けになるので知らせる
+                pinned = {d for o in rules if o.kind == "cell" and o.flex == "fixed" and o.who == [who]
+                          and set(o.params.get("in") or []) and set(o.params["in"]) <= nights for d in (o.when or [])}
+                before = [d - 1 for d in r.when if d >= 2 and d - 1 not in pinned]
+                for d in r.when:
+                    if d - 1 in pinned:
+                        notes.append(f"{who}さんの{d}日は前の日が夜勤なので、希望休が明けになります")
                 if before:
                     out.append(replace(r, id=f"{r.id}-ake", name=f"{r.name}（前の日は夜勤にしない）",
                                        params={"not_in": sorted(nights)}, when=before,
@@ -109,10 +116,14 @@ def _ake_as_rest_nights(facility: Facility) -> set[str]:
         return set()
     out = set()
     for t in facility.shift_types:
-        if t.kind == "work" and not t.next_is_ake and t.start and t.hours:
+        if t.kind != "work" or t.next_is_ake:
+            continue
+        if t.start and t.hours:
             h, m = (int(x) for x in t.start.split(":"))
             if h + m / 60 + t.hours > 24:
                 out.add(t.symbol)
+        elif t.symbol == "夜" or "夜勤" in (t.name or ""):
+            out.add(t.symbol)   # 時刻を空欄にした夜勤も、名前で夜勤と見る（Astra）
     return out
 
 

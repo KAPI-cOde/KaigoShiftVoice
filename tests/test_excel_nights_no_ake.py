@@ -169,3 +169,25 @@ def test_明けを公と書く施設では希望休の前の日に夜勤を置�
 def replace_who(rule, store):
     from dataclasses import replace
     return replace(rule, who=[store.staff()[0].name])
+
+
+def test_希望休の前の日に動かせない夜勤があれば足さず知らせる_時刻の無い夜勤も夜勤と見る():
+    """足した「前の日は夜勤にしない」が、頼んだ動かせない夜勤とぶつかり、段が下がって関係のない人の希望休まで外れた（Astra）"""
+    from shiftvoice.build import impossible_wishes, solve_staged
+    from shiftvoice.model import Facility, Month, Rule, ShiftType, Staff
+    def fac(timed=True):
+        night = ShiftType("夜", "夜勤", "work", "16:00", 17) if timed else ShiftType("夜", "夜勤", "work")
+        return Facility("x", "x", ["東"], [night, ShiftType("日", "日勤", "work", "09:00", 8), ShiftType("公", "公休", "rest"),
+                                           ShiftType("有", "有給", "leave")], {})
+    staff = [Staff(n, "東", ["夜", "日"]) for n in ("青木", "石田")]
+    m = Month(2026, 11, [], {})
+    cell = lambda i, n, d, x, flex: Rule(i, 1, i, "cell", flex, {"in": [x]}, who=[n], when=[d])
+    rules = [cell("p", "青木", 9, "夜", "fixed"), cell("a", "青木", 10, "公", "wish"), cell("b", "石田", 15, "公", "wish"),
+             cell("c", "石田", 15, "日", "operational")]
+    out, notes = impossible_wishes(fac(), rules, m)
+    assert not any(r.meta.get("derived") and r.who == ["青木"] for r in out)
+    assert "青木さんの10日は前の日が夜勤なので、希望休が明けになります" in notes
+    r = solve_staged(fac(), staff, rules, m)
+    assert r.ok and r.result.table["石田"][14] == "公"
+    out, _ = impossible_wishes(fac(timed=False), [rules[2]], m)
+    assert [x.params for x in out if x.meta.get("derived")] == [{"not_in": ["夜"]}]
