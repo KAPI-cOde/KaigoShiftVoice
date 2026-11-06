@@ -151,7 +151,8 @@ def same_cell_drops(new_rules: list[dict], rules: dict) -> list[dict]:
 def same_count(rd: dict, r, scope: str, until: str | None) -> bool:
     """新しい回数のルールが、同じ人・同じ勤務の前の回数のルール r に代わるか。前は3回と2回の2件が右の枠に並んだ
     （2026-11-06 AI のテストプレイ）。話したルールだけで、言った側（上限・下限）を全部言い直している時に代わる。
-    毎月のルールを今月だけの数では消さない（来月の決めが消えるため。両方残り、今月は厳しい方が効く）。"""
+    毎月のルールを今月だけの数では消さない（来月の決めが消えるため。両方残り、今月は厳しい方が効く）。
+    今月だけの厳しい数も、毎月のゆるい数では消さない。"""
     if rd.get("kind") != "count" or r.kind != "count" or not rd.get("who") or sorted(rd["who"]) != sorted(r.who or []):
         return False
     p, q = rd["params"], r.params
@@ -159,4 +160,7 @@ def same_count(rd: dict, r, scope: str, until: str | None) -> bool:
         return False
     if r.scope == "rule" and not r.meta.get("until") and (scope != "rule" or until):
         return False
+    if (r.scope == "once" or r.meta.get("until")) and scope == "rule" and not until and \
+            (p.get("max", 0) > q.get("max", p.get("max", 0)) or p.get("min", 0) < q.get("min", p.get("min", 0))):
+        return False   # 今月の厳しい数を、毎月のゆるい数では消さない（29日まで3回の後の「毎月4回まで」で、試験の前に4回入らないように）
     return {s for s in ("min", "max") if q.get(s) is not None} <= {s for s in ("min", "max") if p.get(s) is not None}

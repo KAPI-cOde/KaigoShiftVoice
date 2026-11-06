@@ -341,6 +341,15 @@ def test_monthly_count_is_not_removed_by_this_month_only(sess):
     assert sorted(c["params"]["max"] for c in counts(sess)) == [2, 4]
 
 
+@pytest.mark.parametrize("n,left", [(4, [3, 4]), (2, [2])])
+def test_this_month_count_stays_under_a_looser_monthly_one(sess, n, left):
+    sess.reader = Fake({CAP3: [{**NIGHT, "max": 3, "until_day": 29}],
+                        f"職員11さんの夜勤、毎月{n}回まで": [{**NIGHT, "max": n}]})
+    sess.say("小島さん、29日までは夜勤を3回まで。今月だけ")
+    sess.say(f"小島さんの夜勤、毎月{n}回まで")
+    assert sorted(c["params"]["max"] for c in counts(sess)) == left
+
+
 def test_dated_kept_is_not_called_every_month(sess):
     sess.reader = Fake({"職員11さんの夜勤、毎月2回まで": [{**NIGHT, "max": 2}],
                         "職員11さんの夜勤、29日までは2回まで": [{**NIGHT, "max": 2, "until_day": 29}]})
