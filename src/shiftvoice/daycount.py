@@ -12,14 +12,14 @@ from .rules import _syms, evaluate, expand, with_overrides
 def day_counts(fac: Facility, staff: list[Staff], month: Month, rules: list[Rule]) -> list[dict]:
     """行の並び。1行は {"unit": ユニット（施設全体は None）, "symbol": 記号, "name": 勤務の名前,
     "counts": [日ごとの人数], "short": [足りない日], "over": [多すぎる日]}。
-    数える勤務は、ふつうの勤務（頼まれた時だけの有給・研修を除く）。ユニットが2つ以上ある時は、ユニットごとの行を
+    数える勤務は、ふつうの勤務と話して足した勤務（頼まれた時だけの有給・研修を除く）。ユニットが2つ以上ある時は、ユニットごとの行を
     ユニットごとの人数のルールがある勤務だけ出し、施設全体の行は全部の勤務で出す（行が増えすぎないように）。
     施設全体の行のいちばん下に公休の人数も出す（作者の Excel の並べ方。早番・日勤・遅番・夜勤・公休）。"""
     table = month.table
     if not table:
         return []
     days = month.days
-    syms = [st.symbol for st in fac.shift_types if st.kind == "work" and not st.on_request_only]
+    syms = [st.symbol for st in fac.shift_types if st.kind == "work" and (not st.on_request_only or st.spoken)]
     rest = [st.symbol for st in fac.shift_types if st.kind == "rest" and not st.on_request_only]
     multi = len(fac.units) > 1
     unit_of = {s.name: s.unit for s in staff}

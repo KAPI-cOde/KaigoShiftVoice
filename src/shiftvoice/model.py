@@ -22,6 +22,7 @@ class ShiftType:
     hours: float | None = None
     next_is_ake: bool = False
     on_request_only: bool = False  # 頼まれた時だけ置く（有給・研修）
+    spoken: bool = False           # 話して足した勤務（addshift.py）。頼まれた時だけ置くが、ふつうの勤務と同じく人数の行に出す
 
     @property
     def counts_as_workday(self) -> bool:

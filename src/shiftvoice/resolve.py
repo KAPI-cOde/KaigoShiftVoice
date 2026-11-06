@@ -15,14 +15,18 @@ from dataclasses import dataclass, field
 from .build import StagedResult, solve_staged
 from .model import Facility, Month, Rule, Staff
 from .rules import broken, check_table, expand
-from .solver import solve_month
+from .solver import requested_cells, solve_month
 
 WINDOWS = (3, 7, 14, None)
 
 
-def carry_rules(facility: Facility, base: dict[str, list[str]], rules: list[Rule]) -> list[Rule]:
-    """前の表にある研修・有給を、そのマスの決まりとして残す。決まりがそのマスで外す（not_in）なら残さない。"""
+def carry_rules(facility: Facility, base: dict[str, list[str]], rules: list[Rule],
+                opened: dict[tuple[str, int], set[str]] | None = None) -> list[Rule]:
+    """前の表にある研修・有給を、そのマスの決まりとして残す。決まりがそのマスで外す（not_in）なら残さない。
+    話して足した勤務はふつうの勤務なので、そのマスを別の勤務にする頼みがあれば残さない。ルールがそのマスを開けている時
+    （opened）も残さない。ルールが効いている間は前の表に寄せる点で残り、固定すると回数のルールとぶつかるため"""
     req = {st.symbol for st in facility.shift_types if st.on_request_only}
+    spoken = {st.symbol for st in facility.shift_types if st.spoken}
     out = []
     for name, row in base.items():
         for d, sym in enumerate(row, 1):
@@ -31,6 +35,10 @@ def carry_rules(facility: Facility, base: dict[str, list[str]], rules: list[Rule
             removed = any(r.kind == "cell" and sym in r.params.get("not_in", []) and
                           (not r.who or name in r.who) and (not r.when or d in r.when) for r in rules)
             if removed:
+                continue
+            if sym in spoken and (sym in (opened or {}).get((name, d), ()) or any(
+                    r.kind == "cell" and "in" in r.params and sym not in r.params["in"] and
+                    (not r.who or name in r.who) and (not r.when or d in r.when) for r in rules)):
                 continue
             out.append(Rule(id=f"c-{name}-{d}", ver=1, name=f"表にある{sym}（{name}さん {d}日）",
                             kind="cell", flex="fixed", params={"in": [sym]}, who=[name], when=[d],
@@ -87,7 +95,7 @@ def resolve(facility: Facility, staff: list[Staff], rules: list[Rule], month: Mo
             base: dict[str, list[str]], new_rules: list[Rule] | None = None) -> ResolveResult:
     """rules は帳面のこの月の決まり（前提を含めない）。new_rules は今回の一言で増えた・変わった決まり。"""
     new_rules = new_rules or []
-    all_rules = rules + carry_rules(facility, base, rules)
+    all_rules = rules + carry_rules(facility, base, rules, requested_cells(rules, facility, staff, month))
     st = facility.settings.get("solve", {})
     dtime = st.get("resolve_max_deterministic_time", 5.0)
     # 直す時の質の物差しは施設の設定（resolve_quality）。飛び石・同じ勤務の3連続は人×日の変数が増えて

@@ -16,7 +16,7 @@ from ortools.sat.python import cp_model
 
 from .interval import short_pairs
 from .model import Facility, Month, Rule, Staff
-from .rules import Instance, cell_value, check_table, expand, with_overrides
+from .rules import Instance, _syms_of, cell_value, check_table, expand, with_overrides
 
 DEFAULT_WEIGHTS = {"wish": 100000, "operational": 20000, "negotiable": 5000}
 
@@ -71,6 +71,25 @@ def _requested_leaves(rules: list[Rule], facility: Facility, days: int) -> dict[
     return out
 
 
+def requested_cells(rules: list[Rule], facility: Facility, staff: list[Staff], month: Month) -> dict[tuple[str, int], set[str]]:
+    """頼まれた時だけ置く記号を開ける（人, 日）。話して足した勤務は、人数・回数・曜日のルールの下限でも開ける
+    （「平日は日8を1人」は誰と言っていないので、そのルールが数える人と日の全部）。下限の無いルールでは開けない。"""
+    out = _requested_leaves(rules, facility, month.days)
+    spoken = {st.symbol for st in facility.shift_types if st.spoken}
+    if not spoken:
+        return out
+    for r in rules:
+        if r.kind not in ("coverage", "count", "weekday") or \
+                not spoken & (_syms_of(r.params.get("shifts")) | _syms_of(r.params.get("in"))):
+            continue
+        for inst in expand(r, facility, staff, month):
+            if inst.lo:
+                for t in inst.terms:
+                    if t.day >= 1:
+                        out.setdefault((t.staff, t.day), set()).update(spoken & set(t.symbols))
+    return out
+
+
 # その月の職員がこの人数を超える時は、表を作る計算で、決まった順で複数の作業者を回す。1人で探すと、56〜100人の
 # 施設で時間内に段1の表が見つからず、運用の都合のルールを外したり作れなかったりした（2026-11-05、docs/measurements.md）
 LARGE_STAFF = 30
@@ -100,7 +119,7 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     quality = facility.settings.get("quality", {})
     D = month.days
     days = range(1, D + 1)
-    req = _requested_leaves(rules, facility, D)
+    req = requested_cells(rules, facility, staff, month)
 
     m = cp_model.CpModel()
     x: dict[tuple[str, int, str], cp_model.IntVar] = {}
