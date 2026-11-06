@@ -41,6 +41,9 @@ READ_FAILED = "読み取りに失敗しました。表もルールも変えて�
 NO_KEY = ("Claude の鍵が入っていないので、一言では直せません（Claude へは送っていません。表もルールも変えていません）。"
           "鍵なしでも、表を見ることと、右上の［自分の施設で始める］で来月の表を作ることはできます。"
           "鍵の入れ方は README の「鍵の入れ方」にあります")
+# 表が作れなかった時。頼みは入れていないので問いにせず、次に言えることを書く（「外しますか、ゆるめますか」と聞くのに、答えるボタンも
+# 答える先も無かった。2026-11-06 AI のテストプレイ）
+NO_TABLE = "この頼みを入れると、表が作れませんでした。表もルールも変えていません。別の日にするか、「できれば」を付けて、もう一度言ってください"
 ANSWER_FIRST = "先に上の質問に答えてください（毎月／今月だけ）"
 ANSWER_FIRST_REPLACE = "先に上の質問に答えてください（置き換える／別に足す）"
 # 休みを移す日の候補のうち、画面へ送る物（表の中身・足し引き・応援は送らない）
@@ -259,6 +262,11 @@ def _next_id(led) -> int:
     なっていた。2026-11-03 本物の Haiku で確かめた時に見つけた）。"""
     ids = {t["rule"]["id"] for t in led.txs if t["op"] == "add" and isinstance(t.get("rule"), dict)} | set(led.rules_at())
     return max([int(r[1:]) for r in ids if r[1:].isdigit()] + [100]) + 1
+
+
+def _no_table(rr) -> str:
+    msg = rr.staged.message or "直せませんでした"
+    return NO_TABLE if msg in (C3_MESSAGE, TIMEOUT_MESSAGE) else msg
 
 
 class Session:
@@ -628,17 +636,9 @@ class Session:
             names = "」「".join(r.name for r in olds)
             return Reply("ask_replace", u["id"], f"前からのルール「{names}」があります。置き換えますか、別に足しますか",
                          summary=p.summary, extra={"old": [r.name for r in olds]})
+        replaced = ""
         if not any(t.get("op_id") == u["id"] for t in led.txs):
             n = _next_id(led)
-            for rd in p.rules:
-                rd = dict(rd)
-                rd["id"] = f"r{n}"
-                n += 1
-                rd["scope"] = scope
-                rd["meta"] = {**rd.get("meta", {}), "said": u["text"], "who": self.who, "at": at,
-        replaced = ""
-                              "reason": p.reason, "until": p.until or (end if scope == "once" else None),
-                              "source": "話した", "uid": u["id"]}
             now = led.rules_at(between=self._span())
             drops = same_cell_drops(p.rules, now)   # 同じ人の同じ日の新しい頼みは、前の頼みを置き換える
             counts = [] if u.get("dup") else [r for r in now.values()
@@ -650,6 +650,14 @@ class Session:
                                meta={"kind": "replaced", "at": at})
                 else:
                     led.append("remove", rule_id=d["rule_id"], op_id=u["id"], meta={"kind": "replaced", "at": at})
+            for rd in p.rules:
+                rd = dict(rd)
+                rd["id"] = f"r{n}"
+                n += 1
+                rd["scope"] = scope
+                rd["meta"] = {**rd.get("meta", {}), "said": u["text"], "who": self.who, "at": at,
+                              "reason": p.reason, "until": p.until or (end if scope == "once" else None),
+                              "source": "話した", "uid": u["id"]}
                 until = p.until or (end if scope == "once" else None)
                 tx = led.append("add", rule=rd, op_id=u["id"], frm=start, until=until,
                                 meta={"said": u["text"], "who": self.who, "at": at})
@@ -695,7 +703,7 @@ class Session:
             secs = rr.seconds
             if not rr.ok:
                 self.store.resolve_pending(self.year, self.month, u["id"])
-                return Reply("failed_solve", u["id"], rr.staged.message or "直せませんでした", seconds=secs)
+                return Reply("failed_solve", u["id"], _no_table(rr), seconds=secs)
             changes = rr.changes
             # 守れなかった新しいルールと、段を下げたことは黙らずに知らせる（7章。Astra 2026-11-02 の指摘1）
             names = {r.id: r.name for r in added}
@@ -783,8 +791,9 @@ class Session:
         rr = resolve(fac, month_staff, rules + tmp, m, m.table, tmp)
         if not rr.ok:
             self.store.resolve_pending(self.year, self.month, u["id"])
-            return Reply("failed_solve", u["id"], (rr.staged.message or "直せませんでした") +
-                         "。職員の情報も表も変えていません", seconds=rr.seconds)
+            msg = (rr.staged.message or "直せませんでした") if rr.staged.message not in (C3_MESSAGE, TIMEOUT_MESSAGE) \
+                else "表が作れませんでした"
+            return Reply("failed_solve", u["id"], msg + "。職員の情報も表も変えていません", seconds=rr.seconds)
         base = m.table
         m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev, "said": u["text"],
                           "staff_before": before})
@@ -813,6 +822,8 @@ class Session:
         rules = led.rules_at(between=self._span())
         if any(rq["days"] is None for rq in p.removes):
             return self._cancel_offer(u, p, rules, led)
+        if BACK_WORDS.search(u["text"]):
+            return self._back_to_before(u, p, rules, led, m)
         drop: dict[str, set[int]] = {}
         for rq in p.removes:
             for w in rq["who"]:
@@ -852,6 +863,51 @@ class Session:
         return Reply("applied", u["id"], f"{p.summary}。表のマスはそのままです",
                      summary=f"{p.summary}。表のマスはそのままです",
                      rule_ids=list(drop), warning=warning)
+
+    def _back_to_before(self, u: dict, p: Proposal, rules: dict, led, m) -> Reply:
+        """「元の勤務に戻して」。頼みを外し、マスも頼む前の勤務へ戻す（前は頼みを外すだけで、休みのマスが残った。2026-11-06 作者の答え）。
+        頼む前の勤務が分からない時は聞き返す。配った後は［これで直す］まで表を変えない。戻せない時は頼みだけ外して、そう言う。"""
+        uid = u["id"]
+        cells = [(w, d) for rq in p.removes for w in rq["who"] for d in rq["days"]]
+        fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
+        was = {c: self._was_before(m, led, *c) for c in cells}
+        lost = next((c for c, s in was.items() if s is None), None)
+        if lost is not None:
+            self.store.resolve_pending(self.year, self.month, uid)
+            self._ask_more = {"need": "back_shift", "who": lost[0], "day": lost[1], "text": u["text"]}
+            return Reply("ask", uid, f"{lost[0]}さんの{lost[1]}日は、頼む前は何の勤務でしたか（「早番」のように答えてください）。"
+                                     "表もルールも変えていません")
+        drops = same_cell_drops([{"kind": "cell", "who": [w], "when": [d], "params": {"in": []}} for w, d in cells], rules)
+        meta = {"said": u["text"], "who": self.who, "at": self.now().isoformat(timespec="seconds"), "kind": "cancel"}
+        for d in drops:
+            if d["rest"]:
+                led.append("change", rule_id=d["rule_id"], rule={"when": d["rest"], "name": d["name"]}, op_id=uid, meta=meta)
+            else:
+                led.append("remove", rule_id=d["rule_id"], op_id=uid, meta=meta)
+        start, end = self._span()
+        now = [clip_to_month(r, start, end) for r in led.rules_at(between=self._span()).values()]
+        tmp = [r for (w, d), s in was.items() if s != m.table[w][d - 1] for r in self._back_rules(w, {d: s})]
+        rr = resolve(fac, staff, now + tmp, m, m.table, tmp) if tmp else None
+        ok = rr is None or rr.ok
+        table, changes = (rr.table, rr.changes) if rr is not None and ok else (m.table, [])
+        names = "・".join(f"{w}さんの{d}日は元の{fac.shift(s).name}" for (w, d), s in was.items())
+        done = f"{names}に戻しました" if ok else f"{names}には戻せませんでした。頼みだけ外して、マスはそのままです"
+        if m.distributed and ok and changes:
+            label = f"{names}に戻します"
+            msg = f"{label}。{len(changes)}マス動きます（{'・'.join(sorted({c['staff'] for c in changes}))}さん）"
+            offer = {"rules": [], "scope": "once", "table": table, "changes": changes, "summary": label, "message": msg,
+                     "replace": drops, "said_who": [w for w, _ in cells], "base_rev": self.store.ledger().rev,
+                     "base_table": json.dumps(m.table)}
+            self.store.update_pending(self.year, self.month, uid, status="offer", offer=offer)
+            return Reply("fix_offer", uid, msg, changes=changes, summary=label)
+        self.store.save_ledger(led)                # 1 帳面
+        m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": u["text"],
+                          "rest_adjust": m.rest_adjust, "support": m.support})
+        m.table, m.built_rev = table, led.rev
+        self.store.save_month(m)                   # 2 月の表
+        self.store.resolve_pending(self.year, self.month, uid)
+        return Reply("applied", uid, done, changes=changes, summary=done, seconds=rr.seconds if rr else 0.0,
+                     rule_ids=[d["rule_id"] for d in drops])
 
     def _support_warning(self, led, m, support: dict[str, str]) -> str:
         """応援を外すとマスはそのままなので、応援先が足りない・元のユニットが多いまま残る。黙らずに返事で知らせる
@@ -907,9 +963,10 @@ class Session:
             what = (("休み" if fac.shift(rs).kind == "rest" else fac.shift(rs).name)
                     if rs in fac.symbols else f"頼み（{r.name}）")
         label = f"{w}さんの{'・'.join(map(str, days))}日の{what}"
-        msg = f"{label}を取り消しますか。表のマスはそのままです"
+        back = bool(BACK_WORDS.search(u["text"]))
+        msg = f"{label}を取り消しますか。" + ("マスも頼む前の勤務に戻します" if back else "表のマスはそのままです")
         offer = {"cancel": [{"who": [w], "days": days, "shift": sym}], "rules": [], "changes": [],
-                 "summary": f"{label}を取り消す。表のマスはそのまま", "done": f"{label}の指定を外しました",
+                 "summary": f"{label}を取り消す" + ("" if back else "。表のマスはそのまま"), "done": f"{label}の指定を外しました",
                  "message": msg, "base_rev": led.rev}   # 開き直した時も同じ文で出す
         self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
         return Reply("fix_offer", u["id"], msg, summary=offer["summary"])
@@ -1236,7 +1293,7 @@ class Session:
             fac = self.store.facility()
             rest = {st.symbol for st in fac.shift_types if st.kind in ("rest", "leave")}
             before = json.loads(o["base_table"])
-            said_who = {w for rd in o["rules"] for w in (rd.get("who") or [])}
+            said_who = {w for rd in o["rules"] for w in (rd.get("who") or [])} | set(o.get("said_who") or [])
             items = self.store.acceptances()
             new = []
             for c in o["changes"]:
@@ -1262,36 +1319,43 @@ class Session:
         1件に決まる時だけ、それを外して新しい頼みを入れる案を、表を変える前に確かめる。
         無ければ None（今どおり入れる）。2件以上なら聞き返す（どれを外すか決めない）。"""
         rd = p.rules[0]
-        days, w = set(rd["when"]), p.replace_from[0]
+        days, w = set(p.replace_days or rd["when"]), p.replace_from[0]
         led0 = self.store.ledger()
         rules = led0.rules_at(between=self._span())
         hits = [r for r in rules.values() if r.kind == "cell" and r.who and w in r.who and r.when
                 and days & set(r.when) and str(r.meta.get("source", "")).startswith("話した")]
         if not hits:
             return None
-        if len(hits) > 1 or hits[0].who != [w]:
+        one_say = p.replace_days and len({h.meta.get("uid") for h in hits}) == 1   # 「20日 休み」「20日は遅番にしない」は1つの頼み
+        if (len(hits) > 1 and not one_say) or any(h.who != [w] for h in hits):
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], f"{w}さんの{'・'.join(map(str, sorted(days)))}日の頼みが{len(hits)}件あります（"
                          + "・".join(h.name for h in hits) + "）。どれを外すか言ってください。表もルールも変えていません")
-        old = hits[0]
+        old = next((h for h in hits if "in" in h.params), hits[0])
         gone = sorted(days & set(old.when))
-        rest = [d for d in old.when if d not in days]
-        name = re.sub(r"[\d・]+日", "・".join(map(str, rest)) + "日", old.name, count=1) if rest else old.name
-        drop = [{"rule_id": old.id, "rest": rest, "name": name}]
+        drop = [narrowed(h, days) for h in hits] + [d for d in same_cell_drops(p.rules, rules)
+                                                    if d["rule_id"] not in {h.id for h in hits}]
         led = Ledger.from_list(led0.to_list())
         start, end = self._span()
-        if rest:
-            led.append("change", rule_id=old.id, rule={"when": rest, "name": name})
-        else:
-            led.append("remove", rule_id=old.id)
-        added = [Rule.from_dict(led.append("add", rule={**rd, "id": "t-fix0", "scope": "once"},
-                                           frm=start, until=end)["rule"])]
+        for d in drop:
+            if d["rest"]:
+                led.append("change", rule_id=d["rule_id"], rule={"when": d["rest"], "name": d["name"]})
+            else:
+                led.append("remove", rule_id=d["rule_id"])
+        led.append("add", rule={**rd, "id": "t-fix0", "scope": "once"}, frm=start, until=end)
         rules2 = [clip_to_month(r, start, end) for r in led.rules_at(between=self._span()).values()]
         fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
-        rr = resolve(fac, staff, rules2, m, m.table, [r for r in rules2 if r.id == "t-fix0"])
+        new = [r for r in rules2 if r.id == "t-fix0"]
+        # 同じ人の言い直しは、外す日のマスも頼む前の勤務に戻す。戻せない時は戻さずに、そう言う
+        was = {d: self._was_before(m, led0, w, d) for d in gone} if p.replace_days else {}
+        back = {d: s for d, s in was.items() if s and s != m.table[w][d - 1]}
+        rr = resolve(fac, staff, rules2 + self._back_rules(w, back), m, m.table, new + self._back_rules(w, back))
+        back_ok = rr.ok
+        if back and not rr.ok:
+            rr = resolve(fac, staff, rules2, m, m.table, new)
         if not rr.ok:
             self.store.resolve_pending(self.year, self.month, u["id"])
-            return Reply("failed_solve", u["id"], rr.staged.message or "直せませんでした")
+            return Reply("failed_solve", u["id"], _no_table(rr))
         sym = (old.params.get("in") or old.params.get("not_in") or [""])[0]
         what = (("休み" if fac.shift(sym).kind == "rest" else fac.shift(sym).name)
                 if sym and "in" in old.params else f"頼み（{old.name}）")
@@ -1299,8 +1363,11 @@ class Session:
         new_what = ("休み" if new_sym and fac.shift(new_sym).kind == "rest" else
                     fac.shift(new_sym).name if new_sym else rd["name"])
         nw = rd["who"][0]
-        dd = "・".join(map(str, sorted(days)))
-        label = f"{w}さんの{'・'.join(map(str, gone))}日の{what}を外して、{nw}さんの{dd}日を{new_what}にします"
+        dd = "・".join(map(str, sorted(rd["when"])))
+        label = f"{w}さんの{'・'.join(map(str, gone))}日の{what}を外して、{'' if nw == w else nw + 'さんの'}{dd}日を{new_what}にします"
+        if back:
+            names = "・".join(f"{d}日は元の{fac.shift(s).name}" for d, s in back.items())
+            label += f"。{names}に戻します" if back_ok else f"。{names}には戻せません（マスはそのままです）"
         who = sorted({c["staff"] for c in rr.changes})
         msg = f"{label}。{len(rr.changes)}マス動きます" + (f"（{'・'.join(who)}さん）" if who else "")
         offer = {"rules": p.rules, "scope": "once", "table": rr.table, "changes": rr.changes, "replace": drop,
@@ -1309,11 +1376,33 @@ class Session:
         self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
         return Reply("fix_offer", u["id"], msg, changes=rr.changes, seconds=rr.seconds, summary=label)
 
+    @staticmethod
+    def _was_before(m, led, who: str, day: int) -> str | None:
+        """頼む前の勤務。その人のその日を決めた一言のうち、いちばん古い物の前の表から取る（休み→有給と頼み直した後も、頼む前の
+        勤務へ戻すため）。分からなければ None。"""
+        ops = {t.get("op_id") for t in led.txs if t["op"] == "add" and (t.get("rule") or {}).get("kind") == "cell"
+               and t["rule"].get("who") == [who] and day in (t["rule"].get("when") or [])}
+        h = next((h for h in m.history if h.get("op_id") in ops), None)
+        row = (h.get("table") or {}).get(who) if h else None
+        return row[day - 1] if row else None
+
+    @staticmethod
+    def _back_rules(who: str, back: dict[int, str]) -> list[Rule]:
+        """マスを頼む前の勤務へ戻すための、この直しの間だけの決まり（帳面には入れない）。"""
+        return [Rule(id=f"t-back{d}", ver=1, name=f"{who}さん {d}日を元の勤務へ", kind="cell", flex="fixed",
+                     params={"in": [s]}, who=[who], when=[d], scope="once") for d, s in back.items()]
+
     def _fix_offer(self, u: dict, p, m, maybe: bool = False) -> Reply:
         """配った後のほかの直し（待機の案にならない頼み）。表は［これで直す］を押すまで変えない（画面3。Astra の指摘2）。"""
         led = Ledger.from_list(self.store.ledger().to_list())
         start, end = self._span()
         added = []
+        drops = same_cell_drops(p.rules, led.rules_at(between=self._span()))   # 同じ人の同じ日の前の頼みは置き換える
+        for d in drops:
+            if d["rest"]:
+                led.append("change", rule_id=d["rule_id"], rule={"when": d["rest"], "name": d["name"]})
+            else:
+                led.append("remove", rule_id=d["rule_id"])
         for i, rd in enumerate(p.rules):
             rd = {**rd, "id": f"t-fix{i}", "scope": "once"}
             added.append(Rule.from_dict(led.append("add", rule=rd, frm=start, until=end)["rule"]))
@@ -1324,7 +1413,7 @@ class Session:
                      [r for r in rules if r.id.startswith("t-fix")])
         if not rr.ok:
             self.store.resolve_pending(self.year, self.month, u["id"])
-            return Reply("failed_solve", u["id"], rr.staged.message or "直せませんでした")
+            return Reply("failed_solve", u["id"], _no_table(rr))
         if maybe and not rr.changes and not any(b["rule"].startswith("t-fix") for b in rr.staged.result.broken):
             return self._apply(u, p, "once")     # いまの表のままで守れている。選んでもらう物が無い
         if maybe and any(b["rule"].startswith("t-fix") for b in rr.staged.result.broken):
@@ -1397,12 +1486,6 @@ class Session:
         # 期限が過ぎたルール（期限が来て片付けた物）は、戻しても効かない。そう言って、続けるなら期間を言ってもらう
         # （前は「次から効きます」とだけ出して、効かなかった。敵対レビュー 2026-11-04）
         r = self.store.ledger().rules_at().get(rule_id)
-        drops = same_cell_drops(p.rules, led.rules_at(between=self._span()))   # 同じ人の同じ日の前の頼みは置き換える
-        for d in drops:
-            if d["rest"]:
-                led.append("change", rule_id=d["rule_id"], rule={"when": d["rest"], "name": d["name"]})
-            else:
-                led.append("remove", rule_id=d["rule_id"])
         until = (r.meta.get("until") if r else None)
         from .nextmonth import next_ym
         ny, nm = next_ym(self.year, self.month)

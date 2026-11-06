@@ -179,6 +179,71 @@ def test_shift_name_answer_adds_the_shift(sess):
     assert r.kind == "applied" and sess.store.facility().shift("日8").hours == 9, r.message
 
 
+# 5 言い直し ---------------------------------------------------------------------------
+
+def tamura_work_days(sess):
+    t = sess.store.month(2026, 11).table["田村"]
+    d = next(d for d in range(5, 27) if t[d - 1] in "早日遅" and t[d] in "早日遅")
+    return d, d + 1, t[d - 1]
+
+
+def said_off(sess, d):
+    sess.reader = Fake({f"職員15さん、{d}日を休みにして": [{"type": "day_off", "staff": "職員15", "days": [d], "reason": None}]})
+    r = sess.say(f"田村さん、{d}日を休みにして")
+    assert r.kind == "applied", r.message
+
+
+def redo_shapes(a, b):
+    """本物の Haiku が言い直しを読んだ形（2026-11-06）。"""
+    t = "職員15"
+    return {f"職員15さん、{a}日は休みじゃなくて元の勤務に戻して。{b}日を休みにして":
+            [{"type": "cancel", "staff": t, "days": [a], "shift": "公", "reason": None},
+             {"type": "day_off", "staff": t, "days": [b], "reason": None}],
+            f"職員15さんの休み、{a}日じゃなくて{b}日にして": [{"type": "move", "staff": t, "shift": "公", "from_day": a, "to_day": b, "reason": None}],
+            f"職員15さん、{a}日じゃなくて{b}日": [{"type": "move", "staff": t, "shift": None, "from_day": a, "to_day": b, "reason": None}],
+            f"職員15さんの件、{a}日は元の勤務に戻して、{b}日を休みにして":
+            [{"type": "set_cell", "staff": t, "days": [a], "shift": None, "reason": None},
+             {"type": "day_off", "staff": t, "days": [b], "reason": None}]}
+
+
+@pytest.mark.parametrize("n,said", list(enumerate(["田村さん、{a}日は休みじゃなくて元の勤務に戻して。{b}日を休みにして", "田村さんの休み、{a}日じゃなくて{b}日にして",
+                                              "田村さん、{a}日じゃなくて{b}日", "田村さんの件、{a}日は元の勤務に戻して、{b}日を休みにして", "{a}日じゃなくて{b}日"])))
+def test_redo_moves_the_day_and_restores_the_cell(sess, n, said):
+    a, b, was = tamura_work_days(sess)
+    said_off(sess, a)
+    sess.reader = Fake(redo_shapes(a, b))
+    r = sess.say(said.format(a=a, b=b))
+    assert r.kind == "fix_offer", r.message
+    assert f"{a}日の休みを外して、{b}日を休みにします" in r.message and "元の" in r.message
+    r = sess.accept(r.uid)
+    t = sess.store.month(2026, 11).table["田村"]
+    assert t[b - 1] in ("公", "有") and t[a - 1] == was
+    cells = [c for c in sess.state()["cards"] if c["kind"] == "cell" and c["who"] == ["田村"]]
+    assert [c["when"] for c in cells] == [[b]]
+    sess.undo()
+    assert sess.store.month(2026, 11).table["田村"][a - 1] in ("公", "有")
+    assert [c["when"] for c in sess.state()["cards"] if c["kind"] == "cell" and c["who"] == ["田村"]] == [[a]]
+
+
+def test_moving_training_without_a_request_stays_a_move(sess):
+    from shiftvoice.redo import as_redo
+    it = [{"type": "move", "staff": "田村", "shift": "研", "from_day": 11, "to_day": 13, "reason": None}]
+    assert as_redo(it, sess.store.ledger().rules_at()) == it
+
+
+def test_no_machine_word_on_screen(sess):
+    sess.reader = Fake({"職員07さんの15日を変えて": [{"type": "set_cell", "staff": "職員07", "days": [15], "shift": None, "reason": None}]})
+    r = sess.say("岡田さんの15日を変えて")
+    assert r.kind == "ask" and "None" not in r.message and "どの勤務" in r.message
+    assert sess.say("早番です").kind == "applied"
+    assert sess.store.month(2026, 11).table["岡田"][14] == "早"
+
+
+def test_failed_table_does_not_ask_what_it_cannot_take():
+    from shiftvoice.session import NO_TABLE
+    assert "ますか" not in NO_TABLE and "ゆるめますか" not in NO_TABLE
+
+
 # 6 同じマスの2度目の頼み --------------------------------------------------------------
 
 def test_second_request_replaces_the_first(sess):
@@ -283,3 +348,70 @@ def test_dated_kept_is_not_called_every_month(sess):
     r = sess.say("小島さんの夜勤、29日までは2回まで")
     assert "毎月のルールとして残しました" not in r.message and "もう守られています" in r.message
     assert sess.store.ledger().rev == rev
+
+
+# 9 元の勤務に戻す ---------------------------------------------------------------------
+
+def test_back_restores_the_cell(sess):
+    a, _, was = tamura_work_days(sess)
+    said_off(sess, a)
+    sess.reader = Fake({f"職員15さんの{a}日を元の勤務に戻して": [{"type": "cancel", "staff": "職員15", "days": [a], "shift": None, "reason": None}]})
+    r = sess.say(f"田村さんの{a}日を元の勤務に戻して")
+    assert r.kind == "applied" and "元の" in r.message and "戻しました" in r.message, r.message
+    assert sess.store.month(2026, 11).table["田村"][a - 1] == was
+    assert not [c for c in sess.state()["cards"] if c["kind"] == "cell" and c["who"] == ["田村"]]
+    sess.undo()
+    assert sess.store.month(2026, 11).table["田村"][a - 1] in ("公", "有")
+    assert [c for c in sess.state()["cards"] if c["kind"] == "cell" and c["who"] == ["田村"]]
+
+
+def test_back_after_two_requests_goes_to_before_the_first(sess):
+    a, _, was = tamura_work_days(sess)
+    said_off(sess, a)
+    sess.reader = Fake({f"職員15さん、{a}日は有給": [{"type": "set_cell", "staff": "職員15", "days": [a], "shift": "有", "reason": None}],
+                        f"職員15さんの{a}日を元の勤務に戻して": [{"type": "cancel", "staff": "職員15", "days": [a], "shift": None, "reason": None}]})
+    sess.say(f"田村さん、{a}日は有給")
+    sess.say(f"田村さんの{a}日を元の勤務に戻して")
+    assert sess.store.month(2026, 11).table["田村"][a - 1] == was
+
+
+def test_back_asks_when_it_does_not_know(sess):
+    a, _, _ = tamura_work_days(sess)
+    table = sess.store.month(2026, 11).table
+    sess.reader = Fake({f"職員15さんの{a}日を元の勤務に戻して": [{"type": "cancel", "staff": "職員15", "days": [a], "shift": None, "reason": None}]})
+    r = sess.say(f"田村さんの{a}日を元の勤務に戻して")
+    assert r.kind == "ask" and "頼む前は何の勤務でしたか" in r.message
+    assert sess.store.month(2026, 11).table == table
+    r = sess.say("早番です")
+    assert r.kind == "applied" and sess.store.month(2026, 11).table["田村"][a - 1] == "早", r.message
+
+
+def test_plain_cancel_still_leaves_the_cell(sess):
+    a, _, _ = tamura_work_days(sess)
+    said_off(sess, a)
+    sess.reader = Fake({f"職員15さんの{a}日の休みはなしで": [{"type": "cancel", "staff": "職員15", "days": [a], "shift": "公", "reason": None}]})
+    r = sess.say(f"田村さんの{a}日の休みはなしで")
+    assert r.kind == "applied" and "表のマスはそのまま" in r.message
+
+
+def test_back_after_distribution_waits_for_the_button(sess):
+    a, _, was = tamura_work_days(sess)
+    said_off(sess, a)
+    sess.distribute()
+    table = sess.store.month(2026, 11).table
+    sess.reader = Fake({f"職員15さんの{a}日を元の勤務に戻して": [{"type": "cancel", "staff": "職員15", "days": [a], "shift": None, "reason": None}]})
+    r = sess.say(f"田村さんの{a}日を元の勤務に戻して")
+    assert r.kind == "fix_offer" and sess.store.month(2026, 11).table == table, r.message
+    sess.accept(r.uid)
+    assert sess.store.month(2026, 11).table["田村"][a - 1] == was
+    assert not [x for x in sess.store.acceptances() if x.staff == "田村" and x.note == "配った後の直しで勤務が入った"]
+
+
+def test_back_without_a_day_confirms_then_restores(sess):
+    a, _, was = tamura_work_days(sess)
+    said_off(sess, a)
+    sess.reader = Fake({"職員15さんの休み、元に戻して": [{"type": "cancel", "staff": "職員15", "days": None, "shift": "公", "reason": None}]})
+    r = sess.say("田村さんの休み、元に戻して")
+    assert r.kind == "fix_offer" and "頼む前の勤務に戻します" in r.message, r.message
+    sess.accept(r.uid)
+    assert sess.store.month(2026, 11).table["田村"][a - 1] == was
