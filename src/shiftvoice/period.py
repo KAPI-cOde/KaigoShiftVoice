@@ -4,6 +4,7 @@
 - 毎月・これからずっと・今後・今月から・今月以降・来月から（「元に戻して」を除く）は毎月
 - 今月だけ・今回だけ・今回のみ・今月は・今月・「来月から元に戻して」は今月だけ
 - 打ち消し（毎月じゃなくて・毎月ではなく）は今月だけ
+- 「今月だけじゃなくて」は、ほかに続く言葉（毎月・これからも・ずっと など）がある時は毎月、無ければ聞く
 - 「今月中に」「今月の希望休」は数えない
 """
 from __future__ import annotations
@@ -15,12 +16,27 @@ NEG_RULE = r"毎月(じゃ|では|でな)"
 # 「いつも」「ずっと」は理由の言い方にも出る（「いつも早番が多くてつらい」）ので、期間の言葉に数えない（Astra 2026-11-02 の指摘3）
 RULE_WORDS = r"(毎月|これからずっと|今月から|今月以降|来月以降|これから毎|今後)"
 ONCE_WORDS = r"(今月だけ|今回だけ|今回のみ|今月のみ|今月は|今月限り|来月から元に戻|来月は元に戻)"
+# 「今月だけじゃなくて毎月」「今月だけでなく、これからも」。ONCE_WORDS の「今月だけ」に当たって今月だけと読んでいた
+# （2026-11-06 AI のテストプレイ）。「今月だけじゃなくて来月も」のように毎月と言っていない時は聞く
+NOT_ONLY = r"(?:今月|今回)(?:だけ|のみ|限り)(?:じゃ|では|でな|でも?な|ならず)|今月に限らず"
+GOES_ON = r"毎月|これから|ずっと|今後|以降|この先"
+
+
+def _not_only(t: str) -> str | None:
+    """「今月だけじゃなくて」を言っていれば "rule" か "keep_asking"、言っていなければ None。"""
+    m = re.search(NOT_ONLY, t)
+    if m is None:
+        return None
+    return "rule" if re.search(GOES_ON, t[:m.start()] + t[m.end():]) else "keep_asking"
 
 
 def read_period(text: str) -> str | None:
     t = text
     if re.search(NEG_RULE, t):
         return "once"
+    said = _not_only(t)
+    if said is not None:
+        return "rule" if said == "rule" else None
     if re.search(ONCE_WORDS, t):
         return "once"
     if re.search(r"来月から(?!.*元に戻)", t):
@@ -36,6 +52,9 @@ def read_period(text: str) -> str | None:
 def read_answer(text: str) -> str | None:
     """「毎月ですか、今月だけですか」への返事。読めなければ None（もう一度聞く）。"""
     t = text.strip()
+    said = _not_only(t)
+    if said is not None:
+        return "rule" if said == "rule" else None
     if re.search(NEG_RULE, t) or re.search(r"(今月|今回|一回|1回)", t):
         return "once"
     if re.search(r"(毎月|ずっと|これから|いつも)", t):

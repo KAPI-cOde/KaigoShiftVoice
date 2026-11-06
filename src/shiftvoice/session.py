@@ -51,7 +51,7 @@ MOVE_SHOWN = ("day", "kind", "line", "parts", "label", "warn", "changes", "messa
 # 言い方を広く拾わない。迷う言い方は答えにせず、先に上の質問に答えてと言う（ボタンで答えられる）
 _NOISE = re.compile(r"[\s、。，．,.!！?？…・「」]")
 _FILLER = r"(?:はい|うん|ええ|えっと|えーと|えー|あ|じゃあ)?"
-_PERIOD_ONLY = re.compile(_FILLER + r"(?:毎月|今月だけ|今月のみ|今回だけ|今回のみ|今月|今回)"
+_PERIOD_ONLY = re.compile(_FILLER + r"(?:今月だけ(?:じゃなくて|じゃなく|ではなくて|ではなく|でなく)、?)?(?:毎月|今月だけ|今月のみ|今回だけ|今回のみ|今月|今回)"
                           r"(?:で|です|でお願いします|でいい|でいいです|でいいよ|にして|ね|よ){0,2}")
 _REPLACE_ONLY = {"replace": re.compile(_FILLER + r"置き換え(?:る|て|ます)(?:ください|ね|よ)?"),
                  "add": re.compile(_FILLER + r"別に足(?:す|して|します)(?:ください|ね|よ)?")}
