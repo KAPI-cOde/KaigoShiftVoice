@@ -182,18 +182,31 @@ def _weekday_dated(rules: list[Rule]) -> list[Rule]:
     日には効かせない。日付の頼みの方が新しく細かい作成者の決めなので。前は2つがぶつかって表が作れず、段を下げて関係のない人の
     頼みまで外れた（2026-11-07 実際の施設の表を画面の口で作った2回目の通しの試し）"""
     import copy
-    dated: dict[str, set[int]] = {}
+    asked: dict[str, dict[int, set[str]]] = {}   # 人 → 日 → その日にしてほしい勤務（日付を決めた「その勤務にする」頼み）
     for r in rules:
-        if r.kind == "cell" and r.who and r.when and r.flex in ("fixed", "wish", "operational") and not r.meta.get("derived"):
+        if r.kind == "cell" and r.who and r.when and r.params.get("in") and r.flex in ("fixed", "wish", "operational") \
+                and not r.meta.get("derived"):
             for w in r.who:
-                dated.setdefault(w, set()).update(r.when)
-    if not dated:
+                for d in r.when:
+                    cur = asked.setdefault(w, {}).get(d)
+                    asked[w][d] = set(r.params["in"]) if cur is None else cur & set(r.params["in"])
+    if not asked:
         return rules
     out = []
     for g in rules:
-        if g.kind == "weekday" and g.who and any(w in dated for w in g.who):
-            g = copy.copy(g)
-            g.meta = {**g.meta, "dated": {w: sorted(dated[w]) for w in g.who if w in dated}}
+        if g.kind == "weekday" and g.who and any(w in asked for w in g.who):
+            q = g.params
+            clash = {}
+            for w in g.who:
+                # 日付の頼みと本当にぶつかる日だけ譲る（「1日は夜勤じゃなく」で、関係のない「日曜は早番に入れない」を消さない。Astra）
+                days = [d for d, want in asked.get(w, {}).items()
+                        if ("not_in" in q and want and want <= set(_syms_of(q["not_in"])))
+                        or ("in" in q and not want & set(_syms_of(q["in"])))]
+                if days:
+                    clash[w] = sorted(days)
+            if clash:
+                g = copy.copy(g)
+                g.meta = {**g.meta, "dated": clash}
         out.append(g)
     return out
 

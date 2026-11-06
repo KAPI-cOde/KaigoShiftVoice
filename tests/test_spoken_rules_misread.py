@@ -324,3 +324,25 @@ def test_日付を決めた頼みの日は同じ人の曜日の頼みより優�
     eff = next(r for r in with_overrides([wk, cell]) if r.id == "w")
     days = sorted(int(i.key.split("/")[1]) for i in expand(eff, fac, staff, m))
     assert 18 not in days and 17 in days and 25 in days
+
+
+# ---- Astra（2026-11-07 5回目）
+def test_日付の頼みとぶつからない曜日の頼みは残す():
+    """「1日（日）は夜勤じゃなく」は「日曜は早番に入れない」とぶつからない。日付の頼みのある日でも曜日の頼みは残す"""
+    from shiftvoice.model import Facility, Month, ShiftType, Staff
+    from shiftvoice.rules import expand
+    fac = Facility("x", "x", ["東"], [ShiftType("早", "早番", "work"), ShiftType("夜", "夜勤", "work"), ShiftType("公", "公休", "rest")], {})
+    staff = [Staff("青木", "東", ["早", "夜"])]
+    m = Month(2026, 11, [], {})
+    wk = Rule("w", 1, "青木さん 日曜は早番に入れない", "weekday", "fixed", {"weekdays": ["sun"], "not_in": ["早"]}, who=["青木"])
+    cell = Rule("c", 1, "青木さん 1日は公休", "cell", "wish", {"in": ["公"]}, who=["青木"], when=[1])
+    eff = next(r for r in with_overrides([wk, cell]) if r.id == "w")
+    assert 1 in [int(i.key.split("/")[1]) for i in expand(eff, fac, staff, m)]
+
+
+def test_今月だけのだけは曜日の限定にしない(made, tmp_path):
+    """「今月だけ、金曜を早番にして」が「金曜以外は早番に入れない」になった"""
+    r, new = _say(made, tmp_path, "今月だけ、青木さんは金曜を早番にして",
+                  [{"type": "weekday_pref", "staff": "青木", "weekdays": ["fri"], "shift": "早", "avoid": False}])
+    assert r.kind == "applied", r.message
+    assert [(x.params.get("in"), x.params["weekdays"]) for x in new] == [(["早"], ["fri"])]
