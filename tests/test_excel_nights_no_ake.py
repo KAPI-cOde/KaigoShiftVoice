@@ -33,7 +33,7 @@ def test_明けを書かない施設は夜勤の後の並びを貼った表か�
     assert seq["flex"] == "fixed" and seq["params"] == {"if": ["夜"], "next_in": ["夜", "公"]}
     assert "明けの記号が表に無い" in seq["meta"]["evidence"]
     two = rules["夜勤の後の休みの翌日も休み"]
-    assert two["flex"] == "fixed" and two["params"] == {"if": ["夜"], "then": ["公"], "next2_in": ["公"]}
+    assert two["flex"] == "fixed" and two["params"] == {"if": ["夜"], "then": ["公"], "next2_in": ["公", "有"]}
     run = rules["夜勤は続けて2日まで"]
     assert run["kind"] == "max_run" and run["params"] == {"shifts": ["夜"], "max": 2}
 
@@ -86,3 +86,23 @@ def test_1文字の名前や施設独自の記号だけの人の行は見出し�
     rows = [f"{nm}\t" + "\t".join(cycle[(d + k) % 5] for d in range(30)) for k, nm in enumerate(["A", "B", "C", "U1"])]
     p = parse_paste("\n".join([head] + rows) + "\n")
     assert list(p.table) == ["A", "B", "C", "U1"]   # U1 も印が半分の日を超えるので人の行
+
+
+def test_名前の注記や施設の記号の人を見出しや予定の行にしない():
+    """「青木（2階）」で勤務を施設独自の記号・休みを空欄で書く人と、「石田（入職予定）」の人は、人の行（Astra 2026-11-07）"""
+    head = "氏名\t" + "\t".join(str(d) for d in range(1, 31))
+    rows = ["青木（2階）\t" + "\t".join(["D", "", ""][d % 3] for d in range(30)),
+            "石田（入職予定）\t" + "\t".join(["日", "公", "日"][d % 3] for d in range(30))]
+    rows += [f"{n}\t" + "\t".join(["日", "公", "日"][d % 3] for d in range(30)) for n in ("上野", "江口", "小川")]
+    p = parse_paste("\n".join([head] + rows) + "\n")
+    assert len(p.table) == 5 and p.unit_list == ["全体"]
+
+
+def test_夜勤の後の休みの次の日の有給も休みに数える():
+    """夜勤・公・有 の並びを外れにすると、2日先のルールが作られなかったり、有給の日を公休へ動かしたりした（Astra）"""
+    rows = {n: list("夜公公日公") * 6 for n in ("青木", "石田", "上野", "江口", "小川")}
+    for n in list(rows)[:4]:
+        rows[n][2] = "有"
+    prop = infer(parse_paste("\n".join(n + "\t" + "\t".join(r) for n, r in rows.items()) + "\n"), 2026, 11, {})
+    two = [r["params"] for r in prop.rules if "next2_in" in r["params"]]
+    assert two == [{"if": ["夜"], "then": ["公"], "next2_in": ["公", "有"]}]
