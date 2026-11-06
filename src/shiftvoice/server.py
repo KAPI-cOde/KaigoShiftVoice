@@ -300,6 +300,7 @@ def table_tsv(st: dict, paste_symbols: dict | None = None, layout: dict | None =
         rows.append(line(label(layer.get("name") or "待機当番"),
                          ["・".join(n.removesuffix("さん") for n in (layer.get("assign") or {}).get(str(d), []))
                           for d in range(1, days + 1)]))
+    rows = (lay.get("top") or []) + rows   # 貼った表のタイトルなど。同じ左上へ貼り戻して行がそろうように
     return "\n".join("\t".join(cell(c) for c in r) for r in rows) + "\n"
 
 
@@ -638,6 +639,8 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
                     self.send_header("X-Support-Left-Out", str(left_out))
                 if blank_rows(layout):   # 人の行の間の集計の行は、空で出す
                     self.send_header("X-Blank-Rows", str(blank_rows(layout)))
+                if layout and layout.get("top"):   # 表より上の行（タイトルなど）も、貼った時の文字のまま入る
+                    self.send_header("X-Top-Rows", str(len(layout["top"])))
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)

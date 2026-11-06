@@ -2361,7 +2361,7 @@ function printNote() {
 }
 window.addEventListener("beforeprint", printNote);
 // コピーの知らせに足す文。施設の書き方に戻した記号（取り込んだ施設だけ）と、最後に入る係の行（係がある月だけ）
-function copyExtra(restored, merged, leftOut, blankRows) {
+function copyExtra(restored, merged, leftOut, blankRows, topRows) {
   var out = "";
   var show = function (w) { return w === "" ? "空欄" : "「" + w + "」"; };
   if (restored) {
@@ -2384,15 +2384,16 @@ function copyExtra(restored, merged, leftOut, blankRows) {
   var names = Object.keys((S && S.layers) || {}).map(function (k) { return (S.layers[k] && S.layers[k].name) || "待機当番"; });
   if (names.length) out += "。" + names.join("・") + "の行も最後に入ります";
   if (leftOut) out += "。貼った表の形には矢印を書く行が無いので、ユニットの応援" + leftOut + "件は入りません。応援先は画面と印刷で見られます";
+  if (topRows) out += "。いちばん上に、タイトルなどの" + topRows + "行も貼った時の文字のまま入ります。取り込む時にコピーした範囲の左上に貼り、タイトルの月はあとで直してください";
   if (blankRows) out += "。人の行の間にあった集計の" + blankRows + "行は、行がずれないよう空で入ります。Excel の式を残す時は、ユニットごとに分けて貼ってください";
   return out;
 }
 document.getElementById("copytsv").addEventListener("click", function () {
   fetch("/api/table.tsv").then(function (r) {
-    var h = r.headers.get("X-Restored-Symbols"), hm = r.headers.get("X-Merged-Symbols"), ho = r.headers.get("X-Support-Left-Out"), hb = r.headers.get("X-Blank-Rows");
-    return r.text().then(function (t) { return [t, h, hm, ho, hb]; });
+    var h = r.headers.get("X-Restored-Symbols"), hm = r.headers.get("X-Merged-Symbols"), ho = r.headers.get("X-Support-Left-Out"), hb = r.headers.get("X-Blank-Rows"), ht = r.headers.get("X-Top-Rows");
+    return r.text().then(function (t) { return [t, h, hm, ho, hb, ht]; });
   }).then(function (got) {
-    var tsv = got[0], extra = copyExtra(got[1], got[2], got[3], got[4]);
+    var tsv = got[0], extra = copyExtra(got[1], got[2], got[3], got[4], got[5]);
     var fallback = function () { showCopyNote("自動でコピーできませんでした。下の文字を選んでコピーし、Excel の表の左上のマスに貼ってください" + extra, tsv); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(tsv).then(function () {

@@ -437,6 +437,11 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
             at = [order[m["line"]] - order[plan[0]["line"]] for m in plan]
             if repeated or top_row or any(m["k"] == "other" for m in plan):
                 layout["plan"] = [{**{k: v for k, v in m.items() if k != "line"}, "at": a} for m, a in zip(plan, at)]
+            # 表より上の行（タイトルなど）。出さないと、同じ左上へ貼り戻した時に人の行が上へずれた（Astra 2026-11-06 の指摘3）
+            cells_at = dict(rows)
+            top = [cells_at.get(line, []) for line, i in order.items() if i < order[plan[0]["line"]]]
+            if top:
+                layout["top"] = top
     else:
         if header:
             n_header = len(header[0][0])

@@ -90,8 +90,8 @@ def state(p) -> dict:
             "weekdays": ["tue"] * 31, "table": {n: ["公"] * 31 for n in p.table}}
 
 
-@pytest.mark.parametrize("rows", [blocks("row"), top_heading(), blocks("date"), blocks("weekday")],
-                         ids=["row", "top", "date", "weekday"])
+@pytest.mark.parametrize("rows", [blocks("row"), top_heading(), blocks("date"), blocks("weekday"), top_heading(True)],
+                         ids=["row", "top", "date", "weekday", "title"])
 def test_copy_keeps_the_pasted_row_order(rows):
     """人の行が、貼った時と同じ行に戻る（Excel の左上に貼って、人と行がずれない）"""
     p = parse_paste(tsv(rows))
@@ -103,6 +103,17 @@ def test_copy_keeps_the_pasted_row_order(rows):
         if pasted[0] in NAMES:
             assert copied[1:32] == ["公"] * 31
     assert parse_paste(table_tsv(state(p), None, p.layout)).unit_of == p.unit_of
+
+
+def test_title_rows_come_back_above_a_plain_table():
+    """タイトルと空の行の上に置いた、ユニットの見出しの無い表も、同じ左上へ貼り戻して人の行がそろう（Astra 2026-11-06 の指摘3）"""
+    rows = [["みどりの丘"], [], ["", "", "2026年11月"], [""] + WEEK, ["氏名"] + DATES] + [[n] + TABLE[n] for n in NAMES]
+    p = parse_paste(tsv(rows))
+    assert p.layout.get("plan") is None and blank_rows(p.layout) == 0
+    out = [r.split("\t") for r in table_tsv(state(p), None, p.layout).splitlines()]
+    assert out[:3] == [["みどりの丘"], [""], ["", "", "2026年11月"]]
+    assert [r[0] for r in out[3:]] == [r[0] for r in rows[3:]]
+    assert list(parse_paste(table_tsv(state(p), None, p.layout)).table) == NAMES
 
 
 def test_summary_rows_between_units_stay_as_blank_rows():
