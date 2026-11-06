@@ -136,7 +136,8 @@ LEAVE_ITEM = [{"type": "leave_count", "staff": "職員13", "count": None, "reaso
 
 
 @pytest.mark.parametrize("answer,n", [("2日分です", 2), ("2日分です。日はいつでもいいです", 2), ("2日", 2), ("２日分", 2),
-                                      ("二日分、日はいつでもいいそうです", 2), ("有給は1日だけ", 1)])
+                                      ("二日分、日はいつでもいいそうです", 2), ("有給は1日だけ", 1),
+                                      ("2日分って聞いてます。日はいつでもいいそうです。", 2)])
 def test_leave_days_answer_joins_the_request(sess, answer, n):
     sess.reader = Fake({LEAVE_M: LEAVE_ITEM})
     r = sess.say(LEAVE)
