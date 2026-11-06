@@ -173,11 +173,20 @@ def test_create_祝日の表に無い月は知らせる(tmp_path):
     n = 30
     t = "\n".join(f"{nm}\t" + "\t".join((["早", "日", "遅", "公", "公"] * 6)[:n])
                   for nm in ["赤坂", "井上", "内田", "遠藤", "太田", "川口"])
-    pr = infer(parse_paste(t), 2027, 6)
-    c = create_facility(pr, tmp_path / "h", name="試験", next_year=2027, next_month=7)
+    pr = infer(parse_paste(t), 2028, 6)   # 祝日の表（2026〜2027年）の外の月
+    c = create_facility(pr, tmp_path / "h", name="試験", next_year=2028, next_month=7)
     assert any("祝日は入っていません" in x for x in c.notes)
     hol = Store(tmp_path / "h").facility().settings["holidays"]
-    assert hol["2027-06"] == [] and hol["2027-07"] == [] and hol["2027-05"] == [3, 4, 5]
+    assert hol["2028-06"] == [] and hol["2028-07"] == [] and hol["2027-05"] == [3, 4, 5]
+
+
+def test_祝日の表は2026年と2027年の全部の月がある():
+    """前は 2026-11〜2027-05 だけで、9月の表を貼って10月を作ると、敬老の日・秋分の日・スポーツの日の無い月として作った"""
+    from shiftvoice.onboard import HOLIDAYS
+    assert [k for k in HOLIDAYS] == [f"{y}-{m:02d}" for y in (2026, 2027) for m in range(1, 13)]
+    assert HOLIDAYS["2026-09"] == [21, 22, 23] and HOLIDAYS["2026-10"] == [12] and HOLIDAYS["2026-05"] == [3, 4, 5, 6]
+    assert HOLIDAYS["2026-11"] == [3, 23] and HOLIDAYS["2026-12"] == [] and HOLIDAYS["2027-03"] == [21, 22]
+    assert sum(len(v) for v in HOLIDAYS.values()) == 35
 
 
 def test_create_知らない記号が残る時は作らない(tmp_path):
