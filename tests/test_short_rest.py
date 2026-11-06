@@ -10,8 +10,8 @@ from shiftvoice.store import SEED
 
 SAMPLE = Path(__file__).resolve().parents[1] / "data" / "samples" / "komorebi-2026-11.tsv"
 TYPES = [
-    {"symbol": "早", "name": "早番", "kind": "work", "start": "07:00", "hours": 9},
-    {"symbol": "遅", "name": "遅番", "kind": "work", "start": "11:00", "hours": 9},
+    {"symbol": "早", "name": "早番", "kind": "work", "start": "06:45", "hours": 9},
+    {"symbol": "遅", "name": "遅番", "kind": "work", "start": "13:15", "hours": 9},
     {"symbol": "公", "name": "公休", "kind": "rest"},
 ]
 
@@ -69,7 +69,7 @@ def test_prev_tail_avoids_short_start():
 
 def test_count_short_numbers():
     types = _facility({}).shift_types
-    assert short_pairs(types, 14) == {("遅", "早"): 3.0}   # 遅番は20時に終わり、翌日の早番は7時から（11時間）
+    assert short_pairs(types, 14) == {("遅", "早"): 5.5}   # 遅番は22時15分に終わり、翌日の早番は6時45分から（8時間半）
     table = {"甲": ["遅", "早", "公", "遅", "遅"], "乙": ["早", "遅", "早", "公", "公"]}
     # 遅→早 は 甲の1日目→2日目 と 乙の2日目→3日目、遅→遅（15時間）は線の外で数えない
     total, by = count_short(table, types, 14)

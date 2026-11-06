@@ -283,8 +283,8 @@ def test_interval_counts_the_new_shift():
     st = fac["shift_types"] + [{"symbol": "日8", "name": "日8", "kind": "work", "start": "08:00", "hours": 9,
                                 "on_request_only": True, "spoken": True}]
     pairs = short_pairs(st, 14)
-    assert pairs[("遅", "日8")] == 2       # 20時の次の朝8時で12時間
-    assert ("日8", "早") not in pairs       # 17時の次の朝7時で14時間
+    assert pairs[("遅", "日8")] == 4.25    # 22時15分の次の朝8時で9時間45分
+    assert pairs[("日8", "早")] == 0.25    # 17時の次の朝6時45分で13時間45分（早番が7時からの時は14時間で数えなかった）
 
 
 def test_another_cell_word_replaces_a_placed_cell(sess):

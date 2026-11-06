@@ -229,7 +229,7 @@ def _hour(hhmm: str) -> float:
 
 def _short_gap(facility: Facility, a: str, b: str, limit: float) -> bool:
     """a の勤務の終わりから、翌日の b の勤務の始まりまでが limit 時間より短いか（勤務の種類の始まりと長さから）。
-    ひだまりでは 遅番→早番（11時間）・日勤→早番（13時間）・遅番→日勤（13時間）。明け・公休・有給は数えない。"""
+    ひだまりでは 遅番→早番（8時間半）・日勤→早番（12時間45分）・遅番→日勤（10時間45分）。明け・公休・有給は数えない。"""
     try:
         sa, sb = facility.shift(a), facility.shift(b)
     except KeyError:

@@ -83,4 +83,4 @@ def test_ひだまりは変わらない():
     st = Store(Path(__file__).resolve().parents[1] / "data" / "hidamari")
     assert "short_rest" not in st.facility().settings.get("quality", {})
     assert {s.symbol: (s.start, s.hours) for s in st.facility().shift_types if s.start} == {
-        "早": ("07:00", 9), "日": ("09:00", 9), "遅": ("11:00", 9), "夜": ("16:00", 17), "研": ("09:00", 9)}
+        "早": ("06:45", 9), "日": ("09:00", 9), "遅": ("13:15", 9), "夜": ("16:00", 17), "研": ("09:00", 9)}
