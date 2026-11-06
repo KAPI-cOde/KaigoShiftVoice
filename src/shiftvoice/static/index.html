@@ -239,13 +239,13 @@
     table.grid { font-size: 10px; }
     .grid .name { width: 110px; }
     .grid th.cnt, .grid td.cnt { width: 16px; }
-    .grid th, .grid td { height: 20px; }
+    .grid th, .grid td { height: var(--print-row, 20px); }
     .grid td.glow, .grid td.diff { background: none !important; font-weight: 400; }
     .grid td.k-early, .grid td.k-day, .grid td.k-late, .grid td.k-night, .grid td.k-ake, .grid td.k-leave { background: none !important; }   /* 紙は今どおり白黒（土日祝の列だけ灰色） */
     .grid td { box-shadow: none !important; }
     .grid td.off, .grid th.off { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .grid thead tr.wdrow th, .grid thead tr.dayrow th, .grid tr.unithead td { height: 16px; }
-    .grid tfoot td { height: 13px; font-size: 8px; line-height: 1; }   /* 3ユニットでも表と人数の行が1枚に入るように */
+    .grid tfoot td { height: var(--print-foot, 13px); font-size: 8px; line-height: 1; }   /* 3ユニットでも表と人数の行が1枚に入るように */
     .grid tr.unithead td { background: #e4e4e4 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .grid tr { break-inside: avoid; }
     .grid .acc, .grid .mark, .legend .glowkey { display: none !important; }
@@ -2316,7 +2316,26 @@ function showCopyNote(text, tsv) {
   }
 }
 // 印刷の紙の上の1行。いつ印刷したかと、配った表との関係（配った表と違う表を印刷してしまわないように）
+// PRINT-BEGIN
+// 印刷の行の高さ。人の行と人数の行が増えると A4 横の1枚からはみ出すので、1枚の高さに収まるよう縮める（読める下限まで）
+function printHeights(people, units, foot) {
+  var fixed = 32 + units * 16 + 62;   // 日付の2行・ユニットの見出し・題と凡例
+  var room = 670 - fixed, want = people * 20 + foot * 13;   // A4 横の高さから、罫線の分の余りをとった数（PDF で測った）
+  if (want <= room) return { row: 20, foot: 13 };
+  var k = room / want;
+  return { row: Math.max(12, Math.floor(20 * k * 10) / 10), foot: Math.max(9, Math.floor(13 * k * 10) / 10) };
+}
+// PRINT-END
+function fitPrint() {
+  var g = document.querySelector("table.grid");
+  if (!g) return;
+  var h = printHeights(g.querySelectorAll("tbody tr:not(.unithead)").length, g.querySelectorAll("tr.unithead").length,
+                       g.querySelectorAll("tfoot tr").length);
+  document.documentElement.style.setProperty("--print-row", h.row + "px");
+  document.documentElement.style.setProperty("--print-foot", h.foot + "px");
+}
 function printNote() {
+  fitPrint();
   var box = document.getElementById("printnote");
   if (!box || !S) return;
   var now = new Date();
