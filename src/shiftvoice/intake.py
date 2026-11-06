@@ -145,6 +145,19 @@ def _cell_strength(v, text: str, t: str) -> str:
     return v
 
 
+def _seq_strength(v, text: str, single: bool) -> str:
+    """並びの禁止（「遅番の次の日に早番を入れないで」）の強さ。言い切ったら運用の都合（operational）。
+    「きつい」「あげて」「できれば」「なるべく」と言った時は配慮（negotiable）。必ず系の言葉がある時は、読み取りの値のまま。
+    読み取りが negotiable と返しても、配慮の言葉が無ければ operational にする（作者 2026-11-07）。
+    並びの禁止が2件以上ある時は、どの件の言い方か分からないので、前どおり読み取りの値を使う。名前つきも同じ決め方
+    （個人の都合の押し付けでなく、管理者が言い切った決まりなので。解けなければ段を下げて知らせる）。"""
+    if not single or any(w in text for w in FIXED_WORDS):
+        return _flex(v, "negotiable")
+    if any(w in text for w in MAYBE_WORDS + CARE_WORDS):
+        return "negotiable"
+    return "operational"
+
+
 def _said_units(text: str, facility: Facility, unit=None) -> list[str]:
     """一言で名指ししたユニット（「東ユニットは」「東は」）。伏せ方（names.Masker）と同じ区切りで探す。
     読み取りの返事に unit があれば（名前に戻した後の値）それも使う。ユニットが1つの施設は名指ししない。"""
@@ -697,7 +710,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             bs = list(dict.fromkeys(_sym(x, facility) for x in (nx if isinstance(nx, list) else [nx])))
             p.rules.append({"name": f"{'' if not who else _who(who) + ' '}{facility.shift(a).name}の次の日に"
                                     f"{'・'.join(facility.shift(b).name for b in bs)}を置かない",
-                            "kind": "sequence", "flex": _flex(it.get("strength"), "negotiable"),
+                            "kind": "sequence", "flex": _seq_strength(it.get("strength"), text, len(real) == 1),
                             "params": {"if": [a], "next_not_in": bs}, "who": who, "when": None})
         elif t == "count_limit":
             who = _names(it.get("staff"), names)
