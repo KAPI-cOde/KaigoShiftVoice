@@ -1486,7 +1486,7 @@ function renderReview() {
       rows.appendChild(b);
     });
     wrap.appendChild(rows);
-    if (!(S && S.public) && R.wishes) wrap.appendChild(wishBox());
+    if (R.wishes) wrap.appendChild(wishBox());
     var go = el("button", "primary big", R.month + "月の表を作る");
     go.type = "button";
     go.addEventListener("click", startBuild);
@@ -1596,6 +1596,7 @@ function wishBox() {
   var miss = R.wish_missing || [];
   card.appendChild(el("div", "ln small", miss.length ? "まだ入っていない人 " + miss.length + "人　" + miss.join("・")
                                               : "全員の希望休が入りました"));
+  if (S && S.public) return card;   // 公開版は貼り付けを外す（実在の表を外の機械に置かないため）
   var pb = el("button", "linkish", wishPasteOpen ? "貼る欄をたたむ" : "希望を書いた表（「希」）を貼って入れる");
   pb.type = "button";
   pb.addEventListener("click", function () { wishPasteOpen = !wishPasteOpen; renderReview(); });

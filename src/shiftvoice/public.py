@@ -464,7 +464,8 @@ GET_OK = {"/", "/index.html", "/api/state", "/api/table.tsv", "/api/cleanup", "/
 GET_PREFIX_OK = ("/api/rule?", "/api/why?")
 POST_OK = {"/api/say", "/api/answer", "/api/retry", "/api/choose_name", "/api/accept", "/api/move", "/api/refuse",
            "/api/cancel", "/api/undo", "/api/cleanup", "/api/restore", "/api/wider", "/api/distribute",
-           "/api/next/answer", "/api/next/change", "/api/next/undo", "/api/next/build", "/api/next/adopt"}
+           "/api/next/answer", "/api/next/change", "/api/next/undo", "/api/next/build", "/api/next/adopt",
+           "/api/next/wish", "/api/next/unwish"}   # 表を作る前の希望休（一言）。「希」の表の貼り付けは外す
 TEXT_FIELDS = ("text", "wrong", "right", "answer", "uid", "rule_id", "plan")
 
 

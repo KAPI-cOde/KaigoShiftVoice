@@ -414,3 +414,13 @@ def test_時間のたった置き場は_使いに来ても戻らない(tmp_path,
     import time as _t
     _t.sleep(0.01)
     assert sp.acquire(ws.token) is None and not ws.root.exists()
+
+
+def test_表を作る前の希望休は公開版でも入れられ_見張りを通り_希の表の貼り付けは断る(make_server):
+    base, app, calls = make_server()
+    code, res, cookie = req(base, "/api/state")
+    assert code == 200
+    code, res, _ = req(base, "/api/next/wish_paste", "POST", {"text": "x"}, cookie=cookie)
+    assert code == 403
+    code, res, _ = req(base, "/api/next/wish", "POST", {"text": "山川太郎は15日休み"}, cookie=cookie)
+    assert code != 403 and calls() == 0     # 名前らしい語は送らない
