@@ -142,7 +142,7 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
     全員向けが動かせない決まり（公休の数 など）の時は外さない。
     その前に、同じ相手に2本ある帳面の回数のルールは新しい方を残す（_replace_same）。"""
     import copy
-    rules = _weekday_dated(_run_exceptions(_coverage_units(_coverage_days(_replace_same(rules)))))
+    rules = _weekday_dated(_run_exceptions(_coverage_dates(_coverage_units(_coverage_days(_replace_same(rules))))))
     named: dict[tuple, list[tuple[Rule, str, dict]]] = {}   # 勤務 → [(元のルール, 人, {"min": 値, "max": 値})]
     for r in rules:
         if r.kind == "count" and r.who and not r.when and r.flex in ("operational", "fixed"):
@@ -174,6 +174,52 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
             r = copy.copy(r)
             r.meta = {**r.meta, "except_min": sorted(ex_min), "except_max": sorted(ex_max)}
         out.append(r)
+    return out
+
+
+def _coverage_dates(rules: list[Rule]) -> list[Rule]:
+    """日付を決めた人数のルール（「28日はU1とU3の早番を2人」「1日はU2の早番はいなくていい」。when のある coverage）は、
+    その日だけ、同じ勤務の毎日の人数のルール（when も曜日も無い）より優先する。
+    - 日付のルールがユニットを名指し（またはユニットごと）なら、毎日のユニットごとのルールはそのユニットのその日を、
+      両立しない側（_cov_yield）だけ譲る。毎日の施設全体のルールは、その日の合計が変わるのでその日を譲る
+    - 日付のルールが施設全体なら、毎日の施設全体のルールはその日を譲り、毎日のユニットごとのルールは、合計と両立しない側
+      （ユニットの数×人数より多い・少ない）だけその日を譲る
+    譲った所は meta の day_skip に [ユニットか「全体」, 日, 側] で書き、expand が数えない。
+    （2026-11-07 実際の施設の表を画面の口で作った通しの試し。施設は4日の例外を設けていて、言えないと段4まで下がった）"""
+    import copy
+    dated = [r for r in rules if r.kind == "coverage" and r.when and not r.params.get("weekdays")]
+    if not dated:
+        return rules
+    out = []
+    for g in rules:
+        q = g.params
+        if g.kind != "coverage" or g.when or q.get("weekdays"):
+            out.append(g)
+            continue
+        skip = []
+        for r in dated:
+            p = r.params
+            if set(_syms_of(p.get("shifts"))) != set(_syms_of(q.get("shifts"))):
+                continue
+            for d in r.when:
+                if q.get("scope") == "all":
+                    skip += [["全体", d, "min"], ["全体", d, "max"]]
+                elif p.get("scope") == "each_unit":
+                    units = set(p.get("units") or []) or None
+                    gunits = set(q.get("units") or []) or None
+                    hit = (units & gunits if units and gunits else units or gunits)
+                    names = sorted(hit) if hit else ["*"]
+                    for side in _cov_yield(p, q):
+                        skip += [[u, d, side] for u in names]
+                else:   # 施設全体の日付のルールと、毎日のユニットごとのルール。合計を増やす頼みは上限、減らす頼みは下限を譲る
+                    if p["op"] in ("==", ">=") and q["op"] in ("==", "<="):
+                        skip.append(["*", d, "max"])
+                    if p["op"] == "<=" and q["op"] in ("==", ">="):
+                        skip.append(["*", d, "min"])
+        if skip:
+            g = copy.copy(g)
+            g.meta = {**g.meta, "day_skip": skip}
+        out.append(g)
     return out
 
 
@@ -292,11 +338,11 @@ def _coverage_units(rules: list[Rule]) -> list[Rule]:
     out = list(rules)
     for i, new in enumerate(rules):
         p = new.params
-        if new.kind != "coverage" or p.get("scope") != "each_unit" or not p.get("units"):
-            continue
+        if new.kind != "coverage" or p.get("scope") != "each_unit" or not p.get("units") or new.when:
+            continue   # 日付を決めた人数はその日だけ譲らせる（_coverage_dates）
         for j, g in enumerate(out):
             q = g.params
-            if j == i or g.kind != "coverage" or q.get("scope") != "each_unit" or _cov_key(q) != _cov_key(p):
+            if j == i or g.kind != "coverage" or q.get("scope") != "each_unit" or _cov_key(q) != _cov_key(p) or g.when:
                 continue
             if j > i:
                 continue   # 新しいルールは、古い名指しのルールに譲らない（下で、古い名指しの方が新しい全ユニット向けに譲る）
@@ -312,12 +358,13 @@ def _coverage_units(rules: list[Rule]) -> list[Rule]:
     # ルールの説明は「超えた日は無い」と出た（2026-11-07 の通しの試し）
     for i, new in enumerate(rules):
         p = new.params
-        if new.kind != "coverage" or p.get("scope") != "each_unit" or p.get("units"):
+        if new.kind != "coverage" or p.get("scope") != "each_unit" or p.get("units") or new.when:
             continue
         for j in range(i):
             g = out[j]
             q = g.params
-            if g.kind != "coverage" or q.get("scope") != "each_unit" or not q.get("units") or _cov_key(q) != _cov_key(p):
+            if g.kind != "coverage" or q.get("scope") != "each_unit" or not q.get("units") or _cov_key(q) != _cov_key(p) \
+                    or g.when:
                 continue
             if _STRENGTH.index(new.flex) < _STRENGTH.index(g.flex):
                 continue   # 弱い新しいルール（できれば）では、強い前のルール（動かせない人数）を譲らせない（Astra）
@@ -399,10 +446,15 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
             hi_off = any(on_days(o, month, d) for o in rule.meta.get("hi_off", ()))
             groups = ([(u, [s for s in people if unit_on(s, d) == u]) for u in units]
                       if p.get("scope") == "each_unit" else [("全体", people)])
+            day_skip = {(u, side) for u, dd, side in rule.meta.get("day_skip", ()) if dd == d}
             for gname, members in groups:
                 terms = [Term(s.name, d, syms) for s in members]
                 n = p["n"]
                 lo, hi = {"==": (n, n), ">=": (n, None), "<=": (None, n)}[p["op"]]
+                if (gname, "min") in day_skip or ("*", "min") in day_skip:
+                    lo = None   # 日付を決めた人数のルールに、その日だけ譲った下限（_coverage_dates）
+                if (gname, "max") in day_skip or ("*", "max") in day_skip:
+                    hi = None
                 if hi_off or gname in skip_hi:
                     hi = None   # 曜日つきの人数が上限を超えて頼んだ日（with_overrides）か、名指しのルールに譲った上限
                 if gname in skip_lo:

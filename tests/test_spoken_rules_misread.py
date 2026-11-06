@@ -78,11 +78,23 @@ def test_有給の多くてもは上限(made, tmp_path):
     assert [(x.params, x.name) for x in new] == [({"shifts": ["有"], "max": 2}, "青木さん 有給は月2日まで")]
 
 
-def test_日付を決めた人数は毎日にせず聞き返す(made, tmp_path):
-    """「28日は行事なので、早番を5人にして」が毎日の早番5人になった"""
-    r, new = _say(made, tmp_path, "28日は行事なので、早番を5人にして", [{"type": "coverage", "shift": "早", "min": 5, "max": None}])
-    assert r.kind != "applied" and "日付を決めた人数" in (r.message or "")
-    assert new == []
+def test_日付を決めた人数はその日だけ(made, tmp_path):
+    """「28日は行事なので、早番を5人にして」が毎日の早番5人になった。その日だけの施設全体の人数（今月だけ）にする。
+    この作り話の10人の施設では5人は人が足りないので、3人で確かめる"""
+    from dataclasses import replace
+    from shiftvoice.build import month_rules
+    import shiftvoice.solver as S
+    r, new = _say(made, tmp_path, "28日は行事なので、早番を3人にして", [{"type": "coverage", "shift": "早", "min": 3, "max": None}])
+    assert r.kind == "applied", r.message
+    assert [(x.when, x.params["scope"], x.params["op"], x.params["n"], x.scope) for x in new] == [([28], "all", ">=", 3, "once")]
+    # その日だけ、毎日の「ユニットごとに早番1人（動かせない）」の上限が譲り、動かせないルールと一緒に解くと28日は3人
+    st = Store(tmp_path / "f")
+    fac, staff, m = st.facility(), st.staff_on(2026, 12), st.month(2026, 12)
+    fixed = [x for x in month_rules(st, 2026, 12, with_premise=False) if x.flex == "fixed" and x.id != new[0].id]
+    res = S.solve_month(fac, staff, fixed + [replace(new[0], flex="fixed")], m, stage=4)
+    assert res.status == "ok"
+    assert sum(1 for row in res.table.values() if row[27] == "早") >= 3
+    assert all(sum(1 for row in res.table.values() if row[d] == "早") == 2 for d in range(31) if d != 27)   # ほかの日は毎日のまま
 
 
 def test_できればは配慮の強さ(made, tmp_path):
@@ -160,10 +172,10 @@ def test_1日につきの人数は日付にしない(made, tmp_path):
     assert [x.params["n"] for x in new] == [2]
 
 
-def test_日付と曜日を言った人数も毎週にせず聞き返す(made, tmp_path):
+def test_日付と曜日を言った人数も毎週にしない(made, tmp_path):
     r, new = _say(made, tmp_path, "28日の日曜は早番5人", [{"type": "coverage", "shift": "早", "min": 5, "max": None,
                                                           "weekdays": ["sun"]}])
-    assert r.kind != "applied" and "日付を決めた人数" in (r.message or "") and new == []
+    assert [(x.when, x.params.get("weekdays")) for x in new] == [([28], None)]
 
 
 def test_合わせての別の意味は1本にしない(made, tmp_path):
@@ -216,12 +228,13 @@ def test_できればの例外では動かせない全員の上限から外さ�
     assert next(r for r in with_overrides([general, plain]) if r.id == "r025").meta.get("except_who") == ["青木"]
 
 
-def test_何日までの人数も日付として聞き返す(made, tmp_path):
+def test_何日までの人数は毎日にしない(made, tmp_path):
+    """「今月は28日まで早番3人」「28日に三人」は日付の言い方。毎日の人数にしない（どちらも、その日のルールになるか聞き返す）"""
     r, new = _say(made, tmp_path, "今月は28日まで早番3人", [{"type": "coverage", "shift": "早", "min": 3, "max": 3}])
-    assert r.kind != "applied" and "日付を決めた人数" in (r.message or "") and new == []
+    assert all(x.when for x in new)
     (tmp_path / "b").mkdir()
     r, new = _say(made, tmp_path / "b", "28日に三人、早番をお願いします", [{"type": "coverage", "shift": "早", "min": 3, "max": None}])
-    assert r.kind != "applied" and new == []
+    assert all(x.when == [28] for x in new)
 
 
 def test_最大や間の言葉があっても勤務の続く日数(made, tmp_path):
@@ -324,3 +337,22 @@ def test_日付を決めた頼みの日は同じ人の曜日の頼みより優�
     eff = next(r for r in with_overrides([wk, cell]) if r.id == "w")
     days = sorted(int(i.key.split("/")[1]) for i in expand(eff, fac, staff, m))
     assert 18 not in days and 17 in days and 25 in days
+
+
+def test_日付のユニットの人数はそのユニットのその日だけ毎日に勝つ():
+    """「1日はU2の早番はいなくていい」「28日はU1の早番を2人」。毎日のユニットごとの早番1人は、そのユニットのその日だけ譲る"""
+    from shiftvoice.model import Facility, Month, ShiftType, Staff
+    from shiftvoice.rules import expand
+    fac = Facility("x", "x", ["U1", "U2"], [ShiftType("早", "早番", "work"), ShiftType("公", "公休", "rest")], {})
+    staff = [Staff(f"職員{i}", "U1" if i < 3 else "U2", ["早"]) for i in range(6)]
+    m = Month(2026, 10, [], {})
+    daily = Rule("r1", 1, "早番の人数", "coverage", "fixed", {"shifts": ["早"], "scope": "each_unit", "op": "==", "n": 1})
+    none = Rule("n1", 1, "1日の早番は0人（U2）", "coverage", "operational",
+                {"shifts": ["早"], "scope": "each_unit", "op": "==", "n": 0, "units": ["U2"]}, when=[1], scope="once")
+    two = Rule("n2", 1, "28日の早番は2人（U1）", "coverage", "operational",
+               {"shifts": ["早"], "scope": "each_unit", "op": "==", "n": 2, "units": ["U1"]}, when=[28], scope="once")
+    eff = next(r for r in with_overrides([daily, none, two]) if r.id == "r1")
+    inst = {i.key: (i.lo, i.hi) for i in expand(eff, fac, staff, m)}
+    assert inst["U2/1"] == (None, 1) and inst["U1/1"] == (1, 1)      # U2 の1日は下限だけ譲る
+    assert inst["U1/28"] == (1, None) and inst["U2/28"] == (1, 1)    # U1 の28日は上限だけ譲る
+    assert inst["U1/2"] == (1, 1)
