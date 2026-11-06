@@ -766,8 +766,11 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             rest = facility.shift(sym).kind == "rest"
             what = ("休みにしない" if avoid else "休み") if rest else \
                 f"{facility.shift(sym).name}{'に入れない' if avoid else 'にする'}"
-            p.rules.append({"name": f"{_who(who)} {jp}曜は{what}{upto}",
-                            "kind": "weekday", "flex": "wish",
+            # 「できれば」「なるべく」「望ましい」の曜日の頼みは配慮の強さ（前は言い方に関わらず本人の希望の強さで、「青木さん、
+            # 木曜はできれば遅番」が毎週木曜の遅番を強く求め、ほかの頼みとぶつかって表が作れなかった。2回目の通しの試し）
+            soft = len(real) == 1 and any(w in text for w in MAYBE_WORDS + ("望ましい", "が良い", "がいい"))
+            p.rules.append({"name": f"{_who(who)} {jp}曜は{what}{upto}" + ("（できれば）" if soft else ""),
+                            "kind": "weekday", "flex": "negotiable" if soft else "wish",
                             "params": {"weekdays": wds, ("not_in" if avoid else "in"): [sym]},
                             "who": who, "when": None})
         elif t == "coverage":

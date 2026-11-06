@@ -346,3 +346,15 @@ def test_今月だけのだけは曜日の限定にしない(made, tmp_path):
                   [{"type": "weekday_pref", "staff": "青木", "weekdays": ["fri"], "shift": "早", "avoid": False}])
     assert r.kind == "applied", r.message
     assert [(x.params.get("in"), x.params["weekdays"]) for x in new] == [(["早"], ["fri"])]
+
+
+def test_できればの曜日の頼みは配慮の強さ(made, tmp_path):
+    """「青木さん、木曜はできれば遅番」が本人の希望の強さで入り、毎週木曜の遅番を強く求めてほかの頼みとぶつかった"""
+    r, new = _say(made, tmp_path, "青木さん、木曜はできれば遅番",
+                  [{"type": "weekday_pref", "staff": "青木", "weekdays": ["thu"], "shift": "遅", "avoid": False}])
+    assert r.kind == "applied", r.message
+    assert [(x.flex, x.name) for x in new] == [("negotiable", "青木さん 木曜は遅番にする（できれば）")]
+    (tmp_path / "b").mkdir()
+    r, new = _say(made, tmp_path / "b", "石田さん、木曜は遅番",
+                  [{"type": "weekday_pref", "staff": "石田", "weekdays": ["thu"], "shift": "遅", "avoid": False}])
+    assert [x.flex for x in new] == ["wish"]   # 言い切った時は今までどおり
