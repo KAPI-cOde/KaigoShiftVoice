@@ -184,8 +184,12 @@ _DATE_IN_TEXT = re.compile(r"(?<![0-9０-９])([0-9]{1,2})日(?![勤間続連分
 
 def _said_dates(text: str) -> list[int]:
     text = unicodedata.normalize("NFKC", text or "")
-    return [int(d) for d in _DATE_IN_TEXT.findall(text)
-            if not re.search(rf"(?<![0-9]){d}日(?:に|で)?[0-9一二三四五六七八九十]", text)]
+    out = [int(d) for d in _DATE_IN_TEXT.findall(text)
+           if not (d == "1" and re.search(r"(?<![0-9])1日(?:に|で)?[0-9一二三四五六七八九十]", text))]
+    if not re.search(r"連勤|続け|連続|日間|以内|有給|公休|休み", text):
+        # 「今月は28日まで早番3人」の28日は日付（Astra）。「連勤は5日まで」の5日は日数なので数えない
+        out += [int(d) for d in re.findall(r"(?<![0-9])([0-9]{1,2})日まで", text) if int(d) not in out]
+    return out
 
 
 def _typical_scope(n: int, syms: list[str], month: Month, staff: list[Staff], units: list[str]) -> str | None:
@@ -213,17 +217,24 @@ def _said_run_shift(text: str, facility: Facility) -> str | None:
     """「早番を3日続けない」「遅番が3日連続にならないように」の勤務。勤務の名前が1つだけで、続け・連続と言った時だけ。
     続けて働く日数の上限の型は勤務の欄を持たず、全員の連勤の上限になっていた（2026-11-07 の通しの試し。
     「早番を3日続けて入れないで」が「全員 連勤は2日まで」になり124か所破れた）"""
-    if not re.search(r"続け|連続", text or "") or "連勤" in (text or ""):
+    if not re.search(r"続け|連続", text or "") or "連勤" in (text or "") or "含め" in (text or ""):
         return None
     found = []
     for st in facility.shift_types:
         if st.kind != "work":
             continue
         # 勤務の名前のすぐ後に「3日続け」「連続」が来る時だけ（「夜勤も含めて5日連続」は全部の勤務の連勤。Astra）
-        if st.name and re.search(re.escape(st.name) + r"[をはがの]?[0-9０-９一二三四五六七八九十]*日?(?:続け|連続)", text) \
-                and st.symbol not in found:
+        if st.name and re.search(re.escape(st.name) + r"[をはがの]?(?:最大|多くても|上限|最長)?[0-9０-９一二三四五六七八九十]*日?"
+                                 r"(?:まで)?(?:続け|連続)", text) and st.symbol not in found:
             found.append(st.symbol)
     return found[0] if len(found) == 1 else None
+
+
+def _named_run_shift_unclear(text: str, facility: Facility) -> bool:
+    """勤務の名前が1つあり「続け・連続」と言ったのに、どの勤務の続く日数か読めない時（全部の勤務の連勤にしない。Astra）"""
+    if not re.search(r"続け|連続", text or "") or "連勤" in (text or "") or "含め" in (text or ""):
+        return False
+    return sum(1 for st in facility.shift_types if st.kind == "work" and st.name and st.name in text) == 1
 
 
 LEAVE_WORDS = ("有給", "有休", "年休")
@@ -805,6 +816,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             if not mx:
                 raise Clarify("何日まで続けてよいか教えてください")
             run = _sym(it["shift"], facility) if it.get("shift") else _said_run_shift(text, facility)
+            if not run and _named_run_shift_unclear(text, facility):
+                raise Clarify("どの勤務を続けて何日までにするか、「早番は続けて2日まで」のように言ってください")
             if run:
                 nm = facility.shift(run).name
                 p.rules.append({"name": f"{_who(who)} {nm}を2日続けない" if mx == 1 else f"{_who(who)} {nm}は続けて{mx}日まで",
@@ -855,7 +868,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             lv = _leave_sym(facility)
             if lv is None:
                 raise Clarify(NO_LEAVE)
-            if re.search(r"多くても|上限|超えない|[0-9０-９一二三四五六七八九十]+日(?:まで|以内)", text):
+            if re.search(r"多くても|上限|超えない|[0-9０-９一二三四五六七八九十]+日(?:まで(?!に)|以内)", text):
                 # 「有給は多くても月2日まで」は上限。下限と読むと有給が増えた（2026-11-07 の通しの試し）
                 p.rules.append({"name": f"{who[0]}さん 有給は月{n}日まで", "kind": "count", "flex": "operational",
                                 "params": {"shifts": [lv], "max": n}, "who": who, "when": None})

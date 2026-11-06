@@ -203,3 +203,37 @@ def test_名指しのゆるい連勤の上限は全員の上限の例外(made, t
     eff = with_overrides([x for x in rules if x.id != new[0].id] + [tight])
     general = next(x for x in eff if x.kind == "max_run" and not x.who and x.params["shifts"] == "work")
     assert not general.meta.get("except_who")
+
+
+# ---- Astra（2026-11-07 2回目）
+def test_できればの例外では動かせない全員の上限から外さない():
+    general = Rule("r025", 1, "連勤の上限", "max_run", "fixed", {"shifts": "work", "max": 5})
+    weak = Rule("n9", 1, "青木さん 連勤は6日まで", "max_run", "negotiable", {"shifts": "work", "max": 6}, who=["青木"])
+    plain = Rule("n8", 1, "青木さん 連勤は6日まで", "max_run", "operational", {"shifts": "work", "max": 6}, who=["青木"])
+    assert not next(r for r in with_overrides([general, weak]) if r.id == "r025").meta.get("except_who")
+    assert next(r for r in with_overrides([general, plain]) if r.id == "r025").meta.get("except_who") == ["青木"]
+
+
+def test_何日までの人数も日付として聞き返す(made, tmp_path):
+    r, new = _say(made, tmp_path, "今月は28日まで早番3人", [{"type": "coverage", "shift": "早", "min": 3, "max": 3}])
+    assert r.kind != "applied" and "日付を決めた人数" in (r.message or "") and new == []
+    (tmp_path / "b").mkdir()
+    r, new = _say(made, tmp_path / "b", "28日に三人、早番をお願いします", [{"type": "coverage", "shift": "早", "min": 3, "max": None}])
+    assert r.kind != "applied" and new == []
+
+
+def test_最大や間の言葉があっても勤務の続く日数(made, tmp_path):
+    r, new = _say(made, tmp_path, "全員、今月は早番を最大2日連続までにして", [{"type": "consecutive_limit", "staff": None, "max": 2}])
+    assert r.kind == "applied", r.message
+    assert [x.params for x in new] == [{"shifts": ["早"], "max": 2}]
+
+
+def test_勤務の名前と連続を言って形が読めない時は聞き返す(made, tmp_path):
+    r, new = _say(made, tmp_path, "早番について、3日以上の連続はやめて", [{"type": "consecutive_limit", "staff": None, "max": 2}])
+    assert r.kind != "applied" and "どの勤務を続けて" in (r.message or "") and new == []
+
+
+def test_有給の何日までには期限(made, tmp_path):
+    r, new = _say(made, tmp_path, "青木さん、今月は20日までに有給1日", [{"type": "leave_count", "staff": "青木", "count": 1}])
+    assert r.kind == "applied", r.message
+    assert [x.params for x in new] == [{"shifts": ["有"], "min": 1, "max": 1}]
