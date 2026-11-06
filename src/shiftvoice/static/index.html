@@ -384,8 +384,20 @@ function unitNames() {
 }
 function multiUnit() { return unitNames().length > 1; }
 
+function spokenTimes(sym) {
+  var s = (S.symbols || []).filter(function (x) { return x.symbol === sym; })[0];
+  var m = s && /^(\d{1,2}):(\d{2})/.exec(s.start || "");
+  if (!m) return "";
+  var say = function (t) { var h = Math.floor(t / 60), mi = t % 60; return h + "時" + (mi === 0 ? "" : mi === 30 ? "半" : mi + "分"); };
+  var a = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  return say(a) + "〜" + say(a + (Number(s.hours) || 0) * 60);
+}
+
 function renderLegend() {
-  var items = (S.shift_names || []).map(function (x) { return [x[0], x[1] === "明け" ? "夜勤明け" : x[1]]; });
+  var items = (S.shift_names || []).map(function (x) {
+    if (x[0] === x[1]) return [x[0], spokenTimes(x[0]) || x[1]];   // 話して足した勤務は記号と名前が同じなので、時刻を添える
+    return [x[0], x[1] === "明け" ? "夜勤明け" : x[1]];
+  });
   var leave = items.filter(function (x) { return x[1] === "有給"; });
   items = items.filter(function (x) { return x[1] !== "有給"; }).concat(leave);
   var lg = document.getElementById("legend");
