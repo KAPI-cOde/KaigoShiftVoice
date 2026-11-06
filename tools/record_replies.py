@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from shiftvoice.addshift import show_spoken, spoken_example  # noqa: E402
 from shiftvoice.intake import Clarify, to_proposal  # noqa: E402
 from shiftvoice.names import Masker  # noqa: E402
 from shiftvoice.reader import (HaikuReader, ReadError, RecordedReader, SonnetBuilder,  # noqa: E402
@@ -25,6 +26,7 @@ from shiftvoice.server import load_dotenv  # noqa: E402
 from shiftvoice.session import Session  # noqa: E402
 from shiftvoice.store import Store  # noqa: E402
 
+SPOKEN = {"勤務A": "日8"}   # 足した勤務の伏せ方（addshift.py）
 KEYS = ("type", "staff", "days", "shift", "first", "next", "min", "max", "until_day", "from_day", "to_day",
         "weekdays", "avoid", "from_month", "can_add", "strength")
 
@@ -35,7 +37,9 @@ def _built_store(tmp: Path) -> Store:
     shutil.copytree(ROOT / "data" / "hidamari", d)
     st = Store(d)
     replies = json.loads((ROOT / "tests" / "fixtures" / "replies.json").read_text(encoding="utf-8"))
-    Session(st, 2026, 11, RecordedReader(replies)).open()
+    s = Session(st, 2026, 11, RecordedReader(replies))
+    s.open()
+    s.say("8時から17時の日8を足して")   # 足した勤務の一言（「勤務A」）も確かめられるように
     return st
 
 
@@ -47,7 +51,7 @@ def _settle(items, masked, st: Store):
         return ("unclear",)   # 聞き返しの文の言い方は数えない
     fac, staff = st.facility(), st.staff()
     m = st.month(2026, 11)
-    real = Masker(staff, fac).unmask(items)
+    real = Masker(staff, fac).unmask(show_spoken(items, SPOKEN))
     try:
         p = to_proposal(real, masked, fac, staff, m, leave_caps={"斉藤": 2})
     except Clarify as e:
@@ -87,7 +91,7 @@ def main():
             want = parse_reply(want_text)
             t0 = time.time()
             try:
-                got = reader.read(masked)
+                got = reader.read(masked, spoken_example(SPOKEN) if "勤務A" in masked else None)
             except ReadError as e:
                 print(f"失敗 {masked} {e}")
                 bad += 1
