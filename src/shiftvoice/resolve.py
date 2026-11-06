@@ -106,9 +106,11 @@ def resolve(facility: Facility, staff: list[Staff], rules: list[Rule], month: Mo
     focus = focus_days(new_rules, facility, staff, month, base)
     new_ids = {r.id for r in new_rules}
     # 前の表で既に外れていた相談できる決まりの場面は「これ以上悪くしない」。直しても点にしない
-    # （外れを直す点が入ると、一言と関係のないマスまで数十マス動いた。2026-11-02 に測った）
+    # （外れを直す点が入ると、一言と関係のないマスまで数十マス動いた。2026-11-02 に測った）。
+    # 運用の都合も同じ。公休を守りきれなかった月は、1マスの一言でも狭い範囲の直しが全部失敗し、ひと月を解き直して
+    # 54マス動いた（2026-11-06 通しの試し）
     skip = {(b["rule"], b["key"]) for b in check_table(rules, facility, staff, month, base)
-            if b["flex"] == "negotiable" and b["rule"] not in new_ids}
+            if b["flex"] in ("negotiable", "operational") and b["rule"] not in new_ids}
     tries = []
     for w in WINDOWS:
         if focus is None and w is not None:
@@ -128,7 +130,7 @@ def resolve(facility: Facility, staff: list[Staff], rules: list[Rule], month: Mo
         tries.append({"window": w, "status": r.status, "seconds": round(r.seconds, 3)})
         if r.status != "ok":
             continue
-        hard = [b for b in r.broken if b["flex"] in ("fixed", "wish", "operational")]
+        hard = [b for b in r.broken if b["flex"] in ("fixed", "wish", "operational") and (b["rule"], b["key"]) not in skip]
         new_broken = [b for b in r.broken if b["rule"] in new_ids]
         if (hard or new_broken) and w is not None:
             continue  # 範囲の中では守れない。広げる

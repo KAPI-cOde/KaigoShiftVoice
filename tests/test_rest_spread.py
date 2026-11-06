@@ -81,3 +81,22 @@ def test_next_month_does_not_say_rules_are_kept_when_one_was_dropped(tmp_path):
     out = NextFlow(Store(tmp_path / "f"), 2026, 11).build()
     assert out["note"] and "外れたのは" in out["note"]
     assert "そのまま" not in out["sub"]
+
+
+def test_one_cell_word_stays_small_in_a_month_that_dropped_a_rule(tmp_path):
+    """公休を守りきれなかった月でも、1マスの一言は狭い範囲で直す（直す前は54マス動いた）"""
+    from shiftvoice.build import month_rules
+    from shiftvoice.model import Rule
+    from shiftvoice.resolve import resolve
+    made(tmp_path)
+    store = Store(tmp_path / "f")
+    m = store.month(2026, 12)
+    who = "青木"
+    want = "遅" if m.table[who][11] != "遅" else "早"
+    new = Rule(id="n1", ver=1, name=f"{who}さん 12日", kind="cell", flex="wish", params={"in": [want]}, who=[who], when=[12],
+               scope="once")
+    rules = month_rules(store, 2026, 12, with_premise=False) + [new]
+    r = resolve(store.facility(), store.staff_on(2026, 12), rules, m, m.table, [new])
+    assert r.ok and r.table[who][11] == want
+    assert r.window is not None, r.tries
+    assert len(r.changes) <= 16, r.changes
