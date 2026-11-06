@@ -168,9 +168,58 @@ def _count_strength(v, text: str, single: bool) -> str:
     ほかは施設の運用（operational）にそろえる（「今月は夜勤0で」が wish だと全員向けの下限に負ける）。"""
     if single and any(w in text for w in FIXED_WORDS):
         return "fixed"
-    if v in ("wish", "negotiable") and any(w in text for w in OWN_WORDS + MAYBE_WORDS):
+    if any(w in text for w in MAYBE_WORDS):
+        # 「できれば」は配慮の強さ。読み取りが wish（本人の希望。運用より強い）や operational と返しても、配慮にする
+        # （「日勤はできれば毎日3人」が本人の希望の強さで入り、夜勤2人の決まりを押しのけた。2026-11-07 の通しの試し）
+        return "negotiable"
+    if v in ("wish", "negotiable") and any(w in text for w in OWN_WORDS):
         return v
     return "operational"
+
+
+# 日付を決めた一言（「28日は」「今月の1日だけ」）の日。「1日2人」「1日あたり」の1日（1日ごと）と、「3日続けて」「2日間」は除く
+_DATE_IN_TEXT = re.compile(r"(?<![0-9０-９])([0-9]{1,2})日(?![勤間続連分]|[0-9]|あたり|ごと)")
+
+
+def _said_dates(text: str) -> list[int]:
+    text = unicodedata.normalize("NFKC", text or "")
+    return [int(d) for d in _DATE_IN_TEXT.findall(text) if not re.search(rf"(?<![0-9]){d}日(?:に|で)?[0-9]", text)]
+
+
+def _typical_scope(n: int, syms: list[str], month: Month, staff: list[Staff], units: list[str]) -> str | None:
+    """言った人数が、今の表のいつもの数（施設全体で1日に何人か・1つのユニットで1日に何人か）のどちらに当たるか。
+    片方だけに当たる時だけ返す。「夜勤は毎日ちょうど2人」が、取り込みのユニットごとの数え方にそろえられて
+    ユニットごと2人になり、35か所破れた（2026-11-07 の通しの試し。施設全体ではいつも2人、ユニットでは0〜1人）"""
+    from collections import Counter
+    if not month.table or len(units) < 2:
+        return None
+    unit_of = {s.name: s.unit for s in staff}
+    tot, per = Counter(), Counter()
+    for d in range(month.days):
+        tot[sum(1 for nm, row in month.table.items() if d < len(row) and row[d] in syms)] += 1
+        for u in units:
+            per[sum(1 for nm, row in month.table.items() if unit_of.get(nm) == u and d < len(row) and row[d] in syms)] += 1
+    t, u = tot.most_common(1)[0][0], per.most_common(1)[0][0]
+    if n == t and n != u:
+        return "all"
+    if n == u and n != t:
+        return "each_unit"
+    return None
+
+
+def _said_run_shift(text: str, facility: Facility) -> str | None:
+    """「早番を3日続けない」「遅番が3日連続にならないように」の勤務。勤務の名前が1つだけで、続け・連続と言った時だけ。
+    続けて働く日数の上限の型は勤務の欄を持たず、全員の連勤の上限になっていた（2026-11-07 の通しの試し。
+    「早番を3日続けて入れないで」が「全員 連勤は2日まで」になり124か所破れた）"""
+    if not re.search(r"続け|連続", text or "") or "連勤" in (text or ""):
+        return None
+    found = []
+    for st in facility.shift_types:
+        if st.kind != "work":
+            continue
+        if st.name and st.name in text and st.symbol not in found:
+            found.append(st.symbol)
+    return found[0] if len(found) == 1 else None
 
 
 LEAVE_WORDS = ("有給", "有休", "年休")
@@ -528,6 +577,12 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     real = [it for it in items if it.get("type") != "none"]
     if not real:
         raise Clarify("表を変える頼みが見つかりませんでした。もう一度言ってください")
+    if (len(real) == 2 and all(it["type"] == "count_limit" for it in real) and re.search(r"合わせて|あわせて|併せて|合計", text)
+            and real[0].get("staff") == real[1].get("staff") and real[0].get("shift") != real[1].get("shift")
+            and (real[0].get("min"), real[0].get("max"), real[0].get("until_day")) ==
+                (real[1].get("min"), real[1].get("max"), real[1].get("until_day"))):
+        # 「日勤と遅番は合わせて月8回まで」を、日勤8回・遅番8回の2本に分けていた（2026-11-07 の通しの試し）。1本の回数にする
+        real = [{**real[0], "shift": [real[0].get("shift"), real[1].get("shift")]}]
     for it in real:
         if it["type"] == "unclear":
             raise Clarify(it.get("question") or "うまく聞き取れませんでした。もう一度言ってください")
@@ -613,7 +668,9 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                             "params": {"if": [a], "next_not_in": bs}, "who": who, "when": None})
         elif t == "count_limit":
             who = _names(it.get("staff"), names)
-            sym = _sym(it.get("shift"), facility)
+            together = it.get("shift") if isinstance(it.get("shift"), list) else None
+            sym = _sym(together[0] if together else it.get("shift"), facility)
+            syms = [_sym(x, facility) for x in together] if together else [sym]
             lo, hi = _num(it.get("min")), _num(it.get("max"))
             if lo is None and hi is None:
                 raise Clarify("何回までか教えてください")
@@ -633,19 +690,20 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 # 3回に2回、夜勤を全部外して19マス動いた。2026-11-05、別の系統の AI が書いた言い方）。「追加しない」
                 # 「増やさない」「そのまま」と言っている時は、今入っている回数を上限にする（今の分は消さず、増やさない）
                 row = month.table.get(who[0], [])
-                now = sum(1 for i, x in enumerate(row, 1) if x == sym and (when is None or i in when))
+                now = sum(1 for i, x in enumerate(row, 1) if x in syms and (when is None or i in when))
                 hi = now or hi
             # 休みの勤務（公休・有給）は「日」で数える。下限と上限が同じなら1つの数で言う（「公休は月10〜10回」と出ていた）
             unit = "日" if facility.shift(sym).kind in ("rest", "leave") else "回"
             rng = (f"{lo}{unit}" if lo is not None and lo == hi else
                    f"{lo}〜{hi}{unit}" if lo is not None and hi is not None else
                    f"{hi}{unit}まで" if hi is not None else f"{lo}{unit}以上")
-            params = {"shifts": [sym]}
+            params = {"shifts": syms}
             if lo is not None:
                 params["min"] = lo
             if hi is not None:
                 params["max"] = hi
-            p.rules.append({"name": f"{_who(who)} {facility.shift(sym).name}は{label}{rng}", "kind": "count",
+            what = "と".join(facility.shift(x).name for x in syms) + ("は合わせて" if len(syms) > 1 else "は")
+            p.rules.append({"name": f"{_who(who)} {what}{label}{rng}", "kind": "count",
                             "flex": _count_strength(it.get("strength"), text, len(real) == 1), "params": params,
                             "who": who, "when": when})
         elif t == "weekday_pref":
@@ -674,6 +732,11 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             lo, hi = _num(it.get("min")), _num(it.get("max"))
             if lo is None and hi is None:
                 raise Clarify("何人にするか教えてください")
+            if _said_dates(text) and not it.get("weekdays"):
+                # 日付を決めた人数（「28日は早番を5人」）は、まだ扱えない。読み取りの型に日付の欄が無く、毎日の人数として
+                # 入って表を大きく崩した（2026-11-07 の通しの試し）。黙って毎日にせず、その日の人で言ってもらう
+                raise Clarify("日付を決めた人数は、まだ扱えません。その日の人を決める一言で言ってください"
+                              "（例「28日、青木さんは早番」）")
             if facility.shift(sym).spoken and lo and hi is None and "以上" not in text:
                 hi = lo   # 足した勤務は頼まれた分だけ置く。下限だけだと、表を作る時に日勤の代わりに多く置かれる
             if lo is not None and hi is not None and lo > hi:
@@ -695,11 +758,18 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             # 2026-11-06 作者）。ユニットの名前は伏せる前の一言から手元で探す（Claude へ送る指示文は変えない）
             said_units = _said_units(text, facility, it.get("unit"))
             whole = len(facility.units) > 1 and not said_units and _said_whole(text)
+            each_said = len(facility.units) > 1 and bool(re.search(r"どのユニットも|各ユニット|ユニットごと|それぞれのユニット", text))
             shifts = list(base.params["shifts"]) if base is not None else [sym]
-            if said_units:
+            # 曜日の無い毎日の人数だけ、今の表のいつもの数に当てる（「土日は早番を2人に」は変えたい頼みなので当てない）
+            typical = (None if said_units or whole or each_said or it.get("weekdays") else
+                       _typical_scope(lo if lo is not None else hi, shifts, month, staff, list(facility.units)))
+            if said_units or each_said:
                 scope = "each_unit"
-            elif whole:
+            elif whole or typical == "all":
+                whole = True
                 scope = "all"
+            elif typical == "each_unit":
+                scope = "each_unit"
             elif base is not None:
                 scope = base.params.get("scope", "all")
             else:
@@ -728,9 +798,16 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             mx = _num(it.get("max"))
             if not mx:
                 raise Clarify("何日まで続けてよいか教えてください")
-            p.rules.append({"name": f"{_who(who)} 連勤は{mx}日まで", "kind": "max_run",
-                            "flex": _flex(it.get("strength"), "operational"),
-                            "params": {"shifts": "work", "max": mx}, "who": who, "when": None})
+            run = _sym(it["shift"], facility) if it.get("shift") else _said_run_shift(text, facility)
+            if run:
+                nm = facility.shift(run).name
+                p.rules.append({"name": f"{_who(who)} {nm}を2日続けない" if mx == 1 else f"{_who(who)} {nm}は続けて{mx}日まで",
+                                "kind": "max_run", "flex": _count_strength(it.get("strength"), text, len(real) == 1),
+                                "params": {"shifts": [run], "max": mx}, "who": who, "when": None})
+            else:
+                p.rules.append({"name": f"{_who(who)} 連勤は{mx}日まで", "kind": "max_run",
+                                "flex": _count_strength(it.get("strength"), text, len(real) == 1),
+                                "params": {"shifts": "work", "max": mx}, "who": who, "when": None})
         elif t == "cancel":
             # 取り消しは指定を外すだけ。反対の勤務を命じない（13章。T2-03）
             who = _names(it.get("staff"), names)
@@ -772,8 +849,15 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             lv = _leave_sym(facility)
             if lv is None:
                 raise Clarify(NO_LEAVE)
-            p.rules.append({"name": f"{who[0]}さん 有給{n}日（日付は任せる）", "kind": "count", "flex": "wish",
-                            "params": {"shifts": [lv], "min": n}, "who": who, "when": None})
+            if re.search(r"多くても|まで|以内|上限|超えない|超えないで", text):
+                # 「有給は多くても月2日まで」は上限。下限と読むと有給が増えた（2026-11-07 の通しの試し）
+                p.rules.append({"name": f"{who[0]}さん 有給は月{n}日まで", "kind": "count", "flex": "operational",
+                                "params": {"shifts": [lv], "max": n}, "who": who, "when": None})
+            else:
+                # 日数を言った有給は、その日数ちょうど。下限だけだと、表を作る計算が有給を空いた日の埋め草に使い、
+                # 「有給を1日」の人が8日になった（2026-11-07 の通しの試し）
+                p.rules.append({"name": f"{who[0]}さん 有給{n}日（日付は任せる）", "kind": "count", "flex": "wish",
+                                "params": {"shifts": [lv], "min": n, "max": n}, "who": who, "when": None})
         elif t == "staff_info":
             who = _names(it.get("staff"), names) or []
             fm = _num(it.get("from_month"))

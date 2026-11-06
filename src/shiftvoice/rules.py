@@ -246,14 +246,33 @@ def _coverage_units(rules: list[Rule]) -> list[Rule]:
             q = g.params
             if j == i or g.kind != "coverage" or q.get("scope") != "each_unit" or _cov_key(q) != _cov_key(p):
                 continue
-            if q.get("units") and j > i:
-                continue
+            if j > i:
+                continue   # 新しいルールは、古い名指しのルールに譲らない（下で、古い名指しの方が新しい全ユニット向けに譲る）
             hit = set(p["units"]) & set(q.get("units") or p["units"])
             if not hit:
                 continue
             g = copy.copy(g)
             g.meta = {**g.meta, **{f"skip_{side}": sorted(set(g.meta.get(f"skip_{side}", ())) | hit)
                                    for side in _cov_yield(p, q)}}
+            out[j] = g
+    # 後から言った全ユニット向けのルール（「どのユニットも、夜勤は毎日1人まで」）には、前からの名指しのルール（取り込みで
+    # 作った「U1・U3は夜勤2人まで」）が譲る。前は名指しの方が新しさに関わらず勝ち、新しいルールが U2 にしか効かず、
+    # ルールの説明は「超えた日は無い」と出た（2026-11-07 の通しの試し）
+    for i, new in enumerate(rules):
+        p = new.params
+        if new.kind != "coverage" or p.get("scope") != "each_unit" or p.get("units"):
+            continue
+        for j in range(i):
+            g = out[j]
+            q = g.params
+            if g.kind != "coverage" or q.get("scope") != "each_unit" or not q.get("units") or _cov_key(q) != _cov_key(p):
+                continue
+            sides = _cov_yield(p, q)
+            if not sides:
+                continue
+            g = copy.copy(g)
+            g.meta = {**g.meta, **{f"skip_{side}": sorted(set(g.meta.get(f"skip_{side}", ())) | set(q["units"]))
+                                   for side in sides}}
             out[j] = g
     return out
 
