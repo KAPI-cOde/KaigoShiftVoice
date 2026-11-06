@@ -97,7 +97,8 @@ def _params_overlap(k: str, p: dict, q: dict) -> bool:
                 and bool(_syms_of(p.get(side(p))) & _syms_of(q.get(side(q)))))
     if k == "coverage":
         return (bool(_syms_of(p.get("shifts")) & _syms_of(q.get("shifts")))
-                and p.get("scope") == q.get("scope") and sorted(p.get("weekdays") or []) == sorted(q.get("weekdays") or []))
+                and p.get("scope") == q.get("scope") and sorted(p.get("weekdays") or []) == sorted(q.get("weekdays") or [])
+                and sorted(p.get("units") or []) == sorted(q.get("units") or []))   # 東だけの人数と全ユニットの人数は別の所
     return False
 
 
@@ -139,7 +140,7 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
     全員向けが動かせない決まり（公休の数 など）の時は外さない。
     その前に、同じ相手に2本ある帳面の回数のルールは新しい方を残す（_replace_same）。"""
     import copy
-    rules = _coverage_days(_replace_same(rules))
+    rules = _coverage_units(_coverage_days(_replace_same(rules)))
     named: dict[tuple, list[tuple[Rule, str, dict]]] = {}   # 勤務 → [(元のルール, 人, {"min": 値, "max": 値})]
     for r in rules:
         if r.kind == "count" and r.who and not r.when and r.flex in ("operational", "fixed"):
@@ -199,13 +200,42 @@ def _coverage_days(rules: list[Rule]) -> list[Rule]:
                 q = r.params
                 if sorted(q["shifts"] if isinstance(q["shifts"], list) else [q["shifts"]]) != \
                         sorted(p["shifts"] if isinstance(p["shifts"], list) else [p["shifts"]]) \
-                        or q.get("scope") != p.get("scope"):
+                        or q.get("scope") != p.get("scope") \
+                        or sorted(q.get("units") or []) != sorted(p.get("units") or []):
                     continue
                 if q["n"] > p["n"] and q["op"] in ("==", ">=", "<="):
                     offs.append({"weekdays": q["weekdays"], "holidays": bool(q.get("holidays"))})
             if offs:
                 g = copy.copy(g)
                 g.meta = {**g.meta, "hi_off": offs}
+        out.append(g)
+    return out
+
+
+def _cov_key(p: dict) -> tuple:
+    return (tuple(sorted(_syms_of(p.get("shifts")))), tuple(sorted(p.get("weekdays") or [])), bool(p.get("holidays")))
+
+
+def _coverage_units(rules: list[Rule]) -> list[Rule]:
+    """ユニットを名指しした人数のルール（「東の早番は毎日2人」。params の units）があるユニットは、同じ勤務・同じ曜日の
+    全ユニット向けの人数のルール（「早番は各ユニットで1人」）から外す。名指しの方が優先する（人を名指しした回数の
+    ルールと同じ考え。with_overrides）。外したユニットは meta の skip_units に書き、expand が数えない。"""
+    import copy
+    named: dict[tuple, set[str]] = {}
+    for r in rules:
+        p = r.params
+        if r.kind == "coverage" and p.get("scope") == "each_unit" and p.get("units"):
+            named.setdefault(_cov_key(p), set()).update(p["units"])
+    if not named:
+        return rules
+    out = []
+    for g in rules:
+        p = g.params
+        skip = named.get(_cov_key(p)) if g.kind == "coverage" and p.get("scope") == "each_unit" \
+            and not p.get("units") else None
+        if skip:
+            g = copy.copy(g)
+            g.meta = {**g.meta, "skip_units": sorted(skip)}
         out.append(g)
     return out
 
@@ -267,11 +297,16 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
         def unit_on(s, d):  # 応援の日は、その日だけ入るユニットで数える
             return month.support.get(f"{s.name}/{d}", s.unit)
 
+        # ユニットごとの人数は、名指しのユニット（units）があればそこだけ。ユニットごとに違う人数（東は2人・西と南は1人）を
+        # 持つため。名指しのルールがあるユニットは、全ユニット向けのルールから外す（skip_units。_coverage_units）
+        skip = set(rule.meta.get("skip_units", ()))
+        units = [u for u in facility.units if (not p.get("units") or u in p["units"]) and u not in skip]
+
         for d in _days(rule, month):
             if not on_days(p, month, d):
                 continue   # 曜日つきの人数（「土日は日勤を2人」）はその曜日だけ
             hi_off = any(on_days(o, month, d) for o in rule.meta.get("hi_off", ()))
-            groups = ([(u, [s for s in people if unit_on(s, d) == u]) for u in facility.units]
+            groups = ([(u, [s for s in people if unit_on(s, d) == u]) for u in units]
                       if p.get("scope") == "each_unit" else [("全体", people)])
             for gname, members in groups:
                 terms = [Term(s.name, d, syms) for s in members]

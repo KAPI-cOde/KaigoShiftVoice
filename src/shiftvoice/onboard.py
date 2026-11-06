@@ -909,19 +909,32 @@ def infer(pasted: Pasted, year: int, month: int, answers: dict | None = None) ->
     cover = {sym: day_counts([sym]) for sym in ordinary}
     for sym in ordinary:
         counts = cover[sym]
-        lo, hi = min(counts), max(counts)
-        if lo == hi:
-            add(f"{names[sym]}の人数", "coverage", "fixed",
-                {"shifts": [sym], "scope": scope, "op": "==", "n": lo},
-                f"{month}月は毎日、{where}{names[sym]}が{lo}人")
-        else:
-            if lo > 0:
-                add(f"{names[sym]}の人数（下限）", "coverage", "fixed",
-                    {"shifts": [sym], "scope": scope, "op": ">=", "n": lo},
-                    f"{month}月の{names[sym]}は日によって{where}{lo}〜{hi}人。いちばん少ない日の{lo}人を下限にした")
-            add(f"{names[sym]}の人数（上限）", "coverage", "negotiable",
-                {"shifts": [sym], "scope": scope, "op": "<=", "n": hi},
-                f"{month}月の{names[sym]}は日によって{where}{lo}〜{hi}人。いちばん多い日の{hi}人を上限にした")
+        # ユニットごとの幅。ユニットで幅が違う時（東の早番は毎日2人・西と南は1人）は、同じ幅のユニットをまとめて
+        # 1本ずつにする（params の units）。1本にまとめると東の2人が消え、翌月の東は1人の日ばかりになった（2026-11-06）。
+        # どのユニットも同じ幅の時は、今までどおり1本（記載例・見本の施設の数を変えない）
+        spans: dict[tuple[int, int], list[str]] = {}
+        if each:
+            for i, u in enumerate(units):
+                part = counts[i * n:(i + 1) * n]
+                spans.setdefault((min(part), max(part)), []).append(u)
+        if len(spans) <= 1:
+            spans = {(min(counts), max(counts)): []}
+        for (lo, hi), us in spans.items():
+            extra = {"units": us} if us else {}
+            tag = f"（{'・'.join(us)}）" if us else ""
+            at = f"{'・'.join(us)}{'それぞれ' if len(us) > 1 else ''}で" if us else where
+            if lo == hi:
+                add(f"{names[sym]}の人数{tag}", "coverage", "fixed",
+                    {"shifts": [sym], "scope": scope, "op": "==", "n": lo, **extra},
+                    f"{month}月は毎日、{at}{names[sym]}が{lo}人")
+            else:
+                if lo > 0:
+                    add(f"{names[sym]}の人数（{'・'.join(us) + 'の' if us else ''}下限）", "coverage", "fixed",
+                        {"shifts": [sym], "scope": scope, "op": ">=", "n": lo, **extra},
+                        f"{month}月の{names[sym]}は日によって{at}{lo}〜{hi}人。いちばん少ない日の{lo}人を下限にした")
+                add(f"{names[sym]}の人数（{'・'.join(us) + 'の' if us else ''}上限）", "coverage", "negotiable",
+                    {"shifts": [sym], "scope": scope, "op": "<=", "n": hi, **extra},
+                    f"{month}月の{names[sym]}は日によって{at}{lo}〜{hi}人。いちばん多い日の{hi}人を上限にした")
     # ユニットごとに0人の日がある勤務は、施設全体の人数も守る。夜勤を2人でユニットを順に回す表では、ユニットごとの
     # 夜勤は0人の日があるので下限が付かず、翌月は施設全体で夜勤0人の夜ができていた（国の記載例の特養。2026-11-05）
     if each:

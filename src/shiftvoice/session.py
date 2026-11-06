@@ -15,6 +15,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 
 from .build import build_original, clip_to_month, month_rules
+from .daycount import day_counts as _day_counts
 from .intake import WHO_UNKNOWN, Clarify, Proposal, to_proposal
 from .ledger import Ledger
 from .model import Rule
@@ -1288,6 +1289,9 @@ class Session:
             "returned_note": self._returned_note(m),
             "returned_people": self._returned_people(m),
             "dist_at": m.dist_at,
+            # 表の下の、日ごとの勤務の人数の行（ユニットごとと施設全体）。人数のルールに足りない日に印
+            "day_counts": _day_counts(fac, self.store.staff_on(self.year, self.month), m,
+                                      month_rules(self.store, self.year, self.month, with_premise=False)),
             "dist_changed": (sum(a != b for n, row in (m.table or {}).items()
                                  for a, b in zip(row, m.dist_table.get(n, row)))
                              if m.distributed and m.dist_table is not None else None),

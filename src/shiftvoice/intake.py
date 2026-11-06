@@ -135,6 +135,24 @@ def _cell_strength(v, text: str, t: str) -> str:
     return v
 
 
+def _said_units(text: str, facility: Facility, unit=None) -> list[str]:
+    """一言で名指ししたユニット（「東ユニットは」「東は」）。伏せ方（names.Masker）と同じ区切りで探す。
+    読み取りの返事に unit があれば（名前に戻した後の値）それも使う。ユニットが1つの施設は名指ししない。"""
+    if len(facility.units) < 2:
+        return []
+    out = [u for u in facility.units
+           if re.search(re.escape(u) + r"(?=ユニット|フロア|[、。,.\s　のはがにでもとへやを]|$)", text or "")]
+    for v in ([unit] if isinstance(unit, str) else unit if isinstance(unit, list) else []):
+        if v in facility.units and v not in out:
+            out.append(v)
+    return [u for u in facility.units if u in out]
+
+
+def _said_whole(text: str) -> bool:
+    """施設全体の人数と言ったか（「施設全体で」「全体で」「合計」「合わせて」「施設で」）。"""
+    return bool(re.search(r"全体|合計|合わせて|施設で|全ユニットで", text or ""))
+
+
 def _count_strength(v, text: str, single: bool) -> str:
     """回数の強さ。必ず系の言葉があれば fixed（件が1つの時だけ）。本人の希望・できればと言った時は読み取りの値を残す。
     ほかは施設の運用（operational）にそろえる（「今月は夜勤0で」が wish だと全員向けの下限に負ける）。"""
@@ -585,12 +603,20 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             base = next((r for r in rules or [] if r.kind == "coverage" and not r.params.get("weekdays")
                          and sym in (r.params["shifts"] if isinstance(r.params["shifts"], list)
                                      else [r.params["shifts"]])), None)
-            if base is not None:
-                shifts, scope = list(base.params["shifts"]), base.params.get("scope", "all")
-            elif len(facility.units) > 1:
-                raise Clarify("ユニットごとの人数か、施設全体の人数か教えてください")
+            # ユニットを言った（「東ユニットは早番を2人」）時はそのユニットだけ、「施設全体で」「合計」と言った時は施設全体。
+            # 言っていなければ今のルールの数え方、無ければユニットごと（ユニットのある施設はユニットで見るのがふつう。
+            # 2026-11-06 作者）。ユニットの名前は伏せる前の一言から手元で探す（Claude へ送る指示文は変えない）
+            said_units = _said_units(text, facility, it.get("unit"))
+            whole = len(facility.units) > 1 and not said_units and _said_whole(text)
+            shifts = list(base.params["shifts"]) if base is not None else [sym]
+            if said_units:
+                scope = "each_unit"
+            elif whole:
+                scope = "all"
+            elif base is not None:
+                scope = base.params.get("scope", "all")
             else:
-                shifts, scope = [sym], "all"
+                scope = "each_unit" if len(facility.units) > 1 else "all"
             ops = ([("==", lo)] if lo is not None and lo == hi else
                    [(">=", lo)] * (lo is not None) + [("<=", hi)] * (hi is not None))
             jp = ("".join("月火水木金土日"[WEEKDAYS.index(w)] for w in wds) + ("祝" if hol else "")
@@ -598,10 +624,15 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             sname = facility.shift(sym).name
             for op, n in ops:
                 params = {"shifts": shifts, "scope": scope, "op": op, "n": n}
+                if said_units:
+                    params["units"] = said_units
                 if wds:
                     params["weekdays"] = wds
                     params["holidays"] = hol
-                each = "（ユニットごと）" if scope == "each_unit" else ""   # 2ユニットで合計が倍になることを名前で見せる
+                # 2ユニットで合計が倍になることを名前で見せる
+                each = (f"（{'・'.join(said_units)}）" if said_units else
+                        "（ユニットごと）" if scope == "each_unit" else
+                        "（施設全体）" if whole else "")
                 p.rules.append({"name": f"{jp}の{sname}は{n}人" + {"==": "", ">=": "以上", "<=": "まで"}[op] + each,
                                 "kind": "coverage", "flex": _count_strength(it.get("strength"), text, len(real) == 1),
                                 "params": params, "who": None, "when": None})

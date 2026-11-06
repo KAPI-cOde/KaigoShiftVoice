@@ -75,6 +75,11 @@
   .grid tr.standby td.name small { font-size: 10px; margin-left: 4px; }
   .grid tr.standby td.cell { overflow: hidden; white-space: nowrap; }
   .grid .acc { font-size: 10px; margin-left: 4px; font-weight: 700; }
+  /* 表の下の、日ごとの勤務の人数の行。控えめに小さく灰色で、ルールに足りない日だけ太字と下線 */
+  .grid tfoot td { height: 18px; font-size: 10px; color: #666; border-color: #eee; }
+  .grid tfoot td.name { font-size: 11px; }
+  .grid tfoot tr.cfirst td { border-top: 2px solid #000; }
+  .grid tfoot td.short { color: #000; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
   .accrows { margin-top: 8px; font-size: 12px; }
   .accrows .acchead { font-weight: 700; }
   .card .explain { border: 0; }
@@ -459,7 +464,31 @@ function renderTable() {
     tb.appendChild(sr);
   });
   t.appendChild(tb);
+  t.appendChild(countRows());
   wrap.appendChild(t);
+}
+
+// 日ごとの勤務の人数の行（ユニットごとと施設全体）。人数のルールに足りない日は太字と下線
+function countRows() {
+  var tf = el("tfoot");
+  var rows = S.day_counts || [];
+  var prev;
+  rows.forEach(function (r, i) {
+    var tr = el("tr");
+    if (i === 0 || r.unit !== prev) tr.className = "cfirst";
+    prev = r.unit;
+    var who = r.unit ? r.unit : (multiUnit() ? "施設全体" : "");
+    tr.appendChild(el("td", "name", (who ? who + "　" : "") + r.name + "の人数"));
+    for (var d = 1; d <= S.days; d++) {
+      var td = el("td", "", String(r.counts[d - 1]));
+      var wd = S.weekdays[d - 1];
+      if (wd === "sat" || wd === "sun" || S.holidays.indexOf(d) >= 0) td.className = "off";
+      if (r.short.indexOf(d) >= 0) { td.className += " short"; td.title = "ルールの人数に足りません"; }
+      tr.appendChild(td);
+    }
+    tf.appendChild(tr);
+  });
+  return tf;
 }
 
 // 引き受けの記録の行（「小島さん　11/1 待機当番で穴埋め（休みは10日へ）・11/14 …」）。記録がある月はいつも出す

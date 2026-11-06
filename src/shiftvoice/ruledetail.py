@@ -96,8 +96,9 @@ def _coverage(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: M
     syms = _syms(p["shifts"], fac)
     what = _names(fac, syms) + ("（合わせて）" if len(syms) > 1 else "")
     each = p.get("scope") == "each_unit" and len(fac.units) > 1
-    where = ("・".join(fac.units) + "それぞれ" if len(fac.units) <= 3 else "ユニットごとに") if each else \
-        ("施設全体で" if len(fac.units) > 1 else "")
+    us = [u for u in fac.units if not p.get("units") or u in p["units"]]   # ユニットを名指しした人数（東だけ など）
+    where = (("・".join(us) + ("それぞれ" if len(us) > 1 else "で") if len(us) <= 3 else "ユニットごとに") if each else
+             ("施設全体で" if len(fac.units) > 1 else ""))
     n, op = p["n"], p["op"]
     tail = {"==": "人", ">=": "人以上", "<=": "人まで"}[op]
     if p.get("weekdays"):
