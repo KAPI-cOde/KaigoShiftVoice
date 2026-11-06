@@ -774,12 +774,11 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             lo, hi = _num(it.get("min")), _num(it.get("max"))
             if lo is None and hi is None:
                 raise Clarify("何人にするか教えてください")
-            # 日付を決めた人数（「28日は早番を5人」「1日はU2の早番はいなくていい」）は、その日だけの人数のルール（今月だけ）に
-            # する。読み取りの型に日付の欄が無く、前は毎日の人数として入って表を大きく崩した（2026-11-07 の通しの試し）。
-            # その日は、同じ勤務の毎日の人数のルールが譲る（rules._coverage_dates）
-            dated = _days(sorted(set(_said_dates(text))), month) if _said_dates(text) else []
-            if dated:
-                it = {**it, "weekdays": None, "holidays": False}
+            if _said_dates(text):
+                # 日付を決めた人数（「28日は早番を5人」）は、まだ扱えない。読み取りの型に日付の欄が無く、毎日の人数として
+                # 入って表を大きく崩した（2026-11-07 の通しの試し）。黙って毎日にせず、その日の人で言ってもらう
+                raise Clarify("日付を決めた人数は、まだ扱えません。その日の人を決める一言で言ってください"
+                              "（例「28日、青木さんは早番」）")
             if facility.shift(sym).spoken and lo and hi is None and "以上" not in text:
                 hi = lo   # 足した勤務は頼まれた分だけ置く。下限だけだと、表を作る時に日勤の代わりに多く置かれる
             if lo is not None and hi is not None and lo > hi:
@@ -816,8 +815,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                        _typical_scope(n_said, shifts, month, staff, list(facility.units)))
             if said_units or each_said:
                 scope = "each_unit"
-            elif dated or whole or typical == "all":
-                # ユニットを言わない日付の人数（「28日は早番を5人」）は、その日の施設全体の人数
+            elif whole or typical == "all":
                 whole = True
                 scope = "all"
             elif typical == "each_unit":
@@ -829,7 +827,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             ops = ([("==", lo)] if lo is not None and lo == hi else
                    [(">=", lo)] * (lo is not None) + [("<=", hi)] * (hi is not None))
             jp = ("".join("月火水木金土日"[WEEKDAYS.index(w)] for w in wds) + ("祝" if hol else "")
-                  if wds else "・".join(map(str, dated)) + "日" if dated else "毎日")
+                  if wds else "毎日")
             sname = facility.shift(sym).name
             for op, n in ops:
                 params = {"shifts": shifts, "scope": scope, "op": op, "n": n}
@@ -844,7 +842,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                         "（施設全体）" if whole else "")
                 p.rules.append({"name": f"{jp}の{sname}は{n}人" + {"==": "", ">=": "以上", "<=": "まで"}[op] + each,
                                 "kind": "coverage", "flex": _count_strength(it.get("strength"), text, len(real) == 1),
-                                "params": params, "who": None, "when": dated or None})
+                                "params": params, "who": None, "when": None})
         elif t == "consecutive_limit":
             who = _names(it.get("staff"), names)
             mx = _num(it.get("max"))
@@ -1022,8 +1020,6 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         p.scope = "once"   # 取り消しは前の頼みを外すだけ、穴埋めは記録するだけ。聞かない
     elif kind in ("rule", "layer"):
         p.scope = "rule" if p.until else read_period(text)
-        if any(r.get("kind") == "coverage" and r.get("when") for r in p.rules):
-            p.scope = "once"   # 日付を決めた人数は、その月の頼み（毎月か聞かない）
     else:  # 職員の情報は言われた月から。聞かない
         p.scope = "rule"
     if kind == "cells" and "か" in text:
