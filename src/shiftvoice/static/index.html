@@ -223,6 +223,14 @@
   #diffs .sr .df { margin: 0; }
   #diffs .sr .note { font-size: 12px; color: #555; }
   #diffs .hint2 { margin-top: 4px; font-size: 13px; }
+  /* 見本の施設の11月だけ、表の上に出す問題の案内。白地に黒の細い枠。色は表の赤い枠の1色だけ */
+  #guide { display: none; border: 1px solid #000; border-radius: 3px; padding: 6px 10px; margin: 0 0 10px; font-size: 13px; line-height: 1.55; }
+  #guide .g1 { display: flex; gap: 10px; align-items: baseline; }
+  #guide .g1 .gt { flex: 1; min-width: 0; }
+  #guide .g1 button { padding: 1px 10px; font-size: 12px; flex-shrink: 0; }
+  #guide .g1 button.linkish { padding: 0; }
+  #guide b { font-weight: 700; }
+  .grid td.cell.ng { outline: 2px solid #c00; outline-offset: -2px; }
   #banner { display: none; border: 1px solid #000; border-radius: 3px; padding: 8px 12px; margin: 0 0 10px; font-weight: 700; }
   .legendrow { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
   .legendrow .legend { flex: 1; min-width: 0; }
@@ -233,7 +241,7 @@
   @media print {
     @page { size: A4 landscape; margin: 10mm; }
     html, body { font-size: 11px; }
-    #keybar, #topbar, #banner, #diffs, .right, #accrows, #why, .said, .reply, #form, #hint, .exportlinks, .exportnote, footer, #vsetup, #vclean, #vres { display: none !important; }
+    #keybar, #topbar, #guide, #banner, #diffs, .right, #accrows, #why, .said, .reply, #form, #hint, .exportlinks, .exportnote, footer, #vsetup, #vclean, #vres { display: none !important; }
     main { display: block; max-width: none; padding: 0; }
     h2 { font-size: 16px; }
     table.grid { font-size: 10px; }
@@ -263,6 +271,7 @@
   <section class="left">
     <div id="banner"></div>
     <div id="diffs"></div>
+    <div id="guide"></div>
     <h2 id="tabletitle">表</h2>
     <div id="printnote" class="printonly"></div>
     <div id="returnednote" class="small" style="display:none"></div>
@@ -312,6 +321,7 @@ var busy = false;
 var offerR = null;         // 出ている頼む案 {uid, ...}
 var moveOpen = false;      // 休みの電話の案で［休みを移す日を変える］の候補を開いているか
 var glowTimer = null;
+var guideOn = false;       // 案内の［表で見る］で、問題の並びのマスに赤い枠を付けているか
 var WD = { sun: "日", mon: "月", tue: "火", wed: "水", thu: "木", fri: "金", sat: "土" };
 
 function el(tag, cls, text) {
@@ -467,6 +477,8 @@ function renderTable() {
     var c = S.cards.filter(function (x) { return x.id === selected; })[0];
     if (c) cardGlow = ruleCells(c);
   }
+  var ngCells = {};   // 案内の［表で見る］の赤い枠。今の表から数えたマスだけなので、直ると消える
+  if (guideOn && S.guide) S.guide.problems.forEach(function (p) { p.cells.forEach(function (c) { ngCells[c[0] + "|" + c[1]] = true; }); });
   var t = el("table", "grid");
   var thead = el("thead");
   var ordered = [];
@@ -531,6 +543,7 @@ function renderTable() {
       td.className += toneCls(td.textContent);   // 光る間に見せる前の記号も、その記号の色で
       if (glowCells[key] || cardGlow[key]) td.className += " glow";
       if (whyKey === key) td.className += " picked";
+      if (ngCells[key]) td.className += " ng";
       if (supCell[key]) {
         var sp = el("span", "sup", supCell[key].replace("ユニット", "").slice(0, 2));
         sp.title = "この日は" + supCell[key] + "で働きます";
@@ -1246,6 +1259,60 @@ function renderHint() {
   el.style.display = saidList.length ? "none" : "block";  // 初めの一言までだけ出す
 }
 
+// ---- 見本の施設の11月の表の上に出す、問題の案内（介護員でない人に、何が問題で、なぜ問題で、何を話せばよいかを先に言う）
+var GUIDE_KEY = "sv_guide_closed";
+function guideClosed() { try { return localStorage.getItem(GUIDE_KEY) === "1"; } catch (e) { return false; } }
+function hhmm(t) { var h = Math.floor(t / 60), mi = t % 60; return h + "時" + (mi ? mi + "分" : ""); }
+function renderGuide() {
+  var box = document.getElementById("guide");
+  box.textContent = "";
+  var g = S && S.guide;
+  if (!g || !g.problems.length || guideClosed()) { box.style.display = "none"; guideOn = false; return; }
+  box.style.display = "block";
+  var p = g.problems[0];
+  var late = (S.symbols || []).filter(function (x) { return x.name === "遅番"; })[0];
+  var early = (S.symbols || []).filter(function (x) { return x.name === "早番"; })[0];
+  var why = "";
+  if (late && early && late.start && early.start) {
+    var a = late.start.split(":"), b = early.start.split(":");
+    var end = (parseInt(a[0], 10) * 60 + parseInt(a[1], 10) + Number(late.hours) * 60) % 1440;
+    var st = parseInt(b[0], 10) * 60 + parseInt(b[1], 10);
+    var gap = (1440 - end + st) / 60;
+    why = hhmm(end) + "に終わり翌朝" + hhmm(st) + "に始まるので、家にいられるのは" + (Math.round(gap * 10) / 10) + "時間です。";
+  }
+  var r1 = el("div", "g1");
+  var t1 = el("span", "gt");
+  if (p.now > 0) {
+    t1.appendChild(document.createTextNode("遅番の次の日に早番が"));
+    t1.appendChild(el("b", "", p.now + "か所"));
+    t1.appendChild(document.createTextNode("あります。" + why));
+  } else {
+    t1.appendChild(document.createTextNode("遅番の次の日に早番は"));
+    t1.appendChild(el("b", "", p.before + "か所 → " + p.now + "か所"));
+    t1.appendChild(document.createTextNode("になりました。毎日の人数や休みの数は守ったまま、ほかのマスを動かして直しています。"));
+  }
+  r1.appendChild(t1);
+  if (p.now > 0) {
+    var see = el("button", "", guideOn ? "枠を消す" : "表で見る");
+    see.type = "button";
+    see.addEventListener("click", function () { guideOn = !guideOn; renderGuide(); renderTable(); });
+    r1.appendChild(see);
+  }
+  var x = el("button", "linkish", "閉じる");
+  x.type = "button";
+  x.addEventListener("click", function () {
+    try { localStorage.setItem(GUIDE_KEY, "1"); } catch (e) { /* 残せない時は、この画面の間だけ閉じる */ }
+    guideOn = false; box.style.display = "none"; renderTable();
+  });
+  r1.appendChild(x);
+  box.appendChild(r1);
+  var t2 = p.now > 0
+    ? "直すには、下の欄に「" + p.say + "」と打つか話してください。ほかの頼みも、ふだんの言葉で話してかまいません。"
+    : "ほかの頼みも、ふだんの言葉で話してかまいません（［ひとつ戻す］で前の表に戻せます）。";
+  box.appendChild(el("div", "", t2));
+}
+// end renderGuide
+
 function renderAll() {
   renderHint();
   renderKey();
@@ -1253,6 +1320,7 @@ function renderAll() {
   renderLegend();
   renderAccRows();
   renderTopbar();
+  renderGuide();
   renderTable();
   renderCards();
   renderSaid();

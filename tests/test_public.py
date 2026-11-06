@@ -446,3 +446,16 @@ def test_公開版でも話して勤務を足せて_見張りを通り_ひとつ
         assert code == 200, res
     _, st, _ = req(base, "/api/state", cookie=a)
     assert ["日8", "日8"] not in st["shift_names"] and st["table"]["小島"][9] != "日8"
+
+
+def test_公開版でも見本の表の案内が出て_案内の一言は見張りを通って直る(make_server):
+    base, app, calls = make_server()
+    a, st = new_user(base)
+    p = st["guide"]["problems"][0]
+    assert p["before"] == p["now"] == 11 and len(p["cells"]) == 21
+    code, res, _ = req(base, "/api/say", "POST", {"text": p["say"]}, cookie=a)
+    assert code == 200 and calls() == 1 and res["reply"]["kind"] == "ask_period", res
+    code, res, _ = req(base, "/api/answer", "POST", {"uid": res["reply"]["uid"], "text": "rule"}, cookie=a)
+    assert code == 200 and res["reply"]["kind"] == "applied", res
+    p = res["state"]["guide"]["problems"][0]
+    assert p["before"] == 11 and p["now"] == 0 and p["cells"] == []

@@ -1546,6 +1546,7 @@ class Session:
         rules = led.rules_at(between=self._span())
         fac, staff = self.store.facility(), self.store.staff()
         from .nextmonth import next_ym
+        from .guide import guide as guide_of
         pasted = fac.settings.get("pasted_month")
         return {
             # 貼った月の次の月を開いていて、まだ配っていない時だけ、希望休を入れて作り直せる
@@ -1581,6 +1582,8 @@ class Session:
             "day_counts": _day_counts(fac, self.store.staff_on(self.year, self.month), m,
                                       month_rules(self.store, self.year, self.month, with_premise=False)),
             "dist_changed": self._dist_changed(m),
+            # 見本の施設の11月だけ、表の上に出す問題の案内（数と枠のマスは今の表から数える）
+            "guide": guide_of(fac, m),
         }
 
     @staticmethod
