@@ -238,6 +238,35 @@ def table_tsv(st: dict, paste_symbols: dict | None = None, layout: dict | None =
     pos = (cols + [cols[-1] + i for i in range(1, days)])[:days]   # 日ごとの列。貼った表より長い月は右へ続ける
     name_col, unit_col = lay.get("name_col", 0), lay.get("unit_col")
     lefts = lay.get("lefts") or {}
+    # 日より左の、前の月の日の列（tail）。貼った月の次の月からは、前の月の末の値・日付・曜日に入れ替える。貼った月は
+    # 前の月の末を持たないので（prev_tail が空）、貼った時のまま出す
+    tail = [j for j in (lay.get("tail") or []) if j < cols[0]]
+    prev = st.get("prev_tail") or {}
+    if tail and prev and st.get("year") and st.get("month"):
+        import calendar
+        import datetime as _dt
+        py, pm = (st["year"] - 1, 12) if st["month"] == 1 else (st["year"], st["month"] - 1)
+        last = calendar.monthrange(py, pm)[1]
+        pdays = [last - len(tail) + 1 + i for i in range(len(tail))]
+        jw = "月火水木金土日"
+
+        def fix(left: list[str], kind: str, name: str | None = None) -> list[str]:
+            out = list(left) + [""] * (cols[0] - len(left))
+            for i, (j, d) in enumerate(zip(tail, pdays)):
+                if kind == "date":
+                    out[j] = f"{pm}/{d}" if i == 0 else str(d)
+                elif kind == "wk":
+                    out[j] = jw[_dt.date(py, pm, d).weekday()]
+                elif kind == "person":
+                    vals = (prev.get(name) or [])[-len(tail):]
+                    vals = [""] * (len(tail) - len(vals)) + list(vals)
+                    out[j] = back.get(vals[i], vals[i])
+                else:
+                    out[j] = ""
+            return out
+    else:
+        def fix(left: list[str], kind: str, name: str | None = None) -> list[str]:
+            return left
 
     def line(left: list[str], vals: list[str]) -> list[str]:
         out = list(left) + [""] * (pos[-1] + 1 - len(left))
@@ -252,14 +281,14 @@ def table_tsv(st: dict, paste_symbols: dict | None = None, layout: dict | None =
             out[unit_col] = unit
         return out
 
-    wk = line([""] * cols[0], [WEEKDAY_JA.get(w, "") for w in st["weekdays"]])
-    dates = line(lay.get("head") or [""] * cols[0], [str(d) for d in range(1, days + 1)])
+    wk = line(fix([""] * cols[0], "wk"), [WEEKDAY_JA.get(w, "") for w in st["weekdays"]])
+    dates = line(fix(list(lay.get("head") or [""] * cols[0]), "date"), [str(d) for d in range(1, days + 1)])
     where = lay.get("weekday", "above")
     rows = [wk, dates] if where == "above" else [dates, wk] if where == "below" else [dates]
 
     def person(s: dict) -> list[str]:
         row = st["table"].get(s["name"]) or []
-        return line(lefts.get(s["name"]) or label(s["name"], s["unit"]),
+        return line(fix(lefts.get(s["name"]) or label(s["name"], s["unit"]), "person", s["name"]),
                     [back.get(row[d], row[d]) if d < len(row) else "" for d in range(days)])
 
     def arrows_of(unit: str) -> list[str]:
@@ -277,13 +306,13 @@ def table_tsv(st: dict, paste_symbols: dict | None = None, layout: dict | None =
         for e in lay["plan"]:
             rows += [[] for _ in range(e["at"] - len(rows))]
             if e["k"] == "wk":
-                rows.append(line(e["left"], [WEEKDAY_JA.get(w, "") for w in st["weekdays"]]))
+                rows.append(line(fix(e["left"], "wk"), [WEEKDAY_JA.get(w, "") for w in st["weekdays"]]))
             elif e["k"] == "date":
-                rows.append(line(e["left"], [str(d) for d in range(1, days + 1)]))
+                rows.append(line(fix(e["left"], "date"), [str(d) for d in range(1, days + 1)]))
             elif e["k"] == "unit":
-                rows.append(line(e["left"], arrows_of(e["unit"])))
+                rows.append(line(fix(e["left"], "other"), arrows_of(e["unit"])))
             elif e["k"] == "other":
-                rows.append(line(e["left"], [""] * days))
+                rows.append(line(fix(e["left"], "other"), [""] * days))
             elif e["name"] in by_name:
                 rows.append(person(by_name[e["name"]]))
                 seen.add(e["name"])

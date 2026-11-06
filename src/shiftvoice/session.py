@@ -1553,6 +1553,7 @@ class Session:
             "redo_wishes": bool(pasted and next_ym(*pasted) == (self.year, self.month) and not m.distributed),
             "year": self.year, "month": self.month, "days": m.days, "holidays": m.holidays,
             "weekdays": [m.weekday(d) for d in range(1, m.days + 1)],
+            "prev_tail": m.prev_tail,   # 前の月の末（持ち出す表の、日より左の前の月の日の列に入れる。server.table_tsv）
             "staff": [{"name": s.name, "unit": s.unit, "changes": s.changes} for s in staff],
             "shift_names": [[st.symbol, st.name] for st in fac.shift_types],
             "table": m.table,

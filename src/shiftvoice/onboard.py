@@ -463,7 +463,10 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
                 top_row = None
         if not has_kind:
             above = start >= 2 and (_is_weekday_row(rows[start - 2][1]) or weekdays_only(rows[start - 2][1]))
-            layout = {"cols": cols, "name_col": nc, "unit_col": uc, "head": hcells[:cols[0]], "lefts": lefts,
+            # 日付の行で、名前より右・最初の日より左にある日の列（前の月の末の5日を並べる Excel）。持ち出す時に、その月の
+            # 前の月の末の値に入れ替える（入れ替えないと、10月の表に貼った月の左の8/27〜31の値が出た。2026-11-07 の通しの試し）
+            tail = [j for j in range(cols[0]) if j not in (nc, uc) and _cell_text(hcells[j]) and _DAY.match(_cell_text(hcells[j]))]
+            layout = {"cols": cols, "name_col": nc, "unit_col": uc, "head": hcells[:cols[0]], "lefts": lefts, "tail": tail,
                       "unit_rows": any(m["k"] == "unit" for m in marks) or top_row is not None,
                       "weekday": ("above" if above
                                   else "below" if body and _is_weekday_row(body[0][1]) else None)}

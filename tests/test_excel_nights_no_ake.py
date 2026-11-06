@@ -119,3 +119,26 @@ def test_月間予定の行と括弧つきの見出しと所属を添えた人()
     p = parse_paste("\n".join([head] + rows) + "\n")
     assert list(p.table) == ["石田", "上野", "青木2階", "江口"]   # 名前の空白は詰め、括弧は半角にそろえて読む（前から）
     assert p.unit_list == ["2階(介護)"] and p.unit_of["青木2階"] == "2階(介護)"
+
+
+def test_持ち出す表の前の月の日の列は_その月の前の月の末(tmp_path):
+    """貼った Excel の日付の行の左にある前の月の末の5日（10/27〜31）を、12月の表を持ち出す時にもそのまま出していた。
+    12月は 11/26〜30 の日付・曜日・値にする。貼った11月は貼った時のまま（2026-11-07 の通しの試し）"""
+    from shiftvoice.reader import RecordedReader
+    from shiftvoice.server import table_tsv
+    from shiftvoice.session import Session
+    create_facility(infer(parse_paste(PASTE), 2026, 11, {}), tmp_path / "f", name="試験", next_year=2026, next_month=12)
+    st = Store(tmp_path / "f")
+    fac = st.facility()
+    out = {}
+    for mo in (11, 12):
+        s = Session(st, 2026, mo, RecordedReader({}))
+        s.open()
+        out[mo] = [ln.split("\t") for ln in
+                   table_tsv(s.state(), fac.settings.get("paste_symbols"), fac.settings.get("paste_layout")).splitlines()]
+    nov, dec = out[11], out[12]
+    assert nov[0][:6] == ["日付", "10/27", "28", "29", "30", "31"] and nov[1][:6] == ["曜日", "火", "水", "木", "金", "土"]
+    assert dec[0][:7] == ["日付", "11/26", "27", "28", "29", "30", "1"] and dec[1][:6] == ["曜日", "木", "金", "土", "日", "月"]
+    row = next(r for r in dec if r[0] == "青木")
+    assert row[1:6] == st.month(2026, 12).prev_tail["青木"][-5:] and row[1:6] == st.month(2026, 11).table["青木"][-5:]
+    assert next(r for r in nov if r[0] == "青木")[1:6] == parse_paste(PASTE).layout["lefts"]["青木"][1:6]
