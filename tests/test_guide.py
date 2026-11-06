@@ -32,7 +32,7 @@ def test_guide_counts_the_real_pairs_and_marks_cells(sess):
     assert ("岡田", 1) in cells
     assert p["say"] == SAY
     # なぜきついかの文。遅番は13時15分から9時間で22時15分に終わり、早番は6時45分から（動画のせりふと同じ）
-    assert p["why"] == "22時15分に終わり翌朝6時45分に始まるので、家にいられるのは8時間半です。"
+    assert p["why"] == "22時15分に終わり翌朝6時45分に始まるので、家にいられるのは長くても8時間半です。"
 
 
 def test_why_says_times_and_hours_in_plain_words(sess):
@@ -43,7 +43,7 @@ def test_why_says_times_and_hours_in_plain_words(sess):
     early = dataclasses.replace(fac.shift("早"), start="07:00")
     old = dataclasses.replace(fac, shift_types=[late if s.symbol == "遅" else early if s.symbol == "早" else s
                                                 for s in fac.shift_types])
-    assert why(old) == "20時に終わり翌朝7時に始まるので、家にいられるのは11時間です。"
+    assert why(old) == "20時に終わり翌朝7時に始まるので、家にいられるのは長くても11時間です。"
     for t in (why(fac), why(old)):
         assert not any(x in t for x in ("：", ":", "札", "道具", "体に悪", ".")), t
 

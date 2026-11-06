@@ -47,13 +47,13 @@ def span(minutes: int) -> str:
 
 
 def why(facility, late: str = "遅", early: str = "早") -> str:
-    """「22時15分に終わり翌朝6時45分に始まるので、家にいられるのは8時間半です。」時刻の無い時は空。"""
+    """「22時15分に終わり翌朝6時45分に始まるので、家にいられるのは長くても8時間半です。」時刻の無い時は空。"""
     sl, se = facility.shift(late), facility.shift(early)
     if not (sl.start and sl.hours and se.start):
         return ""
     end = (int(sl.start[:2]) * 60 + int(sl.start[3:]) + round(sl.hours * 60)) % 1440
     st = int(se.start[:2]) * 60 + int(se.start[3:])
-    return f"{clock(end)}に終わり翌朝{clock(st)}に始まるので、家にいられるのは{span(1440 - end + st)}です。"
+    return f"{clock(end)}に終わり翌朝{clock(st)}に始まるので、家にいられるのは長くても{span(1440 - end + st)}です。"
 
 
 def _seed_month() -> dict:
