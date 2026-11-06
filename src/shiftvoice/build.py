@@ -64,6 +64,40 @@ def broken_text(broken: list[dict], names: set[str], limit: int = 6) -> str:
     return "外れたのは、" + "、".join(parts) if parts else ""
 
 
+CONSULT_LIMIT = 6
+
+
+def day_off_consult(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month,
+                    res: SolveResult) -> tuple[str, list[dict]]:
+    """段を下げて作った表で外れた希望休を、人と日と、入れると守れなくなるルールで言い、本人と相談するよう言う
+    （作者 2026-11-07「希望休は原則ハードルール。どうしても組めない時のみ相談する」）。ルールは、作った表のそのマスを
+    希望休にした時に新しく破れるルール（配慮の強さは除く。多くて2件）。返すのは（一文, 外れた希望休の一覧）。"""
+    from .rules import check_table, is_day_off_wish
+    by_id = {r.id: r for r in rules}
+    off = [b for b in res.broken if b["rule"] in by_id and is_day_off_wish(by_id[b["rule"]], facility)]
+    if not off or not res.table:
+        return "", off
+    before = {(b["rule"], b["key"]) for b in res.broken}
+    parts = []
+    for b in off[:CONSULT_LIMIT]:
+        r = by_id[b["rule"]]
+        who, d = b["key"].rsplit("/", 1)
+        d = int(d)
+        if r.meta.get("derived") == "rest_not_ake":
+            parts.append(f"{who}さんの{d + 1}日（前の日が夜勤で、明けになります）")
+            continue
+        t = {k: list(v) for k, v in res.table.items()}
+        t[who][d - 1] = r.params["in"][0]
+        new = [x for x in check_table(rules, facility, staff, month, t)
+               if (x["rule"], x["key"]) not in before and x["flex"] != "negotiable" and x["rule"] != r.id]
+        names = list(dict.fromkeys(x["name"] for x in new))[:2]
+        parts.append(f"{who}さんの{d}日" + (f"（入れると{'・'.join('「' + n + '」' for n in names)}が守れません）"
+                                           if names else ""))
+    if len(off) > CONSULT_LIMIT:
+        parts.append(f"ほか{len(off) - CONSULT_LIMIT}日")
+    return "守れなかった希望休は、" + "、".join(parts) + "です。本人と相談してください", off
+
+
 def impossible_wishes(facility: Facility, rules: list[Rule], month: Month) -> tuple[list[Rule], list[str]]:
     """前の月の末の夜勤の明けと重なる1日の希望休と、動かせないマスと重なる希望休は、どう組んでも叶わない。残すと表全体が
     作れないと分かって段を下げ、関係のない人の希望休まで外れた（2026-11-06 通しの試し。1人の1日で10件外れた）。その日だけ外す。"""
@@ -180,8 +214,12 @@ def _solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], mon
     for st in order:
         r = run(st)
         if r.status == "ok":
-            detail = broken_text(r.broken, {s.name for s in staff})
-            return StagedResult(r, stages, note=STAGE_NOTE[st] + ("。" + detail if detail else ""))
+            # 外れた希望休は、ほかの外れと分けて、人と日とぶつかったルールで言い、本人との相談をすすめる
+            consult, off = day_off_consult(facility, staff, rules, month, r)
+            offkeys = {(b["rule"], b["key"]) for b in off}
+            detail = broken_text([b for b in r.broken if (b["rule"], b["key"]) not in offkeys], {s.name for s in staff})
+            return StagedResult(r, stages, note=STAGE_NOTE[st] + ("。" + detail if detail else "")
+                                + ("。" + consult if consult else ""))
         timed_out = timed_out or r.status == "timeout"
     return StagedResult(r, stages, message=TIMEOUT_MESSAGE if timed_out else C3_MESSAGE)
 

@@ -17,9 +17,13 @@ from ortools.sat.python import cp_model
 
 from .interval import short_pairs
 from .model import Facility, Month, Rule, Staff
-from .rules import Instance, _syms_of, cell_value, check_table, expand, with_overrides
+from .rules import Instance, _syms_of, cell_value, check_table, expand, is_day_off_wish, with_overrides
 
 DEFAULT_WEIGHTS = {"wish": 100000, "operational": 20000, "negotiable": 5000}
+# 希望休（rules.is_day_off_wish）の重み。本人の希望を外す段（段2・段4）でも、ほかの本人の希望（曜日の勤務の希望など）と
+# 運用の都合より後に外す（作者 2026-11-07「希望休は原則ハードルール。どうしても組めない時のみ相談する」）。前は本人の希望と
+# 同じ重みで、曜日の希望を残して希望休を外すことがあった
+DAY_OFF_WISH_WEIGHT = 1000000
 HOLD_CELLS = 10   # 外れている回数を悪くしないために動かしてよいマスの目安（hold）
 
 
@@ -220,6 +224,8 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                 if inst.hi is not None:
                     m.add(e <= inst.hi).only_enforce_if(b)
                 w = r.weight or (weights[r.flex] if not r.light else facility.settings.get("light_weight", 100))
+                if is_day_off_wish(r, facility):
+                    w = max(w, weights.get("day_off_wish", DAY_OFF_WISH_WEIGHT))
                 penalties.append(w * (1 - b))
                 switches.append((inst, b))
                 if r.kind == "count" and r.flex == "operational":

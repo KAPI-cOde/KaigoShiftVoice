@@ -631,6 +631,18 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
     return out
 
 
+def is_day_off_wish(rule: Rule, facility: Facility) -> bool:
+    """希望休か（本人が日付を決めて頼んだ休み。本人の希望の強さで、人と日が決まり、置ける記号が休み・休暇だけのマスの頼み）。
+    明けを「公」と書く施設で希望休の前の日を夜勤にしない頼み（build.impossible_wishes が足す）も、希望休に数える。"""
+    if rule.kind != "cell" or rule.flex != "wish" or not rule.who or not rule.when:
+        return False
+    if rule.meta.get("derived") == "rest_not_ake":
+        return True
+    rest = {t.symbol for t in facility.shift_types if t.kind in ("rest", "leave")}
+    want = set(rule.params.get("in") or [])
+    return bool(want) and want <= rest
+
+
 def cell_value(table: dict[str, list[str]], month: Month, staff: str, day: int) -> str | None:
     if day >= 1:
         return table[staff][day - 1]
