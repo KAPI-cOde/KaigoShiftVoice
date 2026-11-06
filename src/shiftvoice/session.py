@@ -24,6 +24,7 @@ from .model import Rule
 from .names import Masker
 from .period import other_month, other_month_message, read_answer, relative_days
 from .reader import LimitError, ReadError
+from .redo import as_redo, bare_redo, fill_answer
 from .giveback import accepted_counts
 from .model import Acceptance
 from .resolve import changed_cells, resolve
@@ -270,6 +271,7 @@ class Session:
         self.base_date = base_date  # 引き受けを数える基準日（デモ設定。None は今日）
         self._sent: dict[str, str | None] = {}  # 一言ごとに Claude へ送った文（伏せた後）
         self._ask_times: str | None = None      # 足す勤務の時刻を聞き返している時、その名前（次の一言だけ、時刻を答えと読む）
+        self._ask_more: dict | None = None      # 聞き返した頼みと足りない物（次の一言だけ、答えと読んで前の頼みにつなぐ）
 
     # 開く
     @property
@@ -349,6 +351,7 @@ class Session:
 
     def _read(self, u: dict) -> Reply:
         waiting, self._ask_times = self._ask_times, None
+        more, self._ask_more = self._ask_more, None
         fac, staff = self.store.facility(), self.store.staff()
         masker = Masker(staff, fac)
         masked, unknown = masker.mask(u["text"])
@@ -388,9 +391,18 @@ class Session:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], f"「{word}」は{d.month}月{d.day}日で、いま開いている{self.month}月の表の外です。"
                                          f"{d.month}月の表で言ってください。表もルールも変えていません")
-        local = only_shift_items(masked, fac) or support_items(masked, fac) or add_shift_items(masked, fac, waiting)
+        filled = fill_answer(more, masked, fac) if more else None
+        if filled is not None:   # 聞き返しへの答え。前の頼みの言葉も見るので、続けた文を一言にする。Claude へは送らない
+            self._sent[u["id"]] = None
+            text = f"{more['text']}。{u['text']}"
+            self.store.update_pending(self.year, self.month, u["id"], text=text, sent_text=None, items=filled, status="read")
+            return self._safe_propose({**u, "text": text, "items": filled})
+        local = only_shift_items(masked, fac) or support_items(masked, fac) or add_shift_items(masked, fac, waiting) \
+            or bare_redo(masked, self.store.ledger().rules_at(between=self._span()))
         if local is not None:   # 手元で読めた（日勤だけ・ユニット間の応援・勤務の種類を足す など）。Claude へは送らない
             self._ask_times = local[0].get("ask_times")
+            if local[0].get("ask_more"):
+                self._ask_more = {**local[0]["ask_more"], "text": u["text"]}
             self._sent[u["id"]] = None
             items = masker.unmask(local)
             self.store.update_pending(self.year, self.month, u["id"], sent_text=None, items=items, status="read")
@@ -469,11 +481,14 @@ class Session:
     def _propose(self, u: dict) -> Reply:
         fac, staff = self.store.facility(), self.store.staff()
         m = self.store.month(self.year, self.month)
+        spoken = self.store.ledger().rules_at(between=self._span())
+        items = u["items"] if m.distributed else as_redo(u["items"], spoken)
         try:
-            p = to_proposal(u["items"], u["text"], fac, staff, m, leave_caps=self._leave_caps(),
-                            rules=list(self.store.ledger().rules_at(between=self._span()).values()))
+            p = to_proposal(items, u["text"], fac, staff, m, leave_caps=self._leave_caps(), rules=list(spoken.values()))
         except Clarify as e:
             self.store.resolve_pending(self.year, self.month, u["id"])
+            if e.need:
+                self._ask_more = {"need": e.need, "text": u["text"], "items": u["items"]}
             return Reply("ask", u["id"], str(e))
         if p.kind == "cancel":
             return self._cancel(u, p)

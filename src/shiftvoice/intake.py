@@ -34,13 +34,18 @@ class Proposal:
     reason: str | None = None
     summary: str = ""
     replace_from: list[str] | None = None   # 言い直し（「AさんじゃなくてBさん」）で、前の頼みを外すかもしれない人
+    replace_days: list[int] | None = None   # 同じ人の言い直し（「20日じゃなくて21日」）で、前の頼みを外す日
     covers: list[dict] = field(default_factory=list)   # 穴埋めの記録の候補 {staff, day（言っていなければ None）, how}
     support: dict[str, str] = field(default_factory=dict)   # ユニット間の応援 "名前/日" → その日に働くユニット
     shift_type: dict | None = None     # 話して足す勤務の種類（facility.json の1件の形）
 
 
 class Clarify(Exception):
-    """聞き返す（表も帳面も変えない）。"""
+    """聞き返す（表も帳面も変えない）。need は答えを前の頼みにつなぐ時の、足りない物（redo.fill_answer）。"""
+
+    def __init__(self, message: str = "", need: str | None = None):
+        super().__init__(message)
+        self.need = need
 
 
 # 名前の無い一言（「私、13日の日勤、有給に」）に、Claude が人の欄へ入れることがある埋め草（2026-11-05、本物の Haiku で
@@ -69,9 +74,9 @@ def _days(v, month: Month) -> list[int]:
     try:
         ds = [int(d) for d in (v if isinstance(v, list) else [v])]
     except (TypeError, ValueError):
-        raise Clarify("日付が読めませんでした。何日か教えてください")
+        raise Clarify("日付が読めませんでした。何日か教えてください", need="days")
     if not ds or any(d < 1 or d > month.days for d in ds):
-        raise Clarify(f"{month.month}月にない日付です。何日か教えてください")
+        raise Clarify(f"{month.month}月にない日付です。何日か教えてください", need="days")
     return ds
 
 
@@ -82,7 +87,9 @@ def _sym(v, facility: Facility) -> str:
     if v not in facility.symbols:
         if v in ("有", "有給") and _leave_sym(facility) is None:
             raise Clarify(NO_LEAVE)   # 取り込んで作った施設には、有給の記号が無いことがある
-        raise Clarify(f"勤務が読めませんでした（{v}）")
+        # None は読み取りが勤務を書かなかった時。機械の文字を画面に出さない（2026-11-06 AI のテストプレイ）
+        said = f"（{v}）" if v and isinstance(v, str) else ""
+        raise Clarify(f"勤務が読めませんでした{said}。どの勤務にするか教えてください。表もルールも変えていません", need="shift")
     return v
 
 
@@ -738,7 +745,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             if n is None:
                 cap = (leave_caps or {}).get(who[0])
                 if cap is None:
-                    raise Clarify(f"{who[0]}さんの有給は何日ですか")
+                    raise Clarify(f"{who[0]}さんの有給は何日ですか", need="leave_count")
                 if cap == 0:
                     raise Clarify(f"{who[0]}さんの有給の上限は0日になっています。何日にするか教えてください")
                 n = cap
@@ -848,6 +855,9 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         if any(w in text for w in REPHRASE_WORDS) and len(others) == 1 and len(p.rules) == 1 \
                 and len(p.rules[0].get("who") or []) == 1:
             p.replace_from = others
+        redo = next((it["redo_from"] for it in real if it.get("redo_from")), None)
+        if redo and len(p.rules) == 1 and len(p.rules[0].get("who") or []) == 1:
+            p.replace_from, p.replace_days = list(p.rules[0]["who"]), list(redo)
     elif kind in ("cancel", "cover"):
         p.scope = "once"   # 取り消しは前の頼みを外すだけ、穴埋めは記録するだけ。聞かない
     elif kind in ("rule", "layer"):

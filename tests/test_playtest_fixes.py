@@ -126,3 +126,54 @@ def test_numbers_are_not_the_added_shift(sess, said):
 def test_nothing_changes_without_an_added_shift(sess):
     from shiftvoice.addshift import fix_spoken
     assert fix_spoken("10日の小島さん、日八に", sess.store.facility()) == "10日の小島さん、日八に"
+
+
+# 4 聞き返しに答えて話をつなぐ ---------------------------------------------------------
+
+LEAVE = "篠原さん、今月有給ほしいそうです"
+LEAVE_M = "職員13さん、今月有給ほしいそうです"
+LEAVE_ITEM = [{"type": "leave_count", "staff": "職員13", "count": None, "reason": None}]
+
+
+@pytest.mark.parametrize("answer,n", [("2日分です", 2), ("2日分です。日はいつでもいいです", 2), ("2日", 2), ("２日分", 2),
+                                      ("二日分、日はいつでもいいそうです", 2), ("有給は1日だけ", 1)])
+def test_leave_days_answer_joins_the_request(sess, answer, n):
+    sess.reader = Fake({LEAVE_M: LEAVE_ITEM})
+    r = sess.say(LEAVE)
+    assert r.kind == "ask" and r.message == "篠原さんの有給は何日ですか"
+    r = sess.say(answer)
+    assert r.kind == "applied" and r.sent is None, r.message      # 「今月」は前の一言で言っているので聞かない
+    assert r.summary.startswith(f"篠原さん 有給{n}日")
+    assert sum(1 for x in sess.store.month(2026, 11).table["篠原"] if x == "有") >= n
+    assert len(sess.reader.sent) == 1                             # 答えは Claude へ送らない
+    assert answer in next(c for c in sess.state()["cards"] if c["id"] in r.rule_ids)["meta"]["said"]
+
+
+def test_leave_dates_answer_sets_those_days(sess):
+    sess.reader = Fake({LEAVE_M: LEAVE_ITEM})
+    sess.say(LEAVE)
+    r = sess.say("20日と21日")
+    t = sess.store.month(2026, 11).table["篠原"]
+    assert r.kind == "applied" and t[19] == "有" and t[20] == "有", r.message
+
+
+def test_other_request_after_the_question_is_read_as_itself(sess):
+    sess.reader = Fake({LEAVE_M: LEAVE_ITEM, "職員07さん、15日は休み": [{"type": "day_off", "staff": "職員07", "days": [15]}]})
+    sess.say(LEAVE)
+    r = sess.say("岡田さん、15日は休み")
+    assert r.summary == "岡田さん 15日 休み"
+    r = sess.say("2日分です")      # 聞き返しは1回の一言だけ。前の問いに戻らない
+    assert r.kind != "applied"
+
+
+def test_missing_day_answer_joins_the_request(sess):
+    sess.reader = Fake({"職員07さんを休みにして": [{"type": "day_off", "staff": "職員07", "days": None}]})
+    assert "何日か" in sess.say("岡田さんを休みにして").message
+    r = sess.say("15日です")
+    assert r.kind == "applied" and sess.store.month(2026, 11).table["岡田"][14] in ("公", "有")
+
+
+def test_shift_name_answer_adds_the_shift(sess):
+    sess.say("8時から17時の勤務を新しく作って")
+    r = sess.say("名前は日8")
+    assert r.kind == "applied" and sess.store.facility().shift("日8").hours == 9, r.message
