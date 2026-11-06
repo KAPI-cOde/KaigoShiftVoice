@@ -120,6 +120,80 @@ def _shadowed(r: Rule, rules: dict) -> str | None:
     return None
 
 
+KEPT = "今の表で、もう守られています"
+# 「〇〇さんは日勤だけ」。日勤専属の人は施設によくいて、言い方も決まっているので、Claude へ送らずに手元で読む
+# （本物の Haiku は月を言わないと表に無い仕組みとして組み立て役へ回し、長い断りが返った。2026-11-06 の確かめ）。
+# 一言の全文がこの形の時だけ当てる。ほかの頼みが混ざる一言は今までどおり読み取りへ送る
+_ONLY_HEAD = r"(職員\d{2})(?:さん|くん|ちゃん)?(?:は|を|も)?(?:(\d{1,2})月から(?:は)?)?"
+_ONLY_TAIL = (r"(?:だけ|のみ|専属|専従|しか)(?:に|で)?"
+              r"(?:入れ(?:る|て|ない)|入らない|固定|して|する|します|したい|お願い(?:します)?|ください|ほしい|"
+              r"です|だって|って|でいい|ね|よ|に|で)*")
+
+
+def only_shift_items(masked: str, facility) -> list[dict] | None:
+    """伏せた後の一言が「職員NNさんは日勤だけ（〇月から）」なら、職員情報の変更の読み取り結果を手元で作る。"""
+    work = [st for st in facility.shift_types if st.kind == "work" and not st.on_request_only]
+    if not work:
+        return None
+    names = "|".join(re.escape(st.name) for st in work)
+    m = re.fullmatch(_ONLY_HEAD + f"({names})" + _ONLY_TAIL, _NOISE.sub("", masked))
+    if not m:
+        return None
+    sym = next(st.symbol for st in work if st.name == m.group(3))
+    return [{"type": "staff_info", "staff": m.group(1), "from_month": int(m.group(2)) if m.group(2) else None,
+             "can_add": [sym], "can_remove": [st.symbol for st in work if st.symbol != sym], "only": sym}]
+
+
+def implied_by(rd: dict, rules) -> str | None:
+    """新しいルール（帳面に入れる前の dict）と同じことを、前からの外せないルール（動かせない・運用の都合・本人の希望）が
+    もう決めていれば、そのルールの名前。並び・連勤・回数だけを見る（ほかは None）。"""
+    syms = lambda v: {v} if isinstance(v, str) else set(v or [])
+    p, who = rd.get("params") or {}, rd.get("who") or None
+    for r in rules:
+        q = r.params
+        if r.kind != rd.get("kind") or r.flex == "negotiable" or r.when:
+            continue
+        if r.kind == "sequence":
+            if r.who and not (who and set(who) <= set(r.who)):
+                continue
+            if not syms(p.get("if")) <= syms(q.get("if")):
+                continue
+            if "next_not_in" in p and (("next_in" in q and not syms(p["next_not_in"]) & syms(q["next_in"]))
+                                       or ("next_not_in" in q and syms(p["next_not_in"]) <= syms(q["next_not_in"]))):
+                return r.name
+            if "next_in" in p and "next_in" in q and syms(q["next_in"]) <= syms(p["next_in"]):
+                return r.name
+        elif r.kind == "max_run":
+            if r.who and not (who and set(who) <= set(r.who)):
+                continue
+            if q.get("shifts") == p.get("shifts") and q.get("max") is not None and q["max"] <= (p.get("max") or 0):
+                return r.name
+        elif r.kind == "count":
+            # 名指しの回数は全員向けの回数より優先して上書きする（with_overrides）ので、相手が同じ時だけ
+            if (r.who or None) != who or syms(q.get("shifts")) != syms(p.get("shifts")) or q.get("seen") \
+                    or bool(q.get("capable_only")) != bool(p.get("capable_only")):
+                continue
+            hi_ok = p.get("max") is None or (q.get("max") is not None and q["max"] <= p["max"])
+            lo_ok = p.get("min") is None or (q.get("min") is not None and q["min"] >= p["min"])
+            if hi_ok and lo_ok:
+                return r.name
+    return None
+
+
+def shift_note(before: dict, after: dict, moved: str, names: dict[str, str]) -> str:
+    """入れる勤務を減らした人（moved）の分が、ほかの人へいちばん寄った所を1行で（例「久保さんの遅番が1回から7回になります」）。
+    数えるのは外した勤務（names の記号）だけ。2回以上増えた人がいなければ空。"""
+    best = None
+    for n, row in after.items():
+        if n == moved or n not in before:
+            continue
+        for sym, nm in names.items():
+            a, b = before[n].count(sym), row.count(sym)
+            if b - a >= 2 and (best is None or b - a > best[0]):
+                best = (b - a, f"{n}さんの{nm}が{a}回から{b}回になります")
+    return best[1] if best else ""
+
+
 def _next_id(led) -> int:
     """次のルールの番号。外したルールの番号も使い回さない（言い直しで外した r101 の後に、新しい頼みが同じ r101 に
     なっていた。2026-11-03 本物の Haiku で確かめた時に見つけた）。"""
@@ -246,6 +320,12 @@ class Session:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], f"「{word}」は{d.month}月{d.day}日で、いま開いている{self.month}月の表の外です。"
                                          f"{d.month}月の表で言ってください。表もルールも変えていません")
+        local = only_shift_items(masked, fac)
+        if local is not None:   # 手元で読めた（日勤だけ など）。Claude へは送らない
+            self._sent[u["id"]] = None
+            items = masker.unmask(local)
+            self.store.update_pending(self.year, self.month, u["id"], sent_text=None, items=items, status="read")
+            return self._safe_propose({**u, "items": items})
         sent = masked if getattr(self.reader, "calls_claude", True) else None
         self._sent[u["id"]] = sent
         self.store.update_pending(self.year, self.month, u["id"], sent_text=sent)
@@ -340,10 +420,41 @@ class Session:
             offer = self._standby_offer(u, p, m)
             return offer if offer is not None else self._fix_offer(u, p, m)
         scope = u.get("scope") or p.scope
+        kept = self._kept(p, m)
+        if kept and scope == "once":
+            # 今の表で、もう守られている指摘。今月だけなら表もルールも変えず、何と読んだかを添えてそう言う
+            # （「明けの次の日ももう1日休み」で1マスも変わらないのに「直した」と出て、ルールが1件増えていた。2026-11-06）
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("ask", u["id"], f"{kept}。表もルールも変えていません", summary=p.summary,
+                         extra={"kept": kept})
         if scope is None:
             self.store.update_pending(self.year, self.month, u["id"], status="ask_period")
-            return Reply("ask_period", u["id"], ASK_PERIOD, summary=p.summary)
-        return self._apply(u, p, scope)
+            return Reply("ask_period", u["id"], ASK_PERIOD, summary=p.summary, extra={"kept": kept} if kept else {})
+        return self._apply(u, p, scope, kept=kept)
+
+    def _kept(self, p: Proposal, m) -> str:
+        """読んだルールが、今の表でもう1か所も破れていなければ「今の表で、もう守られています（読んだ中身）」。
+        日を決めた頼み（休みの希望など）と当番は当てない（守られていても、そのマスを留める意味がある）。"""
+        if p.kind != "rule" or not p.rules or not m.table or any(rd["kind"] in ("cell", "layer") for rd in p.rules):
+            return ""
+        from .rules import check_table
+        start, end = self._span()
+        rules = []
+        for i, rd in enumerate(p.rules):
+            meta = {**rd.get("meta", {}), "from": start, "until": p.until}
+            rules.append(clip_to_month(Rule.from_dict({**rd, "id": f"kept-{i}", "meta": meta}), start, end))
+        try:
+            if check_table(rules, self.store.facility(), self.store.staff_on(self.year, self.month), m, m.table):
+                return ""
+        except (KeyError, ValueError):
+            return ""
+        # 今たまたま守られているだけのルール（「夜勤をこれ以上足さない」の今の回数まで など）は、この後の直しを縛るので
+        # 当てない。前からの外せないルールがもう同じことを決めている時だけ「もう守られています」
+        cur = list(self.store.ledger().rules_at(between=self._span()).values())
+        by = [implied_by(rd, cur) for rd in p.rules]
+        if not all(by):
+            return ""
+        return f"{KEPT}（{p.summary}。「{'」「'.join(dict.fromkeys(by))}」があります）"
 
     def answer(self, uid: str, text: str) -> Reply:
         """「毎月ですか、今月だけですか」への返事（話し言葉でも選択肢でも）。
@@ -375,7 +486,7 @@ class Session:
             return Reply("ask_replace", u["id"], ANSWER_FIRST_REPLACE, extra={"answer_first": True, "question": q})
         return Reply("ask_period", u["id"], ANSWER_FIRST, extra={"answer_first": True})
 
-    def _apply(self, u: dict, p: Proposal, scope: str) -> Reply:
+    def _apply(self, u: dict, p: Proposal, scope: str, kept: str = "") -> Reply:
         m = self.store.month(self.year, self.month)
         led = self.store.ledger()
         start, end = self._span()
@@ -435,6 +546,13 @@ class Session:
                               "said": u["text"], "layers": [r.params["def"]["id"] for r in added]})
             m.built_rev = led.rev
             self.store.save_month(m)
+        elif added and kept:
+            # 今の表でもう守られている指摘を毎月のルールにした。来月からの表のために帳面に残し、今の表は動かさない
+            # （作者の作り方＝指摘をルールに足して洗練する。効かないまま続くルールは片付けの仕組みが拾う）
+            self.store.save_ledger(led)
+            m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev, "said": u["text"]})
+            m.built_rev = led.rev
+            self.store.save_month(m)
         elif added:
             tmp = Ledger.from_list(led.to_list())
             rules = [clip_to_month(r, *self._span()) for r in tmp.rules_at(between=self._span()).values()]
@@ -458,17 +576,76 @@ class Session:
                               "said": u["text"]})
             m.table, m.built_rev = rr.table, led.rev
             self.store.save_month(m)               # 2 月の表
+        extra = {}
         if p.staff_changes:
             staff = self.store.staff()
+            before = {s.name: list(s.changes) for s in staff}
             for c in p.staff_changes:
                 s = next(x for x in staff if x.name == c["staff"])
-                if not any(x.get("from") == c["from"] and x.get("can_add") == c["can_add"] for x in s.changes):
+                if not any(x.get("from") == c["from"] and x.get("can_add") == c["can_add"]
+                           and x.get("can_remove") == c.get("can_remove") for x in s.changes):
                     s.changes.append({k: v for k, v in c.items() if k != "staff"} | {"at": at})
+            if any(c["from"] <= self.ym for c in p.staff_changes) and m.table:
+                # 開いている月から効く変更（日勤だけ など）は、その月の表もその場で直す（前は翌月からしか効かなかった）
+                r = self._refit_staff(u, p, m, staff, before)
+                if r is not None:
+                    return r
+                changes, secs = self._refit_last
+                note = shift_note(m.history[-1]["table"], m.table, p.staff_changes[0]["staff"],
+                                  {x: self.store.facility().shift(x).name
+                                   for c in p.staff_changes for x in c.get("can_remove", [])}) if changes else ""
+                if note:
+                    extra["note"] = note
             self.store.save_staff(staff)           # 3 職員
         self.store.resolve_pending(self.year, self.month, u["id"])  # 4 未反映の発言
         summary = p.summary + ("（前のルールと置き換えました）" if u.get("dup") == "replace" and u.get("dup_old") else "")
+        if kept and added:
+            summary = f"{kept}。毎月のルールとして残しました（来月からの表にも効きます）"
         return Reply("applied", u["id"], summary, changes=changes, rule_ids=[r.id for r in added],
-                     summary=summary, seconds=secs, warning=warning)
+                     summary=summary, seconds=secs, warning=warning, extra=extra)
+
+    def _refit_staff(self, u: dict, p: Proposal, m, staff: list, before: dict) -> Reply | None:
+        """入れる勤務を変えた人の、開いている月の表で入れなくなったマスだけを、狭い範囲の直しで動かす。
+        作れない時は職員も表も変えずに返事を返す。直せた時は None（表は保存済み。ひとつ戻すで職員の変更も戻す）。"""
+        import copy
+        fac = self.store.facility()
+        month_staff = []
+        for s in staff:
+            s2 = copy.deepcopy(s)
+            s2.can = s.can_on(self.ym)
+            month_staff.append(s2)
+        night = {st.symbol for st in fac.shift_types if st.next_is_ake}
+        tmp: list[Rule] = []
+        for s in month_staff:
+            if s.name not in {c["staff"] for c in p.staff_changes}:
+                continue
+            bad = {}
+            for d, sym in enumerate(m.table.get(s.name, []), 1):
+                st = fac.shift(sym)
+                gone = (st.kind == "work" and not st.on_request_only and sym not in s.can) or \
+                       (st.kind == "ake" and not (night & set(s.can)))
+                if gone:
+                    bad.setdefault(sym, []).append(d)
+            if bad:
+                tmp.append(Rule(id=f"s-{s.name}", ver=1, name=f"{s.name}さん 入れる勤務の変更", kind="cell",
+                                flex="fixed", params={"not_in": sorted(bad)}, who=[s.name],
+                                when=sorted(d for ds in bad.values() for d in ds), scope="once"))
+        self._refit_last = ([], 0.0)
+        if not tmp:
+            return None
+        rules = [clip_to_month(r, *self._span())
+                 for r in self.store.ledger().rules_at(between=self._span()).values()]
+        rr = resolve(fac, month_staff, rules + tmp, m, m.table, tmp)
+        if not rr.ok:
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("failed_solve", u["id"], (rr.staged.message or "直せませんでした") +
+                         "。職員の情報も表も変えていません", seconds=rr.seconds)
+        m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev, "said": u["text"],
+                          "staff_before": before})
+        m.table = rr.table
+        self.store.save_month(m)
+        self._refit_last = (rr.changes, rr.seconds)
+        return None
 
     def _cancel(self, u: dict, p: Proposal) -> Reply:
         """取り消し。前の頼みの指定を外すだけで、表のマスは動かさない（外した日が公休のままでも誤りではない。13章）。
@@ -580,6 +757,12 @@ class Session:
         self.store.save_month(m)
         if h.get("acceptance_id"):
             self.store.save_acceptances([a for a in self.store.acceptances() if a.id != h["acceptance_id"]])
+        if "staff_before" in h:   # 入れる勤務の変更（日勤だけ など）も戻す
+            staff = self.store.staff()
+            for s in staff:
+                if s.name in h["staff_before"]:
+                    s.changes = h["staff_before"][s.name]
+            self.store.save_staff(staff)
         return Reply("applied", h["op_id"], f"戻しました（「{h['said']}」）",
                      changes=changed_cells(before, m.table), summary="ひとつ戻す")
 

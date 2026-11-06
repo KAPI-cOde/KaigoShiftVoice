@@ -659,15 +659,37 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         elif t == "staff_info":
             who = _names(it.get("staff"), names) or []
             fm = _num(it.get("from_month"))
+            if fm is None:
+                fm = month.month   # 月を言っていなければ、開いている月から（前は聞き返して止まった。2026-11-06）
             if not who or not fm or fm > 12:
                 raise Clarify("誰の、何月からの変更か教えてください")
             year = month.year + (1 if fm < month.month else 0)
             add = [_sym(s, facility) for s in it.get("can_add") or []]
             rem = [_sym(s, facility) for s in it.get("can_remove") or []]
+            work = [st.symbol for st in facility.shift_types if st.kind == "work" and not st.on_request_only]
+            only = it.get("only")
+            if only is None and len(add) == 1 and re.search(r"だけ|のみ|専属|専従|しか", text):
+                only = add[0]   # 「日勤だけ」を、できる勤務を足す形で読んだ時
+            if only is None and rem and not add:   # 外す形で読んだ時は、その人に残る勤務が1つなら「〇〇だけ」
+                left = {s for x in staff if x.name in who for s in x.can_on(f"{year:04d}-{fm:02d}")
+                        if s in work and s not in rem}
+                only = left.pop() if len(left) == 1 else None
+            if only is not None:
+                add, rem = [only], [s for s in work if s != only]
+            ym = f"{year:04d}-{fm:02d}"
             for n in who:
-                p.staff_changes.append({"staff": n, "from": f"{year:04d}-{fm:02d}", "can_add": add,
-                                        "can_remove": rem, "said": text})
-            sums.append(f"{_who(who)} {fm}月から" + "・".join(facility.shift(s).name for s in add) + "もできる")
+                p.staff_changes.append({"staff": n, "from": ym, "can_add": add, "can_remove": rem, "said": text})
+            nm = lambda syms: "・".join(facility.shift(s).name for s in syms)
+            if only is not None:
+                had = [s for s in work if s != only and any(
+                    s in x.can_on(ym) for x in staff if x.name in who)]
+                line = f"{_who(who)} {fm}月から{nm([only])}だけ" + (f"（{nm(had)}に入れません）" if had else "")
+            else:
+                parts = ([nm(add) + "もできる"] if add else []) + ([nm(rem) + "に入れない"] if rem else [])
+                line = f"{_who(who)} {fm}月から" + "・".join(parts)
+            if (year, fm) > (month.year, month.month):
+                line += f"。{fm}月の表を作る時から効きます（{month.month}月の表は変えていません）"
+            sums.append(line)
         elif t == "cover":
             # すでに起きた穴埋め（残業・早出など）。表も帳面も変えず、引き受けの記録の候補にする。人が無ければ
             # ここで聞き返す（下の「誰の頼みか」の守りは p.rules しか見ない）。1人・1日ずつ（まとめては聞き返す）。

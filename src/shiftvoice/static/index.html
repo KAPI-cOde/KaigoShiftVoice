@@ -59,6 +59,8 @@
   .whysub { font-size: 12px; margin-top: 4px; }
   td.name.picked { text-decoration: underline; font-weight: 700; }
   .card .per { white-space: nowrap; font-size: 12px; }
+  .card .per .str { color: #555; margin-right: 6px; }
+  .ptt { font-size: 12px; color: #555; align-self: center; white-space: nowrap; }
   .card .why { font-size: 12px; margin-top: 2px; }
   .card .new { font-size: 11px; border: 1px solid #000; border-radius: 3px; padding: 0 5px; margin-left: 6px; font-weight: 700; }
   .card .detail { margin-top: 6px; padding-top: 6px; border-top: 1px solid #ddd; font-size: 12px; }
@@ -247,6 +249,7 @@
       <input type="text" id="input" placeholder="気づいたことを一言で入れてください">
       <button type="submit" id="send">伝える</button>
       <button type="button" id="talk" style="display:none">話す</button>
+      <span class="ptt" id="ptt" style="display:none">スペースを押している間、聞きます</span>
       <button type="button" id="undo" disabled>ひとつ戻す</button>
     </form>
     <div class="hint" id="pubnote" style="display:none"></div>
@@ -415,7 +418,8 @@ function renderTable() {
     (st.changes || []).forEach(function (ch) {
       var mm = parseInt(String(ch.from).split("-")[1], 10);
       var what = (ch.can_add || []).map(function (s) { return symName(s).replace("番", "番").replace("夜勤", "夜勤"); }).join("・");
-      nm.appendChild(el("span", "mark", mm + "月から" + what + "も"));
+      var only = (ch.can_remove || []).length && (ch.can_add || []).length === 1;   // 日勤だけ など
+      nm.appendChild(el("span", "mark", mm + "月から" + what + (only ? "だけ" : "も")));
     });
     var accN = (S.accepted || {})[st.name];
     if (accN && Object.keys(S.layers || {}).length) nm.appendChild(el("span", "acc", S.month + "月の引き受け " + accN + "回"));
@@ -747,6 +751,8 @@ function renderGrouped(box, list) {
   }
 }
 
+// ルールの強さ。表が作れない時は、相談できる → 本人の希望 → 運用の都合 の順にゆるめ、動かせないは最後まで守る（build.solve_staged）
+var STRENGTH = { fixed: "動かせない", operational: "運用の都合", wish: "本人の希望", negotiable: "相談できる" };
 function makeCard(c) {
     var m = c.meta || {};
     var b = el("button", "card" + (selected === c.id ? " open" : ""));
@@ -755,7 +761,9 @@ function makeCard(c) {
     var nm = el("span", "nm", c.name);
     if (newIds[c.id]) nm.appendChild(el("span", "new", "新しいルール"));
     top.appendChild(nm);
-    top.appendChild(el("span", "per", m.until ? fmtUntil(m.until) : "毎月"));
+    var per = el("span", "per", m.until ? fmtUntil(m.until) : "毎月");
+    if (STRENGTH[c.flex]) per.insertBefore(el("span", "str", STRENGTH[c.flex]), per.firstChild);   // 強さを1語（強い順に守る）
+    top.appendChild(per);
     b.appendChild(top);
     if (m.reason) b.appendChild(el("div", "why", "理由 " + m.reason));
     if (c.shadowed_by) b.appendChild(el("div", "why", c.shadowed_by));
@@ -925,6 +933,7 @@ function renderReplyBody(r) {
     return;
   }
   if (r.kind === "ask_period") {
+    if (r.extra && r.extra.kept) box.appendChild(el("div", "summary", r.extra.kept + "。毎月なら来月からのルールに残し、今月だけなら何も変えません"));
     box.appendChild(el("div", "q", "毎月ですか、今月だけですか"));
     var bs = el("div", "btns");
     [["毎月", "rule"], ["今月だけ", "once"]].forEach(function (p) {
@@ -1181,7 +1190,11 @@ function startTalk() {
     rec = { ctx: ctx, stream: stream, proc: proc, src: src, chunks: chunks };
     var b = document.getElementById("talk");
     b.textContent = "話し終えた"; b.classList.add("on");
+    if (pttKey) { b.textContent = "聞いています"; pttNote("聞いています。離すと直します"); }
+    if (pttKey && !pttHeld) stopTalk();   // マイクが開く前にスペースを離した
   }).catch(function () {
+    pttKey = false; pttHeld = false; pttNote("");
+    var tb = document.getElementById("talk"); tb.textContent = "話す"; tb.classList.remove("on");
     renderReply({ kind: "failed_solve", message: "マイクが使えません。文字で入れてください" });
   });
 }
@@ -1201,6 +1214,8 @@ function stopTalk() {
   var r = rec; rec = null;
   var b = document.getElementById("talk");
   b.textContent = "話す"; b.classList.remove("on");
+  if (pttKey) pttNote("文字にしています");
+  pttKey = false;
   r.proc.disconnect(); r.src.disconnect();
   r.stream.getTracks().forEach(function (t) { t.stop(); });
   var pcm = to16k(r.chunks, r.ctx.sampleRate);
@@ -1211,6 +1226,7 @@ function stopTalk() {
   fetch("/api/voice", { method: "POST", headers: headers, body: pcm.buffer })
     .then(function (x) { return x.json(); }).then(function (res) {
       setBusy(false);
+      pttNote("");
       if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
       if (res.reply && res.reply.extra && res.reply.extra.answer_first) {
         document.getElementById("input").value = res.text;   // 答えでない一言は捨てずに入力欄へ（答えた後に［伝える］で送れる）
@@ -1224,6 +1240,44 @@ function stopTalk() {
 document.getElementById("talk").addEventListener("click", function () {
   if (busy) return;
   if (rec) stopTalk(); else startTalk();
+});
+
+// スペースキーを押している間だけ聞き、離すと文字にして直す（作者「指摘は声でサクサク」2026-11-06）。
+// 文字を打っている欄の中では効かない。押したまま別の窓へ移った時も止める
+var pttHeld = false, pttKey = false;
+var PTT_HINT = "スペースを押している間、聞きます";
+function pttNote(s) {
+  var n = document.getElementById("ptt");
+  n.textContent = s || PTT_HINT;
+  n.style.fontWeight = s ? "700" : "";
+}
+function pttOff(ev) {
+  var a = document.activeElement;
+  var tag = a && a.tagName;
+  return ev.key !== " " || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (a && a.isContentEditable) ||
+    !S || !S.has_voice || document.getElementById("v11").style.display === "none";
+}
+window.addEventListener("keydown", function (ev) {
+  if (pttOff(ev)) return;
+  ev.preventDefault();
+  if (ev.repeat || pttHeld || busy || rec) return;
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();   // ボタンに当たっていると離した時に押される
+  pttHeld = true; pttKey = true;
+  document.getElementById("talk").classList.add("on");
+  document.getElementById("talk").textContent = "聞いています";
+  pttNote("聞いています。離すと直します");
+  startTalk();
+}, true);
+window.addEventListener("keyup", function (ev) {
+  if (ev.key !== " " || !pttHeld) return;
+  ev.preventDefault();
+  pttHeld = false;
+  if (rec && pttKey) stopTalk();
+}, true);
+window.addEventListener("blur", function () {
+  if (!pttHeld) return;
+  pttHeld = false;
+  if (rec && pttKey) stopTalk();
 });
 
 document.getElementById("form").addEventListener("submit", function (ev) {
@@ -1641,6 +1695,7 @@ function resetForFacility(st, bannerText) {
   b.textContent = bannerText || "";
   b.style.display = bannerText ? "block" : "none";
   document.getElementById("talk").style.display = st.has_voice ? "" : "none";
+  document.getElementById("ptt").style.display = st.has_voice ? "" : "none";
   document.getElementById("vsetup").style.display = "none";
   document.getElementById("v12").style.display = "none";
   document.getElementById("v11").style.display = "";
@@ -1951,7 +2006,7 @@ if (embeddedPublic()) {
 fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
   S = st;
   if (st.public) setupPublic(st.public); else loadFacilities();
-  if (st.has_voice) document.getElementById("talk").style.display = "";
+  if (st.has_voice) { document.getElementById("talk").style.display = ""; document.getElementById("ptt").style.display = ""; }
   renderAll();
   var pend = st.pending || [];
   var a = pend.filter(function (p) { return p.status === "ask_period" || p.status === "ask_replace"; })[0];
