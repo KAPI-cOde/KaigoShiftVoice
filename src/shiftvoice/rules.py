@@ -196,30 +196,34 @@ def _coverage_dates(rules: list[Rule]) -> list[Rule]:
     # まとめる。新しく言った側が古い側に代わり、古い側が新しい数と両立しなければ消す。（Astra 2026-11-07 朝。「施設全体3人」の
     # 後の「施設全体1人」で古い3人が残った・「0人」の後の「3人以上」で古い0人の上限が残り0人の表が通った・「3人以上」と
     # 「4人まで」を別に言うと合わせて効かなかった・「3人から4人」の下限が効かなかった）
-    eff: dict[tuple, tuple] = {}   # (数え方, 日) → (下限, 上限, いちばん新しい日付のルールの並び, 勤務)
+    # 下限と上限は、それぞれいつ言ったか（並び）も持つ。別の数え方の日付のルール（「U1だけ1人」）をゆるめるのは、それより
+    # 後に言った側だけ（「各ユニット0人」→「U1だけ1人」→「各ユニット2人まで」で、古い0人が U1 の1人をゆるめた。Astra）
+    eff: dict[tuple, tuple] = {}   # (数え方, 日) → (下限, 下限の並び, 上限, 上限の並び, 勤務)
     for i, r in dated:
         rl, rh = _bounds(r.params)
         for d in r.when:
-            lo, hi, _, _ = eff.get((slot(r), d), (None, None, -1, None))
+            lo, li, hi, hj, _ = eff.get((slot(r), d), (None, -1, None, -1, None))
             if rl is not None:
-                lo = rl
+                lo, li = rl, i
                 if hi is not None and hi < rl:
-                    hi = None
+                    hi, hj = None, i
             if rh is not None:
-                hi = rh
+                hi, hj = rh, i
                 if lo is not None and lo > rh:
-                    lo = None
-            eff[(slot(r), d)] = (lo, hi, i, r.params.get("shifts"))
+                    lo, li = None, i
+            eff[(slot(r), d)] = (lo, li, hi, hj, r.params.get("shifts"))
     out = []
     for j, g in enumerate(rules):
         over = []
         if g.kind == "coverage":
             gsyms = frozenset(_syms_of(g.params.get("shifts")))
-            for (sl, d), (lo, hi, last, shifts) in eff.items():
+            for (sl, d), (lo, li, hi, hj, shifts) in eff.items():
                 if sl[0] != gsyms or (g.when and d not in g.when):
                     continue
-                if g.when and sl != slot(g) and last < j:
-                    continue   # 別の数え方の、自分より古い日付のルールには譲らない
+                if g.when and sl != slot(g):   # 別の数え方の日付のルールには、自分より後に言った側だけ譲る
+                    lo, hi = (lo if li > j else None), (hi if hj > j else None)
+                    if lo is None and hi is None:
+                        continue
                 p = {"shifts": shifts, "scope": sl[1], "lo": lo, "hi": hi}
                 if sl[2]:
                     p["units"] = list(sl[2])

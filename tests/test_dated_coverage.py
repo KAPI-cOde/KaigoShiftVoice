@@ -305,3 +305,13 @@ def test_3人以上と4人までを別の一言で言うと合わせて効く():
     lo = replace(cov("lo", "operational", ">=", 3, scope="all", when=[28]), meta={"uid": "u1"})
     hi = replace(cov("hi", "operational", "<=", 4, scope="all", when=[28]), meta={"uid": "u2"})
     assert 3 <= sum(early_by_day([daily, lo, hi])[28].values()) <= 4
+
+
+def test_別の数え方の日付の人数は_後に言った側だけでゆるめる():
+    """同じ28日に「各ユニット0人」→「U1だけ1人」→「各ユニット2人まで」。古い0人が U1 の1人を0人にゆるめ、0人の表が違反なしで
+    通った（Astra 2026-11-07 朝の5回目。3×9）"""
+    zero = replace(cov("z", "operational", "==", 0, when=[28]), meta={"uid": "u1"})
+    u1 = replace(cov("u", "operational", "==", 1, units=["U1"], when=[28]), meta={"uid": "u2"})
+    cap = replace(cov("c", "operational", "<=", 2, when=[28]), meta={"uid": "u3"})
+    assert bounds([zero, u1, cap], "u")["U1/28"] == (1, 2)
+    assert early_by_day([zero, u1, cap])[28]["U1"] >= 1
