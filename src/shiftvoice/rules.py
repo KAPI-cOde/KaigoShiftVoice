@@ -142,7 +142,7 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
     全員向けが動かせない決まり（公休の数 など）の時は外さない。
     その前に、同じ相手に2本ある帳面の回数のルールは新しい方を残す（_replace_same）。"""
     import copy
-    rules = _weekday_dated(_run_exceptions(_coverage_units(_coverage_days(_replace_same(rules)))))
+    rules = _weekday_dated(_run_exceptions(_coverage_dates(_coverage_units(_coverage_days(_replace_same(rules))))))
     named: dict[tuple, list[tuple[Rule, str, dict]]] = {}   # 勤務 → [(元のルール, 人, {"min": 値, "max": 値})]
     for r in rules:
         if r.kind == "count" and r.who and not r.when and r.flex in ("operational", "fixed"):
@@ -175,6 +175,94 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
             r.meta = {**r.meta, "except_min": sorted(ex_min), "except_max": sorted(ex_max)}
         out.append(r)
     return out
+
+
+def _coverage_dates(rules: list[Rule]) -> list[Rule]:
+    """日付を決めた人数のルール（「28日は行事なので早番を3人」「1日はU2の早番はいなくていい」。when のある coverage）の日は、
+    同じ勤務の毎日の人数・曜日の人数・前からの日付の人数のルールが、日付のルールに譲る。譲る側と数は expand で決める
+    （_dated_bounds・_dated_total。両立しない側だけ、日付のルールの数までゆるめる。外しきらない）。
+    ここでは、譲るルールの meta の dated_over に、日付のルールの中身と日を書くだけ。日付のルールどうしは新しい方が勝つ。
+    （2026-11-07 実際の施設の表を画面の口で作った通しの試し。施設は早番を0人・2人にする日を設けていて、言えないと
+    段4まで下がり、希望休が51日中41日しか守れなかった。前の作り f0f5141 は Astra の穴6つで取り消した）"""
+    import copy
+    dated = [(i, r) for i, r in enumerate(rules) if r.kind == "coverage" and r.when and not r.params.get("weekdays")]
+    if not dated:
+        return rules
+    out = []
+    for j, g in enumerate(rules):
+        over = []
+        if g.kind == "coverage":
+            for i, r in dated:
+                if i == j or (g.when and i < j):
+                    continue   # 自分自身と、自分より古い日付のルールには譲らない
+                if _syms_of(r.params.get("shifts")) != _syms_of(g.params.get("shifts")):
+                    continue
+                days = sorted(set(r.when) & set(g.when or r.when))
+                if days:
+                    over.append({"params": r.params, "days": days})
+        if over:
+            g = copy.copy(g)
+            g.meta = {**g.meta, "dated_over": over}
+        out.append(g)
+    return out
+
+
+def _bounds(p: dict) -> tuple[int | None, int | None]:
+    n = p["n"]
+    return {"==": (n, n), ">=": (n, None), "<=": (None, n)}[p["op"]]
+
+
+def _dated_bounds(q: dict, r: dict, gname: str, lo, hi, g_units: list[str], all_units: list[str]):
+    """日付のルール r（の中身）の日に、人数のルール q の場面 gname（ユニットの名前か「全体」）の (下限, 上限) をゆるめる。
+    ゆるめるのは r と両立しない側だけで、数は r の数まで（外しきらない。r が運用の都合で外れても、q の強さで r の数が残る）。
+    - ユニットどうし（穴1）。r が名指ししたユニットだけ。名指しが重ならなければ何もしない
+    - 施設全体どうし（穴2）。_cov_yield で両立しない側だけ
+    - r がユニットごとで q が施設全体。r のユニットの下限の合計が q の上限を超える時だけ上限を外す。r が全部のユニットで、
+      上限の合計が q の下限に届かない時は、q の下限を r の下限の合計まで下げる
+    - r が施設全体で q がユニットごと（穴3）。q のユニットの下限の合計が r の上限を超える時は、ユニットの下限を外す。
+      q が全部のユニットで上限の合計が r の下限に届かない時は、ユニットの上限を外す。どちらも施設全体の数は _dated_total が持つ"""
+    rlo, rhi = _bounds(r)
+
+    def loosen(lo, hi, side, v):
+        if side == "min":
+            return (None if lo is None or v is None else min(lo, v)), hi
+        return lo, (None if hi is None or v is None else max(hi, v))
+
+    r_each, q_each = r.get("scope") == "each_unit", q.get("scope") == "each_unit"
+    r_units = r.get("units") or all_units
+    if r_each == q_each:
+        if r_each and gname not in r_units:
+            return lo, hi
+        for side in _cov_yield(r, q):
+            lo, hi = loosen(lo, hi, side, rlo if side == "min" else rhi)
+        return lo, hi
+    if r_each:   # q は施設全体
+        k = len(r_units)
+        if rlo is not None and hi is not None and k * rlo > hi:
+            hi = None
+        if set(r_units) >= set(all_units) and rhi is not None and lo is not None and k * rhi < lo:
+            lo = None if rlo is None else min(lo, k * rlo)
+        return lo, hi
+    k = len(g_units)   # r は施設全体、q はユニットごと
+    qlo, qhi = _bounds(q)
+    if qlo is not None and rhi is not None and k * qlo > rhi:
+        lo = None
+    if set(g_units) >= set(all_units) and qhi is not None and rlo is not None and k * qhi < rlo:
+        hi = None
+    return lo, hi
+
+
+def _dated_total(q: dict, r: dict, g_units: list[str], all_units: list[str]) -> tuple | None:
+    """r が施設全体で q がユニットごとの時、_dated_bounds がユニットの側を外した分を、施設全体の (下限, 上限) として q の強さで
+    残す（r が運用の都合で外れても、その日の施設全体が0人にならない。穴3）。外していなければ None。"""
+    if q.get("scope") != "each_unit" or r.get("scope") == "each_unit":
+        return None
+    rlo, rhi = _bounds(r)
+    qlo, qhi = _bounds(q)
+    k = len(g_units)
+    lo = rlo if qlo is not None and rhi is not None and k * qlo > rhi else None
+    hi = rhi if set(g_units) >= set(all_units) and qhi is not None and rlo is not None and k * qhi < rlo else None
+    return (lo, hi) if lo is not None or hi is not None else None
 
 
 def _weekday_dated(rules: list[Rule]) -> list[Rule]:
@@ -256,7 +344,9 @@ def _coverage_days(rules: list[Rule]) -> list[Rule]:
     out = []
     for g in rules:
         p = g.params
-        if g.kind == "coverage" and not p.get("weekdays") and p["op"] in ("==", "<="):
+        if g.kind == "coverage" and not p.get("weekdays") and not g.when and p["op"] in ("==", "<="):
+            # 日付を決めた人数（when）は、曜日の人数でゆるめない。その日だけの数なので、曜日の人数より細かい（Astra の
+            # 2026-11-07 の指摘4。「11月1日（日）だけ各1人」の上限が「日曜は各2人」で外れ、各2人の表で通った）
             offs = []
             for r in days:
                 q = r.params
@@ -305,11 +395,11 @@ def _coverage_units(rules: list[Rule]) -> list[Rule]:
     out = list(rules)
     for i, new in enumerate(rules):
         p = new.params
-        if new.kind != "coverage" or p.get("scope") != "each_unit" or not p.get("units"):
-            continue
+        if new.kind != "coverage" or p.get("scope") != "each_unit" or not p.get("units") or new.when:
+            continue   # 日付を決めた人数は、その日だけゆるめる（_coverage_dates）
         for j, g in enumerate(out):
             q = g.params
-            if j == i or g.kind != "coverage" or q.get("scope") != "each_unit" or _cov_key(q) != _cov_key(p):
+            if j == i or g.kind != "coverage" or q.get("scope") != "each_unit" or _cov_key(q) != _cov_key(p) or g.when:
                 continue
             if j > i:
                 continue   # 新しいルールは、古い名指しのルールに譲らない（下で、古い名指しの方が新しい全ユニット向けに譲る）
@@ -325,12 +415,13 @@ def _coverage_units(rules: list[Rule]) -> list[Rule]:
     # ルールの説明は「超えた日は無い」と出た（2026-11-07 の通しの試し）
     for i, new in enumerate(rules):
         p = new.params
-        if new.kind != "coverage" or p.get("scope") != "each_unit" or p.get("units"):
+        if new.kind != "coverage" or p.get("scope") != "each_unit" or p.get("units") or new.when:
             continue
         for j in range(i):
             g = out[j]
             q = g.params
-            if g.kind != "coverage" or q.get("scope") != "each_unit" or not q.get("units") or _cov_key(q) != _cov_key(p):
+            if g.kind != "coverage" or q.get("scope") != "each_unit" or not q.get("units") or _cov_key(q) != _cov_key(p) \
+                    or g.when:
                 continue
             if _STRENGTH.index(new.flex) < _STRENGTH.index(g.flex):
                 continue   # 弱い新しいルール（できれば）では、強い前のルール（動かせない人数）を譲らせない（Astra）
@@ -410,19 +501,25 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
             if not on_days(p, month, d):
                 continue   # 曜日つきの人数（「土日は日勤を2人」）はその曜日だけ
             hi_off = any(on_days(o, month, d) for o in rule.meta.get("hi_off", ()))
+            dated = [o["params"] for o in rule.meta.get("dated_over", ()) if d in o["days"]]   # _coverage_dates
             groups = ([(u, [s for s in people if unit_on(s, d) == u]) for u in units]
                       if p.get("scope") == "each_unit" else [("全体", people)])
             for gname, members in groups:
                 terms = [Term(s.name, d, syms) for s in members]
-                n = p["n"]
-                lo, hi = {"==": (n, n), ">=": (n, None), "<=": (None, n)}[p["op"]]
+                lo, hi = _bounds(p)
                 if hi_off or gname in skip_hi:
                     hi = None   # 曜日つきの人数が上限を超えて頼んだ日（with_overrides）か、名指しのルールに譲った上限
                 if gname in skip_lo:
                     lo = None
+                for r in dated:   # 日付を決めた人数の日は、両立しない側だけ日付の数までゆるめる
+                    lo, hi = _dated_bounds(p, r, gname, lo, hi, units, list(facility.units))
                 if lo is None and hi is None:
                     continue
                 out.append(Instance(rule, f"{gname}/{d}", terms, lo, hi))
+            for r in dated:   # 施設全体の日付の人数でユニットの側を外した日は、施設全体の数をこのルールの強さで残す
+                tot = _dated_total(p, r, units, list(facility.units))
+                if tot:
+                    out.append(Instance(rule, f"全体/{d}", [Term(s.name, d, syms) for s in people], *tot))
     elif k == "count":
         syms = _syms(p["shifts"], facility)
         if p.get("capable_only"):  # その勤務に入れる人だけ（例 夜勤の回数は夜勤に入れる人だけ）

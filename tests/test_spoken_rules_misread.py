@@ -78,11 +78,10 @@ def test_有給の多くてもは上限(made, tmp_path):
     assert [(x.params, x.name) for x in new] == [({"shifts": ["有"], "max": 2}, "青木さん 有給は月2日まで")]
 
 
-def test_日付を決めた人数は毎日にせず聞き返す(made, tmp_path):
-    """「28日は行事なので、早番を5人にして」が毎日の早番5人になった"""
+def test_日付を決めた人数は毎日にしない(made, tmp_path):
+    """「28日は行事なので、早番を5人にして」が毎日の早番5人になった。その日だけの今月の人数にする（tests/test_dated_coverage.py）"""
     r, new = _say(made, tmp_path, "28日は行事なので、早番を5人にして", [{"type": "coverage", "shift": "早", "min": 5, "max": None}])
-    assert r.kind != "applied" and "日付を決めた人数" in (r.message or "")
-    assert new == []
+    assert new and all(x.when == [28] and x.scope == "once" for x in new)
 
 
 def test_できればは配慮の強さ(made, tmp_path):
@@ -163,7 +162,7 @@ def test_1日につきの人数は日付にしない(made, tmp_path):
 def test_日付と曜日を言った人数も毎週にせず聞き返す(made, tmp_path):
     r, new = _say(made, tmp_path, "28日の日曜は早番5人", [{"type": "coverage", "shift": "早", "min": 5, "max": None,
                                                           "weekdays": ["sun"]}])
-    assert r.kind != "applied" and "日付を決めた人数" in (r.message or "") and new == []
+    assert r.kind != "applied" and "曜" in (r.message or "") and new == []   # 2026年12月28日は月曜。毎週日曜にもしない
 
 
 def test_合わせての別の意味は1本にしない(made, tmp_path):
@@ -216,12 +215,12 @@ def test_できればの例外では動かせない全員の上限から外さ�
     assert next(r for r in with_overrides([general, plain]) if r.id == "r025").meta.get("except_who") == ["青木"]
 
 
-def test_何日までの人数も日付として聞き返す(made, tmp_path):
+def test_何日までの人数は聞き返し_日付の人数はその日だけ(made, tmp_path):
     r, new = _say(made, tmp_path, "今月は28日まで早番3人", [{"type": "coverage", "shift": "早", "min": 3, "max": 3}])
-    assert r.kind != "applied" and "日付を決めた人数" in (r.message or "") and new == []
+    assert r.kind != "applied" and "期間" in (r.message or "") and new == []
     (tmp_path / "b").mkdir()
     r, new = _say(made, tmp_path / "b", "28日に三人、早番をお願いします", [{"type": "coverage", "shift": "早", "min": 3, "max": None}])
-    assert r.kind != "applied" and new == []
+    assert new and all(x.when == [28] for x in new)
 
 
 def test_最大や間の言葉があっても勤務の続く日数(made, tmp_path):
