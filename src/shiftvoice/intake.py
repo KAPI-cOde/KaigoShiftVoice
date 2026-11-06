@@ -218,8 +218,15 @@ def _coverage_days_said(text: str, month: Month, n_items: int) -> list[int]:
     期間か日付か分からない言い方は聞き返す（Astra 2026-11-07 の穴5・6。前の作りは「28日まで」を28日だけ、「1日から5日まで」を
     1日と5日だけ、「28日は早番3人、29日は夜勤1人」を両方の勤務の両日、言い直しの「14日、あ、違う、18日」を両日にした）。"""
     t = unicodedata.normalize("NFKC", text or "")
-    m = _RANGE.search(t)
-    if m:
+    if re.search(r"[0-9]{1,2}日(?:を|は)?(?:以外|除|のぞ|抜|ほか|外して)", t):
+        # 「28日以外は早番3人」が28日だけの人数になった（Astra 2026-11-07 朝）
+        raise Clarify("〇日以外という言い方の人数は、まだ扱えません。人数を変える日を、日付で言ってください")
+    ranges = list(_RANGE.finditer(t))
+    if ranges:
+        m = ranges[0]
+        if len(ranges) > 1 or _FIX_WORDS.search(t) or _said_dates(t[:m.start()] + t[m.end():]):
+            # 「1日から5日までと10日」の10日、「1日から5日まで、いや、3日から5日まで」の言い直しが消えた（Astra）
+            raise Clarify("期間と日付を一緒に言った時や言い直した時は、人数を変える日を、1つの言い方でもう一度言ってください")
         a, b = int(m.group(1)), int(m.group(2))
         if not 1 <= a < b <= month.days:
             raise Clarify(f"{a}日から{b}日までの日付が読めませんでした。もう一度言ってください")

@@ -80,7 +80,7 @@ def test_穴2_両立する施設全体の下限は残る():
 def test_穴2_両立しない時は日付の数までゆるむ():
     lo = cov("lo", "fixed", ">=", 2, scope="all")
     cap = cov("d28", "operational", "<=", 1, scope="all", when=[28])
-    assert bounds([lo, cap], "lo").get("全体/28", (None, None))[0] in (None, 0, 1)   # 下限が無くなった場面は作らない
+    assert bounds([lo, cap], "lo")["全体/28"] == (1, None)   # 「1人まで」の日は、下限を1人まで下げる（外しきらない）
     assert bounds([lo, cap], "lo")["全体/27"] == (2, None)
 
 
@@ -205,3 +205,53 @@ def test_日付の人数どうしは新しい方が勝つ():
     old = cov("a", "operational", "==", 2, units=["U1"], when=[28])
     new = cov("b", "operational", "==", 3, units=["U1"], when=[28])
     assert bounds([old, new], "a")["U1/28"] == (2, 3)
+
+
+# ---- Astra の2回目（2026-11-07 朝）の指摘 ----
+
+def test_上限だけの日付の人数でも_下限は日付の数までで0人を通さない():
+    """毎日「施設全体で早番2人以上」に「1日は早番を1人まで」。1日の下限が消え、0人の表が違反なしになった（4×9）"""
+    from shiftvoice.rules import check_table
+    lo = cov("lo", "fixed", ">=", 2, scope="all")
+    cap = cov("d1", "operational", "<=", 1, scope="all", when=[1])
+    assert bounds([lo, cap], "lo")["全体/1"] == (1, None)
+    nobody = {s.name: ["公"] + ["早"] * 29 for s in STAFF}
+    assert any(b["rule"] == "lo" and b["key"] == "全体/1" for b in check_table([lo, cap], FAC, STAFF, NOV, nobody))
+
+
+def test_施設全体の上限だけの日付の人数で_ユニットの下限を外す時も施設全体は日付の数まで():
+    daily = cov("r1", "fixed", "==", 1)
+    cap = cov("d1", "operational", "<=", 1, scope="all", when=[1])
+    eff = next(r for r in with_overrides([daily, cap]) if r.id == "r1")
+    tot = [(i.lo, i.hi) for i in expand(eff, FAC, STAFF, NOV) if i.key == "全体/1"]
+    assert tot == [(1, None)]
+
+
+def test_同じ日の施設全体の人数を言い直すと新しい方だけが効く():
+    """2ユニットで毎日各2人（動かせない）、同じ1日に「施設全体3人」、続けて「施設全体1人」。古い3人が毎日のルールの強さで残り、
+    段1で作れず、段3で3人の表になった（4×7）"""
+    daily = cov("r1", "fixed", "==", 2)
+    three = cov("d3", "operational", "==", 3, scope="all", when=[1])
+    one = cov("d1", "operational", "==", 1, scope="all", when=[1])
+    eff = next(r for r in with_overrides([daily, three, one]) if r.id == "r1")
+    assert [(i.lo, i.hi) for i in expand(eff, FAC, STAFF, NOV) if i.key == "全体/1"] == [(1, None)]
+    assert sum(early_by_day([daily, three, one])[1].values()) == 1
+
+
+def test_範囲とほかの日付を一緒に言った人数は聞き返す(made, tmp_path):
+    """「1日から5日までと10日は早番3人」が1〜5日だけになった（4×8）"""
+    r, new = _say(made, tmp_path, "1日から5日までと10日は早番を3人", [{"type": "coverage", "shift": "早", "min": 3, "max": None}])
+    assert r.kind != "applied" and new == []
+
+
+def test_範囲を言い直した人数は聞き返す(made, tmp_path):
+    """「1日から5日まで、いや、3日から5日まで早番3人」が言い直す前の1〜5日になった（4×8）"""
+    r, new = _say(made, tmp_path, "1日から5日まで、いや、3日から5日まで早番を3人",
+                  [{"type": "coverage", "shift": "早", "min": 3, "max": None}])
+    assert r.kind != "applied" and new == []
+
+
+def test_何日以外の人数は聞き返す(made, tmp_path):
+    """「28日以外は早番3人」が28日だけの人数になった（3×8）"""
+    r, new = _say(made, tmp_path, "28日以外は早番を3人", [{"type": "coverage", "shift": "早", "min": 3, "max": None}])
+    assert r.kind != "applied" and new == []

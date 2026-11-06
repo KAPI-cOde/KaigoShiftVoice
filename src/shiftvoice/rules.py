@@ -188,6 +188,14 @@ def _coverage_dates(rules: list[Rule]) -> list[Rule]:
     dated = [(i, r) for i, r in enumerate(rules) if r.kind == "coverage" and r.when and not r.params.get("weekdays")]
     if not dated:
         return rules
+
+    def slot(r: Rule) -> tuple:
+        p = r.params
+        return (frozenset(_syms_of(p.get("shifts"))), p.get("scope"), tuple(sorted(p.get("units") or [])))
+    # 同じ勤務・同じ数え方（施設全体か、どのユニットか）の日付の人数を同じ日に言い直した時は、新しい方だけを効かせる。
+    # 古い方まで毎日のルールをゆるめると、古い数が毎日のルールの強さで残った（Astra 2026-11-07 朝。「施設全体3人」の後の
+    # 「施設全体1人」が段3で3人になった）
+    latest = {slot(r) + (d,): i for i, r in dated for d in r.when}
     out = []
     for j, g in enumerate(rules):
         over = []
@@ -197,7 +205,7 @@ def _coverage_dates(rules: list[Rule]) -> list[Rule]:
                     continue   # 自分自身と、自分より古い日付のルールには譲らない
                 if _syms_of(r.params.get("shifts")) != _syms_of(g.params.get("shifts")):
                     continue
-                days = sorted(set(r.when) & set(g.when or r.when))
+                days = sorted(d for d in set(r.when) & set(g.when or r.when) if latest[slot(r) + (d,)] == i)
                 if days:
                     over.append({"params": r.params, "days": days})
         if over:
@@ -222,6 +230,7 @@ def _dated_bounds(q: dict, r: dict, gname: str, lo, hi, g_units: list[str], all_
     - r が施設全体で q がユニットごと（穴3）。q のユニットの下限の合計が r の上限を超える時は、ユニットの下限を外す。
       q が全部のユニットで上限の合計が r の下限に届かない時は、ユニットの上限を外す。どちらも施設全体の数は _dated_total が持つ"""
     rlo, rhi = _bounds(r)
+    floor = rlo if rlo is not None else rhi   # 「1人まで」の日の下限は1人まで下げる（外しきると0人が通った。Astra）
 
     def loosen(lo, hi, side, v):
         if side == "min":
@@ -234,14 +243,14 @@ def _dated_bounds(q: dict, r: dict, gname: str, lo, hi, g_units: list[str], all_
         if r_each and gname not in r_units:
             return lo, hi
         for side in _cov_yield(r, q):
-            lo, hi = loosen(lo, hi, side, rlo if side == "min" else rhi)
+            lo, hi = loosen(lo, hi, side, floor if side == "min" else rhi)
         return lo, hi
     if r_each:   # q は施設全体
         k = len(r_units)
         if rlo is not None and hi is not None and k * rlo > hi:
             hi = None
         if set(r_units) >= set(all_units) and rhi is not None and lo is not None and k * rhi < lo:
-            lo = None if rlo is None else min(lo, k * rlo)
+            lo = min(lo, k * floor)
         return lo, hi
     k = len(g_units)   # r は施設全体、q はユニットごと
     qlo, qhi = _bounds(q)
@@ -260,7 +269,7 @@ def _dated_total(q: dict, r: dict, g_units: list[str], all_units: list[str]) -> 
     rlo, rhi = _bounds(r)
     qlo, qhi = _bounds(q)
     k = len(g_units)
-    lo = rlo if qlo is not None and rhi is not None and k * qlo > rhi else None
+    lo = (rlo if rlo is not None else rhi) if qlo is not None and rhi is not None and k * qlo > rhi else None
     hi = rhi if set(g_units) >= set(all_units) and qhi is not None and rlo is not None and k * qhi < rlo else None
     return (lo, hi) if lo is not None or hi is not None else None
 
