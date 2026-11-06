@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+import json
+
 from collections import Counter
 from dataclasses import dataclass
 
@@ -140,7 +142,7 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
     全員向けが動かせない決まり（公休の数 など）の時は外さない。
     その前に、同じ相手に2本ある帳面の回数のルールは新しい方を残す（_replace_same）。"""
     import copy
-    rules = _coverage_units(_coverage_days(_replace_same(rules)))
+    rules = _run_exceptions(_coverage_units(_coverage_days(_replace_same(rules))))
     named: dict[tuple, list[tuple[Rule, str, dict]]] = {}   # 勤務 → [(元のルール, 人, {"min": 値, "max": 値})]
     for r in rules:
         if r.kind == "count" and r.who and not r.when and r.flex in ("operational", "fixed"):
@@ -172,6 +174,30 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
             r = copy.copy(r)
             r.meta = {**r.meta, "except_min": sorted(ex_min), "except_max": sorted(ex_max)}
         out.append(r)
+    return out
+
+
+def _run_exceptions(rules: list[Rule]) -> list[Rule]:
+    """人を名指しした、全員の上限よりゆるい続く日の上限（「千葉さん、今月だけ連勤6日まで」）は、その人を全員の上限から外す。
+    前は全員の「連勤5日まで」がもう守っていると見て足さず、希望休と公休の数で6連勤が避けられない人のいる月が作れなかった
+    （2026-11-07 実際の施設の表を画面の口で作った通しの試し。施設は10月だけ6連勤を許していた）。名指しの方がきびしい時は両方効く。"""
+    import copy
+    loose: dict[str, dict[str, int]] = {}   # 勤務の鍵 → 人 → 名指しの上限
+    key = lambda p: json.dumps(p.get("shifts"), ensure_ascii=False, sort_keys=True)
+    for r in rules:
+        if r.kind == "max_run" and r.who and not r.when and r.params.get("max") is not None:
+            for w in r.who:
+                loose.setdefault(key(r.params), {})[w] = r.params["max"]
+    if not loose:
+        return rules
+    out = []
+    for g in rules:
+        if g.kind == "max_run" and not g.who and g.params.get("max") is not None and key(g.params) in loose:
+            ex = sorted(w for w, mx in loose[key(g.params)].items() if mx > g.params["max"])
+            if ex:
+                g = copy.copy(g)
+                g.meta = {**g.meta, "except_who": ex}
+        out.append(g)
     return out
 
 
@@ -427,7 +453,10 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
         syms = _syms(p["shifts"], facility)
         m = p["max"]
         tail = len(next(iter(month.prev_tail.values()), []))
+        skip = set(rule.meta.get("except_who", ()))   # 名指しのゆるい上限の人（_run_exceptions）
         for s in people:
+            if s.name in skip:
+                continue
             # 窓 [start, start+m]（m+1 日）に m を超えて入れない。前の月の末日も含める
             for start in range(1 - tail, month.days - m + 1):
                 days = list(range(start, start + m + 1))

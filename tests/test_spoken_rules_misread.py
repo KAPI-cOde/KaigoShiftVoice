@@ -181,3 +181,25 @@ def test_弱い新しい人数で動かせない名指しの人数を外さな�
                 {"shifts": ["夜"], "scope": "each_unit", "op": "==", "n": 1})
     eff = {r.id: r for r in with_overrides([named, weak])}
     assert not eff["r010"].meta.get("skip_min")
+
+
+def test_名指しのゆるい連勤の上限は全員の上限の例外(made, tmp_path):
+    """「千葉さん、今月だけ連勤6日まで」が「もう守られています」で断られた。希望休と公休の数で6連勤が避けられない人の月は
+    作れず、段を下げてほかの人の希望休まで外れた（実際の施設は10月だけ6連勤を許していた）"""
+    from shiftvoice.build import month_rules
+    from shiftvoice.rules import expand
+    r, new = _say(made, tmp_path, "青木さん、今月だけ連勤6日まで", [{"type": "consecutive_limit", "staff": "青木", "max": 6}])
+    assert r.kind == "applied", r.message
+    assert [(x.params, x.who) for x in new] == [({"shifts": "work", "max": 6}, ["青木"])]
+    store = Store(tmp_path / "f")
+    rules = month_rules(store, 2026, 12, with_premise=False)
+    eff = with_overrides(rules)
+    general = next(x for x in eff if x.kind == "max_run" and not x.who and x.params["shifts"] == "work")
+    assert general.meta.get("except_who") == ["青木"]
+    fac, staff, m = store.facility(), store.staff_on(2026, 12), store.month(2026, 12)
+    assert not any(i.terms[0].staff == "青木" for i in expand(general, fac, staff, m))
+    # 名指しの方がきびしい時は、全員の上限からは外さない（両方効く）
+    tight = Rule("t1", 1, "青木さん 連勤は3日まで", "max_run", "operational", {"shifts": "work", "max": 3}, who=["青木"])
+    eff = with_overrides([x for x in rules if x.id != new[0].id] + [tight])
+    general = next(x for x in eff if x.kind == "max_run" and not x.who and x.params["shifts"] == "work")
+    assert not general.meta.get("except_who")
