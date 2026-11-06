@@ -73,6 +73,9 @@ ALWAYS_TYPES = ("公", "有", "研")   # 表に出ていなくても、頼まれ
 LONG_REST_RATIO = 1.5   # 公休がいちばん多い日数のこの倍以上の人は、途中入職・長い休みかもしれない
 RATE_LINE = 0.9   # 夜明公の決まりを候補にする割合
 SERIAL_RANGE = (40000, 60000)   # Excel の日付の通し番号（1900年式）の範囲
+# 表の上の行や日付の行の名前の欄にある言葉のうち、ユニットの名前ではない物（表の題と見出し）
+NOT_UNIT = re.compile(r"勤務|シフト|予定|様式|令和|平成|\d{4}|\d年|\d月|表$|名$|スタッフ|職員|曜")
+UNIT_WORD = re.compile(r"ユニット|棟|フロア|\d階")
 
 _WEEKDAY = re.compile(r"^[(（]?[月火水木金土日](?:曜日?)?[)）]?$")
 _DAY = re.compile(r"^(?:\d{4}[/-])?(?:(\d{1,2})[/-])?(\d{1,2})日?(?:[(（][月火水木金土日][)）])?$")
@@ -270,8 +273,10 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
     raws: list[list[str]] = []               # 同じ行の、改行も残した元のセル（見出しを読む時に使う）
     reader = csv.reader(io.StringIO(text), delimiter=delim)
     prev_end = 0
+    order: dict[int, int] = {}               # 行番号 → 貼った表の何行目か（空の行も数える。セルの中の改行は数えない）
     for raw in reader:
         first, prev_end = prev_end + 1, reader.line_num
+        order[first] = len(order)
         cells = [_cell_text(c) for c in raw]
         if not any(cells):
             continue
@@ -303,6 +308,11 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
         """名前以外のセルが空でなく、全部が数字の行は集計の行（出勤者数・公休数 など）。"""
         vals = [c for j, c in enumerate(cells) if j != name_idx and c]
         return bool(vals) and all(re.fullmatch(r"\d+(?:\.\d+)?", v) for v in vals)
+
+    def unit_label(name: str) -> bool:
+        """日付の行・曜日の行の名前の欄や、表の上の行の言葉が、ユニットの見出しか。"""
+        return bool(name) and not (name in NAME_HEADS or _is_role_heading(name) or is_label(name) or NOT_UNIT.search(name)
+                                   or _WEEKDAY.match(name))
 
     # items は ("unit", 名前) か ("staff", 行番号, 名前, 日のセル, 左のユニット列の値)
     items: list[tuple] = []
@@ -340,20 +350,38 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
                 vals = [_clean_name(c[j]) for _, c in body if j < len(c) and not _is_weekday_row(c)]
                 return sum(1 for v in vals if v and not v.isdigit() and not _is_role_heading(v))
             nc = max((j for j in left if j != uc and j != tc), key=lambda j: (score(j), -j))
+        def weekdays_only(cells: list[str]) -> bool:
+            """日の列が全部曜日の行か（右の回数の列に見出しの字があっても、曜日の行と見る）。"""
+            vals = [cells[c] for c in cols if c < len(cells) and cells[c]]
+            return len(vals) >= 28 and all(_WEEKDAY.match(v) for v in vals) and any(v[0] != "日" for v in vals)
+
+        marks: list[dict] = []   # 読んだ行の種類（貼った時の並べ方で持ち出すため）
+        repeated = False         # ユニットごとに日付の行が繰り返す表か
         for lineno, cells in body:
-            if _is_weekday_row(cells):
-                continue
             name = _clean_name(cells[nc]) if nc < len(cells) else ""
+            left_cells = cells[:cols[0]]
+            # ユニットごとに曜日の行と日付の行が繰り返す表。行の名前の欄にユニットの名前を書く表もある
+            again = weekdays_only(cells) or _is_weekday_row(cells)
+            date_row = not again and (_find_header(cells) or (None,))[0] == cols
+            if again or date_row:
+                repeated = repeated or date_row
+                if unit_label(name):
+                    items.append(("unit", name))
+                    repeated = True
+                marks.append({"line": lineno, "k": "date" if date_row else "wk", "left": left_cells})
+                continue
             kind = _row_kind(cells[tc]) if tc is not None and tc < len(cells) else None
             if kind == "hours" or (tc is not None and not name):
                 continue   # 時間数の行と、名前の無い行（人ではない。集計の行にも数えない）
             if is_label(name) or is_total_row(cells, nc):
                 skipped += 1
+                marks.append({"line": lineno, "k": "other", "left": left_cells})
                 continue
             days = [cells[c] if c < len(cells) else "" for c in cols]
             if not any(_not_arrow(c) for c in days) and kind != "sym":   # 応援の矢印と行き先だけの行も見出し（table_tsv）
                 if not _is_role_heading(name):
                     items.append(("unit", name))
+                    marks.append({"line": lineno, "k": "unit", "left": left_cells, "unit": _unit_name(name)})
                 continue
             if len(cells) <= cols[-1]:
                 k = sum(1 for c in cols if c < len(cells))
@@ -365,13 +393,50 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
             ulabel = _clean_name(cells[uc]) if uc is not None and uc < len(cells) else ""
             items.append(("staff", lineno, name, days, ulabel))
             lefts.setdefault(name, cells[:cols[0]])
+            marks.append({"line": lineno, "k": "staff", "name": name})
             if kind == "sym":
                 has_kind = True
+        # 最初のユニットの見出しは、日付の行より上か、日付の行の名前の欄にある（上の行を読まないと、最初のユニットの人が
+        # 「全体」になり、ユニットごとの人数が黙って違っていた。2026-11-06 通しの試し）
+        top_row = None
+        if items and items[0][0] == "staff":
+            label = _clean_name(hcells[nc]) if nc < len(hcells) else ""
+            if not unit_label(label):
+                label = ""
+                for lineno, cells in reversed(rows[:start - 1]):
+                    if _is_weekday_row(cells) or weekdays_only(cells):
+                        here = _clean_name(cells[nc]) if nc < len(cells) else ""
+                        if unit_label(here):
+                            label = here
+                            break
+                        continue
+                    filled = [c for c in cells if c]
+                    if len(filled) == 1 and unit_label(_clean_name(filled[0])):
+                        label = _clean_name(filled[0])
+                        top_row = (lineno, cells)
+                    break
+            if label and (any(it[0] == "unit" for it in items) or UNIT_WORD.search(label)):
+                items.insert(0, ("unit", label))
+                repeated = repeated or top_row is None
+            else:
+                top_row = None
         if not has_kind:
+            above = start >= 2 and (_is_weekday_row(rows[start - 2][1]) or weekdays_only(rows[start - 2][1]))
             layout = {"cols": cols, "name_col": nc, "unit_col": uc, "head": hcells[:cols[0]], "lefts": lefts,
-                      "unit_rows": any(it[0] == "unit" for it in items),
-                      "weekday": ("above" if start >= 2 and _is_weekday_row(rows[start - 2][1])
+                      "unit_rows": any(m["k"] == "unit" for m in marks) or top_row is not None,
+                      "weekday": ("above" if above
                                   else "below" if body and _is_weekday_row(body[0][1]) else None)}
+            # ふつうの並び（曜日・日付の後に人の行が続き、集計の行は人の下だけ）でない表は、貼った時の行の順を持つ
+            head = ([{"line": top_row[0], "k": "unit", "left": top_row[1][:cols[0]],
+                      "unit": _unit_name(_clean_name(next(c for c in top_row[1] if c)))}] if top_row else [])
+            if above:
+                head.append({"line": rows[start - 2][0], "k": "wk", "left": rows[start - 2][1][:cols[0]]})
+            head.append({"line": rows[start - 1][0], "k": "date", "left": hcells[:cols[0]]})
+            last = max((i for i, m in enumerate(marks) if m["k"] == "staff"), default=-1)
+            plan = head + marks[:last + 1]
+            at = [order[m["line"]] - order[plan[0]["line"]] for m in plan]
+            if repeated or top_row or any(m["k"] == "other" for m in plan):
+                layout["plan"] = [{**{k: v for k, v in m.items() if k != "line"}, "at": a} for m, a in zip(plan, at)]
     else:
         if header:
             n_header = len(header[0][0])

@@ -261,15 +261,37 @@ def table_tsv(st: dict, paste_symbols: dict | None = None, layout: dict | None =
         return line(lefts.get(s["name"]) or label(s["name"], s["unit"]),
                     [back.get(row[d], row[d]) if d < len(row) else "" for d in range(days)])
 
-    if lay.get("unit_rows", len(units) > 1):
+    def arrows_of(unit: str) -> list[str]:
+        arrows: dict[int, str] = {}
+        for x in st.get("support") or []:
+            go = x["arrow"] + x["to"]
+            if x["from"] == unit and go not in arrows.get(x["day"], ""):
+                arrows[x["day"]] = arrows.get(x["day"], "") + go
+        return [arrows.get(d, "") for d in range(1, days + 1)]
+
+    if lay.get("plan"):
+        # ユニットごとに日付の行が繰り返す表など。貼った時の行の順のまま出す（Excel の左上に貼って行がそろうように）。
+        # 人の間の集計の行は、詰めると人の行がずれるので空のまま1行とる（copy の知らせで伝える）
+        rows, by_name, seen = [], {s["name"]: s for s in staff}, set()
+        for e in lay["plan"]:
+            rows += [[] for _ in range(e["at"] - len(rows))]
+            if e["k"] == "wk":
+                rows.append(line(e["left"], [WEEKDAY_JA.get(w, "") for w in st["weekdays"]]))
+            elif e["k"] == "date":
+                rows.append(line(e["left"], [str(d) for d in range(1, days + 1)]))
+            elif e["k"] == "unit":
+                rows.append(line(e["left"], arrows_of(e["unit"])))
+            elif e["k"] == "other":
+                rows.append(line(e["left"], [""] * days))
+            elif e["name"] in by_name:
+                rows.append(person(by_name[e["name"]]))
+                seen.add(e["name"])
+            else:   # その月の名簿にいない人は、行だけ空で残す
+                rows.append(line(lefts.get(e["name"]) or label(e["name"]), [""] * days))
+        rows += [person(s) for s in staff if s["name"] not in seen]
+    elif lay.get("unit_rows", len(units) > 1):
         for unit in units:
-            arrows = {}
-            for x in st.get("support") or []:
-                go = x["arrow"] + x["to"]
-                if x["from"] == unit and go not in arrows.get(x["day"], ""):
-                    arrows[x["day"]] = arrows.get(x["day"], "") + go
-            rows.append(line(label(unit if "ユニット" in unit else unit + "ユニット"),
-                             [arrows.get(d, "") for d in range(1, days + 1)]))
+            rows.append(line(label(unit if "ユニット" in unit else unit + "ユニット"), arrows_of(unit)))
             rows += [person(s) for s in staff if s["unit"] == unit]
     else:
         rows += [person(s) for s in staff]
@@ -283,6 +305,11 @@ def table_tsv(st: dict, paste_symbols: dict | None = None, layout: dict | None =
 def support_left_out(st: dict, layout: dict | None) -> int:
     """コピーに入らない応援の件数。貼った表に見出しの行が無い形は、矢印を書く行が無い。"""
     return len(st.get("support") or []) if layout and not layout.get("unit_rows") else 0
+
+
+def blank_rows(layout: dict | None) -> int:
+    """コピーで空になる行の数（貼った表の、人の行の間にあった集計の行）。"""
+    return sum(1 for e in (layout or {}).get("plan") or [] if e["k"] == "other")
 
 
 class Box:
@@ -597,6 +624,8 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
                     self.send_header("X-Merged-Symbols", urllib.parse.quote(json.dumps(merged, ensure_ascii=False)))
                 if left_out:   # 貼った表の形に矢印を書く行が無く、コピーに入らない応援の件数
                     self.send_header("X-Support-Left-Out", str(left_out))
+                if blank_rows(layout):   # 人の行の間の集計の行は、空で出す
+                    self.send_header("X-Blank-Rows", str(blank_rows(layout)))
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
