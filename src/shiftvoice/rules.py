@@ -195,7 +195,10 @@ def _coverage_dates(rules: list[Rule]) -> list[Rule]:
     # 同じ勤務・同じ数え方（施設全体か、どのユニットか）の日付の人数を同じ日に言い直した時は、新しい方だけを効かせる。
     # 古い方まで毎日のルールをゆるめると、古い数が毎日のルールの強さで残った（Astra 2026-11-07 朝。「施設全体3人」の後の
     # 「施設全体1人」が段3で3人になった）
-    latest = {slot(r) + (d,): i for i, r in dated for d in r.when}
+    # 下限と上限は別に数える（「3人から4人」は下限と上限の2本。上限だけを新しい方と見ると、下限が効かなかった。Astra）
+    def sides(r: Rule) -> tuple:
+        return {"==": ("min", "max"), ">=": ("min",), "<=": ("max",)}[r.params["op"]]
+    latest = {slot(r) + (d, s): i for i, r in dated for d in r.when for s in sides(r)}
     out = []
     for j, g in enumerate(rules):
         over = []
@@ -205,7 +208,8 @@ def _coverage_dates(rules: list[Rule]) -> list[Rule]:
                     continue   # 自分自身と、自分より古い日付のルールには譲らない
                 if _syms_of(r.params.get("shifts")) != _syms_of(g.params.get("shifts")):
                     continue
-                days = sorted(d for d in set(r.when) & set(g.when or r.when) if latest[slot(r) + (d,)] == i)
+                days = sorted(d for d in set(r.when) & set(g.when or r.when)
+                              if any(latest[slot(r) + (d, s)] == i for s in sides(r)))
                 if days:
                     over.append({"params": r.params, "days": days})
         if over:

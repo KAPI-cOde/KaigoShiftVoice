@@ -255,3 +255,27 @@ def test_何日以外の人数は聞き返す(made, tmp_path):
     """「28日以外は早番3人」が28日だけの人数になった（3×8）"""
     r, new = _say(made, tmp_path, "28日以外は早番を3人", [{"type": "coverage", "shift": "早", "min": 3, "max": None}])
     assert r.kind != "applied" and new == []
+
+
+def test_幅のある日付の人数は言い直しと取り違えない():
+    """「28日は施設全体で早番を3人から4人に」は下限と上限の2本になる。新しい方だけを効かせる時に上限だけが残り、毎日の各1人の
+    上限がゆるまず、段1で作れず段3で2人になった（Astra 2026-11-07 朝の2回目。3×8）"""
+    daily = cov("r1", "fixed", "==", 1)
+    lo = cov("d28lo", "operational", ">=", 3, scope="all", when=[28])
+    hi = cov("d28hi", "operational", "<=", 4, scope="all", when=[28])
+    got = early_by_day([daily, lo, hi])
+    assert 3 <= sum(got[28].values()) <= 4
+
+
+def test_何日だけ除いての人数は聞き返す(made, tmp_path):
+    """「28日だけ除いて早番を3人にして」が28日だけの人数になった（3×8）"""
+    r, new = _say(made, tmp_path, "28日だけ除いて早番を3人にして", [{"type": "coverage", "shift": "早", "min": 3, "max": None}])
+    assert r.kind != "applied" and new == []
+
+
+def test_日付の無い以外の人数は今までどおり(made, tmp_path):
+    """日付を言っていない一言の「以外」は、日付の人数の聞き返しに入れない"""
+    r, new = _say(made, tmp_path, "日曜以外は早番を1人", [{"type": "coverage", "shift": "早", "min": 1, "max": 1,
+                                                       "weekdays": ["mon", "tue", "wed", "thu", "fri", "sat"]}])
+    assert "日付" not in (r.message or "")
+    assert all(not x.when for x in new)
