@@ -291,6 +291,25 @@ def _same_day_move(items: list[dict], text: str, facility: Facility, names: set[
     return out
 
 
+def _was_really(items: list[dict], text: str, facility: Facility) -> list[dict]:
+    """「16日、公休になってるけど研修だった」を、今の表の勤務（公休）をそのまま頼みと読むことがある（本物の Haiku、
+    2026-11-06。3回に2回）。「AになってるけどBだった」と言っていて、読みが A なら、B に置き換える。"""
+    kinds = {t.name: t.symbol for t in facility.shift_types} | {t.symbol: t.symbol for t in facility.shift_types}
+    names = "|".join(sorted(map(re.escape, kinds), key=len, reverse=True))
+    m = re.search(rf"({names})に?(?:なって(?:い)?る|なって(?:い)?た)(?:けど|けれど|が)、?({names})(?:だった|でした|です|のはず|が正し)", text)
+    if not m or kinds[m[1]] == kinds[m[2]]:
+        return items
+    was, real = kinds[m[1]], kinds[m[2]]
+    rest = next((t.symbol for t in facility.shift_types if t.kind == "rest"), None)
+    out = []
+    for it in items:
+        if it.get("type") == "set_cell" and it.get("shift") == was or it.get("type") == "day_off" and was == rest:
+            it = {"type": "set_cell", "staff": it.get("staff"), "days": it.get("days"), "shift": real,
+                  "strength": it.get("strength") or "wish", "reason": it.get("reason")}
+        out.append(it)
+    return out
+
+
 REPHRASE_WORDS = ("じゃなくて", "じゃなく", "ではなくて", "ではなく", "じゃない", "でなくて")
 EVERY_WEEK = ("固定", "毎週", "いつも", "ずっと", "決まって", "定休")
 ONE_WEEK = ("今度", "次の", "来週", "今週", "再来週", "この", "その", "第")
@@ -480,7 +499,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     """leave_caps は人ごとの有給の上限（帳面の回数の決まりから。日数のない有給の頼みに使う。13章）。
     rules はこの月の帳面のルール（人数の頼みを、今の同じ勤務の人数のルールと同じ数え方にそろえるのに使う）。"""
     names = {s.name for s in staff}
-    items = _tidy_leave(_weekday_off(_same_day_move(_tidy(items, month), text, facility, names), text), text)
+    items = _tidy_leave(_weekday_off(_was_really(_same_day_move(_tidy(items, month), text, facility, names), text, facility), text), text)
     real = [it for it in items if it.get("type") != "none"]
     if not real:
         raise Clarify("表を変える頼みが見つかりませんでした。もう一度言ってください")
