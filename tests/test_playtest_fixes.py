@@ -448,3 +448,11 @@ def test_month_only_cards(card, want):
     top = html[html.index("function renderCards()"):]
     assert top.index("only.forEach") < top.index("cleanEntry(box)")     # 毎月のルールの上に出す
     assert '"今月だけ"' in html[html.index("function makeCard"):html.index("function renderSaid")]
+
+
+def test_half_month_count_keeps_the_whole_month_count(sess):
+    sess.reader = Fake({"職員11さん、今月は夜勤3回まで": [{**NIGHT, "max": 3}],
+                        "職員11さん、15日までは夜勤2回まで。今月だけ": [{**NIGHT, "max": 2, "until_day": 15}]})
+    sess.say("小島さん、今月は夜勤3回まで")
+    assert sess.say("小島さん、15日までは夜勤2回まで。今月だけ").kind == "applied"
+    assert sorted(c["params"]["max"] for c in counts(sess)) == [2, 3]

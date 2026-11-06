@@ -55,7 +55,7 @@ def fill_answer(more: dict, masked: str, facility) -> list[dict] | None:
         if not _DAYS.fullmatch(t):
             return None
         days = [int(x) for x in re.findall(r"\d{1,2}", t)]
-        out = [{**it, "days": days} if it.get("type") in _ORDER else it for it in items]
+        out = [{**it, "days": days} if it.get("type") in _ORDER and not it.get("days") else it for it in items]
         return out if out != items else None
     if need == "shift":
         sym = _shift_said(t, facility)
@@ -155,6 +155,8 @@ def same_count(rd: dict, r, scope: str, until: str | None) -> bool:
     今月だけの厳しい数も、毎月のゆるい数では消さない。"""
     if rd.get("kind") != "count" or r.kind != "count" or not rd.get("who") or sorted(rd["who"]) != sorted(r.who or []):
         return False
+    if rd.get("when") is not None and (r.when is None or not set(r.when) <= set(rd["when"])):
+        return False   # 15日までの回数で、月全体の回数を消さない（新しいルールが前のルールの日を全部含む時だけ代わる）
     p, q = rd["params"], r.params
     if set(p.get("shifts") or []) != set(q.get("shifts") or []) or not str(r.meta.get("source", "")).startswith("話した"):
         return False
