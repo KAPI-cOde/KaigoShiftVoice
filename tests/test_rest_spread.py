@@ -1,7 +1,13 @@
 """31日の月に公休の数を守りきれない時、1人に寄せず、誰がいくつ外れたかを言う（2026-11-06 通しの試し）。
 
-見本は作り話の3ユニット16人の11月の表。公休9日のまま12月（31日）へ進むと、毎日の人数より人が余り、段3へ下がる。
-直す前は、外す人を少なくするために久保さんだけ公休19日の表が「できました」と出て、誰が外れたかも画面に出なかった。"""
+見本は作り話の3ユニット16人の11月の表。直す前は、外す人を少なくするために久保さんだけ公休19日の表が「できました」と
+出て、誰が外れたかも画面に出なかった。
+
+公休を守りきれない月は、作成者が「東の早番は1人、日勤は1人まで（どちらも動かせない）」と答えた形で作る（made の tight）。
+1日の勤務の枠が最大11（早3・日1・遅3・夜2・明け2）になり、毎日5人以上が休む。31日で155日 > 16人×9日なので、
+どう組んでも公休9日を守りきれない。
+貼ったままの見本（tight でない）は、前は「人が余って守れない」と思っていたが、段3の計算が1人の作業者では悪い表から
+抜け出せなかっただけだった（2026-11-06。作業者を回すと公休は全員9日、遅番の次の日の早番は0回）。"""
 import copy
 from pathlib import Path
 
@@ -12,10 +18,41 @@ PASTE = Path(__file__).parent / "fixtures" / "pastes" / "three_units.tsv"
 ANSWERS = {"日8": {"name": "日8の勤務", "kind": "work"}}
 
 
-def made(tmp_path):
+def tighten(rules: list[dict]) -> None:
+    """東の早番は1人（下限と上限）、日勤の上限1人を、動かせないルールにする。相談できるままだと、段3では外して
+    余った人を勤務に回せるので、公休の外れが起きない"""
+    for r in rules:
+        if r["name"] in ("早番の人数（東の下限）", "早番の人数（東の上限）"):
+            r["params"] = {**r["params"], "op": "==", "n": 1}
+            r["flex"] = "fixed"
+        elif r["name"] == "日勤の人数（東の上限）":
+            r["flex"] = "fixed"
+
+
+def made(tmp_path, tight=True):
     prop = infer(parse_paste(PASTE.read_text(encoding="utf-8")), 2026, 11, ANSWERS)
+    if tight:
+        tighten(prop.rules)
     c = create_facility(prop, tmp_path / "f", name="試験", next_year=2026, next_month=12, answers=ANSWERS)
     return c, Store(tmp_path / "f").month(2026, 12).table
+
+
+def test_pasted_three_units_keep_rest_and_avoid_late_then_early(tmp_path):
+    """貼ったままの3ユニット16人の12月は、公休9日を全員守れる。直す前は段3の計算が1人の作業者で、公休8〜11日・
+    運用の都合の外れ17件・遅番の次の日の早番23回の表を「できました」と出していた（2026-11-06。時刻を6時45分・
+    13時15分にした時に見つかった）"""
+    from shiftvoice.build import month_rules
+    from shiftvoice.interval import count_short
+    from shiftvoice.rules import check_table
+    c, table = made(tmp_path, tight=False)
+    assert c.next_table_made
+    assert {row.count("公") for row in table.values()} == {9}
+    store = Store(tmp_path / "f")
+    fac, m = store.facility(), store.month(2026, 12)
+    assert count_short(table, fac.shift_types, 14, m.prev_tail)[0] == 0
+    off = [b for b in check_table(month_rules(store, 2026, 12, with_premise=False), fac, store.staff_on(2026, 12), m, table)
+           if b["flex"] == "operational"]
+    assert len(off) <= 2, off
 
 
 def test_rest_is_spread_thin_and_named(tmp_path):

@@ -1,6 +1,7 @@
 """職員が30人を超える施設は、表を作る計算で、決まった順で複数の作業者を回す（2026-11-05）。
 1人で探すと、大きな施設では時間内に段1の表が見つからなかったり、短い並びと相談できるルールの外れが残ったりした。
-30人以下の施設は設定に何も足さないので、今までどおり1人で探す（表は1マスも変わらない）。API は呼ばない。"""
+30人以下の施設は設定に何も足さないので、段1では今までどおり1人で探す（表は1マスも変わらない）。段を下げて解く時
+（段2〜4）は、30人以下でも作業者を回す（2026-11-06。tests/test_rest_spread.py の貼ったままの3ユニット）。API は呼ばない。"""
 from pathlib import Path
 
 from ortools.sat.python import cp_model
@@ -65,6 +66,25 @@ def test_31人の月は決まった順で作業者を回し_30人以下は1人�
     solver_mod.solve_month(fac, staff, [], m)
     assert seen[:2] == [(1, False, 0, 2.0), (1, False, 0, 2.0)]
     assert seen[2:] == [(8, True, 8, 2.0), (8, True, 8, LARGE_DTIME)]   # 区切りの大きさも決める（決めないと版で変わりうる）
+
+
+def test_段を下げて解く時は30人以下でも作業者を回し_計算の量は施設のまま(monkeypatch):
+    """段1で作れない時の段2〜4は、運用の都合のルールが外せるスイッチになり、1人の作業者では悪い表から抜け出せなかった
+    （3ユニット16人の12月で、外れ17件・遅番の次の日の早番23回）。30人以下では計算の量は増やさない"""
+    seen = []
+
+    class Spy(cp_model.CpSolver):
+        def solve(self, model, *a, **k):
+            p = self.parameters
+            seen.append((p.num_workers, p.interleave_search, p.interleave_batch_size, p.max_deterministic_time))
+            return super().solve(model, *a, **k)
+
+    monkeypatch.setattr(solver_mod.cp_model, "CpSolver", Spy)
+    fac, staff, m = _tiny({"workers": 1, "max_deterministic_time": 2.0}, n=16)
+    assert large_workers(fac, staff) == 0 and large_workers(fac, staff, stage=3) == INTERLEAVE_WORKERS
+    for stage in (1, 2, 3, 4):
+        assert solver_mod.solve_month(fac, staff, [], m, stage=stage).status == "ok"
+    assert seen == [(1, False, 0, 2.0)] + [(8, True, 8, 2.0)] * 3
 
 
 def _rotate(row: list[str], k: int) -> list[str]:
