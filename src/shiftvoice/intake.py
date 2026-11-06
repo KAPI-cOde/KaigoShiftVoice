@@ -34,6 +34,7 @@ class Proposal:
     summary: str = ""
     replace_from: list[str] | None = None   # 言い直し（「AさんじゃなくてBさん」）で、前の頼みを外すかもしれない人
     covers: list[dict] = field(default_factory=list)   # 穴埋めの記録の候補 {staff, day（言っていなければ None）, how}
+    support: dict[str, str] = field(default_factory=dict)   # ユニット間の応援 "名前/日" → その日に働くユニット
 
 
 class Clarify(Exception):
@@ -444,6 +445,34 @@ def _swap(it: dict, text: str, facility: Facility, staff: list[Staff], month: Mo
     return out, f"{a}さんと{b}さんの{'・'.join(map(str, days))}日を入れ替え{detail}"
 
 
+def _support_cells(it: dict, facility: Facility, staff: list[Staff], month: Month, names: set[str], p: Proposal) -> None:
+    """ユニット間の応援（「12日、青木さんは西の遅番に入って」）を、その日のマスの頼みと応援の印にする。
+    作成者が言った時だけ入るので動かせない頼みにする（守れなければ「直せませんでした」で何も変えない）。
+    勤務を言っていなければ（「西へ応援」）その日の勤務のまま。自分のユニットを言った時はふつうのマスの頼み。"""
+    who = _names(it.get("staff"), names)
+    if not who or len(who) != 1:
+        raise Clarify(WHO_UNKNOWN)
+    name = who[0]
+    unit = it["unit"]
+    if unit not in facility.units:
+        raise Clarify("どのユニットか読み取れませんでした。表もルールも変えていません。もう一度言ってください")
+    own = next(s.unit for s in staff if s.name == name)
+    by_sym: dict[str, list[int]] = {}
+    for d in _days(it.get("days"), month):
+        sym = _sym(it["shift"], facility) if it.get("shift") else (month.table or {}).get(name, [""] * d)[d - 1]
+        if not it.get("shift") and (sym not in facility.symbols or facility.shift(sym).kind != "work"):
+            raise Clarify(f"{name}さんの{d}日は勤務がありません。何の勤務で入るかも言ってください。表もルールも変えていません")
+        by_sym.setdefault(sym, []).append(d)
+    for sym, ds in by_sym.items():
+        away = unit != own
+        p.rules.append({"name": f"{_who(who)} {'・'.join(map(str, ds))}日 {facility.shift(sym).name}"
+                                + (f"（{unit}へ応援）" if away else ""),
+                        "kind": "cell", "flex": "fixed", "params": {"in": [sym], **({"unit": unit} if away else {})},
+                        "who": who, "when": ds})
+        if away:
+            p.support.update({f"{name}/{d}": unit for d in ds})
+
+
 def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[Staff],
                 month: Month, leave_caps: dict[str, int] | None = None, rules: list | None = None) -> Proposal:
     """leave_caps は人ごとの有給の上限（帳面の回数の決まりから。日数のない有給の頼みに使う。13章）。
@@ -487,6 +516,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
             p.rules.append({"name": f"{_who(who)} {'・'.join(map(str, ds))}日 休み"
                                     + {"fixed": "（必ず）", "negotiable": "（できれば）"}.get(fl, ""),
                             "kind": "cell", "flex": fl, "params": {"in": ["公"]}, "who": who, "when": ds})
+        elif t == "set_cell" and it.get("unit"):
+            _support_cells(it, facility, staff, month, names, p)
         elif t in ("set_cell", "avoid_cell"):
             who = _names(it.get("staff"), names)
             ds = _days(it.get("days"), month)

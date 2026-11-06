@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import calendar
+import dataclasses
 import json
 import re
 import datetime as dt
@@ -143,6 +144,43 @@ def only_shift_items(masked: str, facility) -> list[dict] | None:
     sym = next(st.symbol for st in work if st.name == m.group(3))
     return [{"type": "staff_info", "staff": m.group(1), "from_month": int(m.group(2)) if m.group(2) else None,
              "can_add": [sym], "can_remove": [st.symbol for st in work if st.symbol != sym], "only": sym}]
+
+
+# ユニット間の応援（「12日、青木さんは西の遅番に入って」「西へ応援」）。応援は人の数え先が変わるだけで型の読み取りに
+# 無いので、Claude へ送らずに手元で読む（指示文を変えない。名前も送らない）。1人・日付つき・行き先のユニットつきの時だけ当て、
+# 打ち消し・もう済んだ話（穴埋めの報告）・毎週の頼み・人数の話は、今までどおり読み取りへ送る
+_SUPPORT_VERB = r"(?:応援|ヘルプ|手伝|助っ人|入|行|回)"
+_SUPPORT_SKIP = re.compile(r"入らな|入れな|入らず|行かな|行かせな|回さな|しないで|やめ|取り消|いらな|外し|戻し|くれた|もらった|"
+                           r"入った|行った|回った|手伝った|毎週|毎月|毎日|ずっと|\d人")
+
+
+def support_items(masked: str, facility) -> list[dict] | None:
+    """伏せた後の一言がユニット間の応援なら、読み取り結果の形（set_cell に行き先の unit）を手元で作る。違えば None。"""
+    if len(facility.units) < 2:
+        return None
+    t = _NOISE.sub("", masked.translate(str.maketrans("０１２３４５６７８９", "0123456789")))
+    people = set(re.findall(r"職員\d{2}", t))
+    if len(people) != 1 or _SUPPORT_SKIP.search(t):
+        return None
+    work = [st for st in facility.shift_types if st.kind == "work" and not st.on_request_only]
+    by_word = {w: st.symbol for st in work for w in (st.name, st.symbol)}
+    words = "|".join(re.escape(w) for w in sorted(by_word, key=len, reverse=True))
+    m = re.search(rf"(ユニット\d+)の?({words})(?:に|へ|で|を|は|が|として|職員\d{{2}}|さん)*{_SUPPORT_VERB}", t)
+    shift = by_word[m.group(2)] if m else None
+    if not m:
+        m = re.search(rf"(ユニット\d+)(?:に|へ|の|を)(?:応援|ヘルプ|手伝|助っ人)|(ユニット\d+)(?:に|へ)(?:入|行|回)", t)
+        if not m:
+            return None
+        said = re.search("|".join(re.escape(st.name) for st in work), t)   # 記号の「日」は日付の字と見分けられない
+        shift = by_word[said.group(0)] if said else None
+    plain = re.sub(r"ユニット\d+|職員\d{2}", "／", t)
+    days: list[int] = []
+    for a, b, one in re.findall(r"(\d{1,2})日?(?:から|〜|~)(\d{1,2})日|(\d{1,2})(?=日|と\d|[／は]?$)", plain):
+        days += list(range(int(a), int(b) + 1)) if a else [int(one)]
+    if not days:
+        return None
+    return [{"type": "set_cell", "staff": people.pop(), "days": days, "shift": shift, "unit": m.group(1) or m.group(2),
+             "reason": None}]
 
 
 def implied_by(rd: dict, rules) -> str | None:
@@ -328,8 +366,8 @@ class Session:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], f"「{word}」は{d.month}月{d.day}日で、いま開いている{self.month}月の表の外です。"
                                          f"{d.month}月の表で言ってください。表もルールも変えていません")
-        local = only_shift_items(masked, fac)
-        if local is not None:   # 手元で読めた（日勤だけ など）。Claude へは送らない
+        local = only_shift_items(masked, fac) or support_items(masked, fac)
+        if local is not None:   # 手元で読めた（日勤だけ・ユニット間の応援 など）。Claude へは送らない
             self._sent[u["id"]] = None
             items = masker.unmask(local)
             self.store.update_pending(self.year, self.month, u["id"], sent_text=None, items=items, status="read")
@@ -565,7 +603,9 @@ class Session:
             rules = [clip_to_month(r, *self._span()) for r in tmp.rules_at(between=self._span()).values()]
             fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
             ids = {r.id for r in added}
-            rr = resolve(fac, staff, rules, m, m.table, [r for r in rules if r.id in ids])
+            support = self._support_after(p, m)
+            rr = resolve(fac, staff, rules, dataclasses.replace(m, support=support), m.table,
+                         [r for r in rules if r.id in ids])
             secs = rr.seconds
             if not rr.ok:
                 self.store.resolve_pending(self.year, self.month, u["id"])
@@ -580,8 +620,8 @@ class Session:
             warning = "。".join(notes)
             self.store.save_ledger(led)            # 1 帳面
             m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev,
-                              "said": u["text"]})
-            m.table, m.built_rev = rr.table, led.rev
+                              "said": u["text"], "rest_adjust": m.rest_adjust, "support": m.support})
+            m.table, m.built_rev, m.support = rr.table, led.rev, support
             self.store.save_month(m)               # 2 月の表
         extra = {}
         if p.staff_changes:
@@ -611,6 +651,17 @@ class Session:
             summary = f"{kept}。毎月のルールとして残しました（来月からの表にも効きます）"
         return Reply("applied", u["id"], summary, changes=changes, rule_ids=[r.id for r in added],
                      summary=summary, seconds=secs, warning=warning, extra=extra)
+
+    @staticmethod
+    def _support_after(p: Proposal, m) -> dict[str, str]:
+        """この一言の後の応援の一覧。同じ人の同じ日に新しくマスを決めたら、前の応援は外して言われた応援だけを入れる。"""
+        sup = dict(m.support)
+        for rd in p.rules:
+            if rd["kind"] == "cell" and "in" in rd["params"]:
+                for w in rd.get("who") or []:
+                    for d in rd.get("when") or []:
+                        sup.pop(f"{w}/{d}", None)
+        return {**sup, **p.support}
 
     def _refit_staff(self, u: dict, p: Proposal, m, staff: list, before: dict) -> Reply | None:
         """入れる勤務を変えた人の、開いている月の表で入れなくなったマスだけを、狭い範囲の直しで動かす。
@@ -693,8 +744,12 @@ class Session:
                     drop.setdefault(hits[0].id, set()).add(d)
         at = self.now().isoformat(timespec="seconds")
         meta = {"said": u["text"], "who": self.who, "at": at, "kind": "cancel"}
+        support = dict(m.support)
         for rid, days in drop.items():
             r = rules[rid]
+            if r.params.get("unit"):   # 応援の頼みを取り消したら、その日の応援も外す（マスはほかの頼みと同じくそのまま）
+                for d in days:
+                    support.pop(f"{r.who[0]}/{d}", None)
             rest = [d for d in r.when if d not in days]
             if not rest:
                 led.append("remove", rule_id=rid, op_id=u["id"], meta=meta)
@@ -702,8 +757,9 @@ class Session:
                 name = re.sub(r"[\d・]+日", "・".join(map(str, rest)) + "日", r.name, count=1)
                 led.append("change", rule_id=rid, rule={"when": rest, "name": name}, op_id=u["id"], meta=meta)
         self.store.save_ledger(led)                # 1 帳面
-        m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev, "said": u["text"]})
-        m.built_rev = led.rev
+        m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev, "said": u["text"],
+                          "rest_adjust": m.rest_adjust, "support": m.support})
+        m.built_rev, m.support = led.rev, support
         self.store.save_month(m)                   # 2 月の表（マスは動かさない。戻す時のために履歴だけ）
         self.store.resolve_pending(self.year, self.month, u["id"])
         return Reply("applied", u["id"], f"{p.summary}。表のマスはそのままです",
@@ -1153,7 +1209,9 @@ class Session:
             added.append(Rule.from_dict(led.append("add", rule=rd, frm=start, until=end)["rule"]))
         rules = [clip_to_month(r, start, end) for r in led.rules_at(between=self._span()).values()]
         fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
-        rr = resolve(fac, staff, rules, m, m.table, [r for r in rules if r.id.startswith("t-fix")])
+        support = self._support_after(p, m)
+        rr = resolve(fac, staff, rules, dataclasses.replace(m, support=support), m.table,
+                     [r for r in rules if r.id.startswith("t-fix")])
         if not rr.ok:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("failed_solve", u["id"], rr.staged.message or "直せませんでした")
@@ -1162,7 +1220,7 @@ class Session:
         if maybe and any(b["rule"].startswith("t-fix") for b in rr.staged.result.broken):
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], f"{p.summary}は、ほかのルールとぶつかって守れません。表は変えていません")
-        offer = {"rules": p.rules, "scope": "once", "table": rr.table, "changes": rr.changes,
+        offer = {"rules": p.rules, "scope": "once", "table": rr.table, "changes": rr.changes, "support": support,
                  "summary": p.summary, "base_rev": self.store.ledger().rev, "base_table": json.dumps(m.table),
                  "source": "話した（できれば）" if maybe else "直した（配った後）"}
         self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
@@ -1284,6 +1342,7 @@ class Session:
             "staff": [{"name": s.name, "unit": s.unit, "changes": s.changes} for s in staff],
             "shift_names": [[st.symbol, st.name] for st in fac.shift_types],
             "table": m.table,
+            "support": self._support_rows(m, fac, staff),
             "cards": [{"id": r.id, "name": r.name, "flex": r.flex, "scope": r.scope, "who": r.who,
                        "when": r.when, "kind": r.kind, "params": r.params, "meta": r.meta,
                        "shadowed_by": _shadowed(r, rules)}
@@ -1312,6 +1371,22 @@ class Session:
                                  for a, b in zip(row, m.dist_table.get(n, row)))
                              if m.distributed and m.dist_table is not None else None),
         }
+
+    @staticmethod
+    def _support_rows(m, fac, staff) -> list[dict]:
+        """画面とコピーに出す応援。勤務のある日だけ。矢印はユニットの並びで、元のユニットから見た行き先の向き。"""
+        unit_of = {s.name: s.unit for s in staff}
+        order = list(dict.fromkeys(s.unit for s in staff))
+        out = []
+        for key, to in m.support.items():
+            name, d = key.rsplit("/", 1)
+            sym = ((m.table or {}).get(name) or [""] * int(d))[int(d) - 1]
+            frm = unit_of.get(name)
+            if frm is None or frm == to or to not in order or sym not in fac.symbols or fac.shift(sym).kind != "work":
+                continue
+            out.append({"name": name, "day": int(d), "from": frm, "to": to,
+                        "arrow": "↓" if order.index(to) > order.index(frm) else "↑"})
+        return sorted(out, key=lambda x: (x["day"], order.index(x["from"])))
 
     def _returned_people(self, m) -> dict[str, str]:
         """返す案を採った月の、返した人ごとの1行（名前の横に出す。例「有給 0→1日・連勤 5→4日」）。

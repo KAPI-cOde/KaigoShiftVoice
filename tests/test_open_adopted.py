@@ -27,4 +27,4 @@ def test_adopted_next_month_opens_and_exports(act2):
     st = dec.state()
     assert "_plans" not in st["layers"] and "_adopted" not in st["layers"]
     rows = table_tsv(st).splitlines()
-    assert len(rows) >= 2 + 16 and rows[0].split("\t")[-1] == "31"     # 12月は31日まで
+    assert len(rows) >= 2 + 16 and rows[1].split("\t")[-1] == "31"     # 12月は31日まで（1行目は曜日、2行目が日付）

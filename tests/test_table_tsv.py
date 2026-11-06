@@ -50,15 +50,21 @@ def test_形は人数と日数どおりで記号は表と同じ(served):
     assert code == 200 and ctype.startswith("text/tab-separated-values")
     st = session.state()
     rows = grid(text)
-    units = {s["unit"] for s in st["staff"]}
-    lead = 2 if len(units) > 1 else 1            # ユニットの列は、ユニットが2つ以上ある時だけ名前の前に付く
-    assert len(rows) == len(st["staff"]) + 2     # 見出し2行＋人数（この日は待機の欄なし）
-    assert all(len(r) == lead + st["days"] for r in rows)
-    assert rows[0][lead:] == [str(d) for d in range(1, st["days"] + 1)]
-    assert rows[1][lead:] == [WD[w] for w in st["weekdays"]]
-    for s, r in zip(st["staff"], rows[2:]):
-        assert r[lead - 1] == s["name"] and (lead == 1 or r[0] == s["unit"])
-        assert r[lead:] == [st["table"][s["name"]][d] for d in range(st["days"])]
+    units = list(dict.fromkeys(s["unit"] for s in st["staff"]))
+    # 見出し2行＋ユニットの見出しの行（ユニットが2つ以上ある時だけ）＋人数（この日は待機の欄なし）
+    assert len(rows) == 2 + (len(units) if len(units) > 1 else 0) + len(st["staff"])
+    assert all(len(r) == 1 + st["days"] for r in rows)
+    assert rows[0][1:] == [WD[w] for w in st["weekdays"]]
+    assert rows[1][1:] == [str(d) for d in range(1, st["days"] + 1)]
+    by_name = {r[0]: r for r in rows[2:]}
+    for s in st["staff"]:
+        assert by_name[s["name"]][1:] == [st["table"][s["name"]][d] for d in range(st["days"])]
+    if len(units) > 1:
+        heads = [i for i, r in enumerate(rows) if r[0].endswith("ユニット")]
+        assert [rows[i][0] for i in heads] == [u + "ユニット" for u in units]
+        for i, u in zip(heads, units):            # 見出しの下に、そのユニットの職員が続く
+            n = sum(1 for s in st["staff"] if s["unit"] == u)
+            assert {r[0] for r in rows[i + 1:i + 1 + n]} == {s["name"] for s in st["staff"] if s["unit"] == u}
 
 
 def test_待機当番の行が最後に付く(served):
@@ -73,8 +79,9 @@ def test_待機当番の行が最後に付く(served):
     st = session.state()
     assert st["layers"]
     rows = grid(fetch(base)[2])
-    lead = 2 if len({s["unit"] for s in st["staff"]}) > 1 else 1
-    assert len(rows) == len(st["staff"]) + 2 + len(st["layers"])
+    lead = 1
+    heads = len({s["unit"] for s in st["staff"]})
+    assert len(rows) == len(st["staff"]) + 2 + (heads if heads > 1 else 0) + len(st["layers"])
     assert all(len(r) == lead + st["days"] for r in rows)
     layer = next(iter(st["layers"].values()))
     last = rows[-1]

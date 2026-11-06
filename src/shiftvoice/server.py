@@ -213,7 +213,9 @@ WEEKDAY_JA = {"sun": "日", "mon": "月", "tue": "火", "wed": "水", "thu": "�
 
 def table_tsv(st: dict, paste_symbols: dict | None = None) -> str:
     """開いている月の表をタブ区切りにする（Excel の左上のマスに貼れる形）。
-    1行目は日付、2行目は曜日、3行目から「名前＋各日の記号」。ユニットが2つ以上ならユニットの列を名前の前に置く。
+    1行目は曜日、2行目は日付、3行目から「名前＋各日の記号」。ユニットが2つ以上なら、画面と同じくユニットの見出しの行を
+    職員の行の前に挟み、その日の欄に応援の矢印を入れる（施設の Excel の並べ方。左上のマスに貼って行がそろうように）。
+    マスは記号だけ（応援先の字は入れない）。人数の行は入れない（施設の Excel には自分の式の行があり、貼ると上書きするため）。
     待機当番などの欄の行は最後に、その日の担当の名前（さんは外す）を入れる。
     paste_symbols（施設の設定。アプリの記号 → 取り込んだ表での書き方）があれば、勤務の記号をその書き方に戻す。
     無い記号はアプリの記号のまま。"""
@@ -227,18 +229,24 @@ def table_tsv(st: dict, paste_symbols: dict | None = None) -> str:
         return t
 
     staff, days = st["staff"], st["days"]
-    multi = len({s["unit"] for s in staff}) > 1
-    pad = [""] * (2 if multi else 1)
-    rows = [pad + [str(d) for d in range(1, days + 1)],
-            pad + [WEEKDAY_JA.get(w, "") for w in st["weekdays"]]]
-    for s in staff:
-        line = [s["unit"]] if multi else []
-        line.append(s["name"])
-        row = st["table"].get(s["name"]) or []
-        line += [back.get(row[d], row[d]) if d < len(row) else "" for d in range(days)]
-        rows.append(line)
+    units = list(dict.fromkeys(s["unit"] for s in staff))
+    multi = len(units) > 1
+    rows = [[""] + [WEEKDAY_JA.get(w, "") for w in st["weekdays"]],
+            [""] + [str(d) for d in range(1, days + 1)]]
+    for unit in units:
+        if multi:
+            arrows = {}
+            for x in st.get("support") or []:
+                if x["from"] == unit and x["arrow"] not in arrows.get(x["day"], ""):
+                    arrows[x["day"]] = arrows.get(x["day"], "") + x["arrow"]
+            rows.append([unit if "ユニット" in unit else unit + "ユニット"] + [arrows.get(d, "") for d in range(1, days + 1)])
+        for s in staff:
+            if s["unit"] != unit:
+                continue
+            row = st["table"].get(s["name"]) or []
+            rows.append([s["name"]] + [back.get(row[d], row[d]) if d < len(row) else "" for d in range(days)])
     for layer in (st.get("layers") or {}).values():
-        line = ([""] if multi else []) + [layer.get("name") or "待機当番"]
+        line = [layer.get("name") or "待機当番"]
         for d in range(1, days + 1):
             line.append("・".join(n.removesuffix("さん") for n in (layer.get("assign") or {}).get(str(d), [])))
         rows.append(line)

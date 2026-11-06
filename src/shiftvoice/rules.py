@@ -216,27 +216,45 @@ def _cov_key(p: dict) -> tuple:
     return (tuple(sorted(_syms_of(p.get("shifts")))), tuple(sorted(p.get("weekdays") or [])), bool(p.get("holidays")))
 
 
+def _cov_yield(new: dict, old: dict) -> set[str]:
+    """古い人数のルールが、新しい人数のルールに譲る側（min・max）。新しい値と両立しない側だけ譲る。両立する側は残す。
+    「2人以上」に「3人まで」を足しても2人以上は残り、「西と南は1人」に「西は2人」を足しても、新しい方が運用の都合で
+    外れた日に西が1人を下回らない（1人の下限は2人と両立する）。"""
+    out = set()
+    if old["op"] in ("==", ">=") and new["n"] < old["n"]:
+        out.add("min")
+    if old["op"] in ("==", "<=") and new["n"] > old["n"]:
+        out.add("max")
+    return out
+
+
 def _coverage_units(rules: list[Rule]) -> list[Rule]:
-    """ユニットを名指しした人数のルール（「東の早番は毎日2人」。params の units）があるユニットは、同じ勤務・同じ曜日の
-    全ユニット向けの人数のルール（「早番は各ユニットで1人」）から外す。名指しの方が優先する（人を名指しした回数の
-    ルールと同じ考え。with_overrides）。外したユニットは meta の skip_units に書き、expand が数えない。"""
+    """ユニットを名指しした人数のルール（「東の早番は毎日2人」。params の units）は、同じ勤務・同じ曜日の、ユニットごとの
+    別のルールより優先する（人を名指しした回数のルールと同じ考え。with_overrides）。
+    - 全ユニット向けのルール（「早番は各ユニットで1人」）は、名指しのユニットだけ譲る
+    - 別の名指しのルールは、後ろ（新しい方）に、重なるユニットだけ譲る。取り込みでまとめた「西と南は1人」の西だけを
+      「西は2人」に変えられる（Astra の指摘3）。ルールごと置き換えると南の人数まで消えるので、1本のルールは残す
+    譲るのは新しい値と両立しない側だけ（_cov_yield）。上限だけの頼みで共通の下限まで消さない（Astra の指摘2）。
+    譲ったユニットは meta の skip_min・skip_max に書き、expand が数えない。"""
     import copy
-    named: dict[tuple, set[str]] = {}
-    for r in rules:
-        p = r.params
-        if r.kind == "coverage" and p.get("scope") == "each_unit" and p.get("units"):
-            named.setdefault(_cov_key(p), set()).update(p["units"])
-    if not named:
-        return rules
-    out = []
-    for g in rules:
-        p = g.params
-        skip = named.get(_cov_key(p)) if g.kind == "coverage" and p.get("scope") == "each_unit" \
-            and not p.get("units") else None
-        if skip:
+    out = list(rules)
+    for i, new in enumerate(rules):
+        p = new.params
+        if new.kind != "coverage" or p.get("scope") != "each_unit" or not p.get("units"):
+            continue
+        for j, g in enumerate(out):
+            q = g.params
+            if j == i or g.kind != "coverage" or q.get("scope") != "each_unit" or _cov_key(q) != _cov_key(p):
+                continue
+            if q.get("units") and j > i:
+                continue
+            hit = set(p["units"]) & set(q.get("units") or p["units"])
+            if not hit:
+                continue
             g = copy.copy(g)
-            g.meta = {**g.meta, "skip_units": sorted(skip)}
-        out.append(g)
+            g.meta = {**g.meta, **{f"skip_{side}": sorted(set(g.meta.get(f"skip_{side}", ())) | hit)
+                                   for side in _cov_yield(p, q)}}
+            out[j] = g
     return out
 
 
@@ -298,9 +316,9 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
             return month.support.get(f"{s.name}/{d}", s.unit)
 
         # ユニットごとの人数は、名指しのユニット（units）があればそこだけ。ユニットごとに違う人数（東は2人・西と南は1人）を
-        # 持つため。名指しのルールがあるユニットは、全ユニット向けのルールから外す（skip_units。_coverage_units）
-        skip = set(rule.meta.get("skip_units", ()))
-        units = [u for u in facility.units if (not p.get("units") or u in p["units"]) and u not in skip]
+        # 持つため。名指しのルールに譲った側は数えない（skip_min・skip_max。_coverage_units）
+        skip_lo, skip_hi = set(rule.meta.get("skip_min", ())), set(rule.meta.get("skip_max", ()))
+        units = [u for u in facility.units if not p.get("units") or u in p["units"]]
 
         for d in _days(rule, month):
             if not on_days(p, month, d):
@@ -312,8 +330,10 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
                 terms = [Term(s.name, d, syms) for s in members]
                 n = p["n"]
                 lo, hi = {"==": (n, n), ">=": (n, None), "<=": (None, n)}[p["op"]]
-                if hi_off:
-                    hi = None   # 曜日つきの人数が上限を超えて頼んだ日（with_overrides）
+                if hi_off or gname in skip_hi:
+                    hi = None   # 曜日つきの人数が上限を超えて頼んだ日（with_overrides）か、名指しのルールに譲った上限
+                if gname in skip_lo:
+                    lo = None
                 if lo is None and hi is None:
                     continue
                 out.append(Instance(rule, f"{gname}/{d}", terms, lo, hi))

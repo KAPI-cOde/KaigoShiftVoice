@@ -22,6 +22,11 @@
   .grid th.off { background: #eee; }
   .grid tr.firstrow td { border-top: 2px solid #000; }
   .grid .unit { font-size: 11px; margin-right: 6px; }
+  .grid thead tr.wdrow th { height: 18px; font-size: 11px; border-bottom: none; }
+  .grid thead tr.dayrow th { height: 20px; border-top: none; }
+  .grid tr.unithead td { background: #f0f0f0; font-weight: 700; border-top: 2px solid #000; height: 22px; font-size: 12px; }
+  .grid tr.unithead td.name { cursor: default; }
+  .grid td .sup { font-size: 9px; font-weight: 400; margin-left: 1px; }
   .grid .mark { font-size: 10px; margin-left: 4px; font-weight: 700; }
   .grid td.cell { transition: background-color 1.2s ease; }
   .grid td.glow { background: #fff3a0; font-weight: 700; box-shadow: inset 0 0 0 2px #d4a800; }
@@ -233,6 +238,9 @@
     .grid td.k-early, .grid td.k-day, .grid td.k-late, .grid td.k-night, .grid td.k-ake, .grid td.k-leave { background: none !important; }   /* 紙は今どおり白黒（土日祝の列だけ灰色） */
     .grid td { box-shadow: none !important; }
     .grid td.off, .grid th.off { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .grid thead tr.wdrow th, .grid thead tr.dayrow th, .grid tr.unithead td { height: 16px; }
+    .grid tfoot td { height: 13px; font-size: 8px; line-height: 1; }   /* 3ユニットでも表と人数の行が1枚に入るように */
+    .grid tr.unithead td { background: #e4e4e4 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .grid tr { break-inside: avoid; }
     .grid .acc, .grid .mark, .legend .glowkey { display: none !important; }
     .printonly { display: block !important; font-size: 10px; margin: 0 0 4px; }   /* 画面だけの書き込み（引き受けの回数・〇月から夜勤も・黄色の凡例）は紙に出さない */
@@ -386,7 +394,7 @@ function renderLegend() {
     if (i) lg.appendChild(document.createTextNode("　"));
     lg.appendChild(el("span", "unitkey", x[0] + "＝" + x[1]));
   });
-  if (multiUnit()) lg.appendChild(el("span", "unitkey", "　／　" + unitNames().join("・") + "はユニット"));   // 「東・西」の「・」の所で折らない
+  if ((S.support || []).length) lg.appendChild(el("span", "unitkey", "　／　↓↑＝ほかのユニットへ応援（マスの小さい字が応援先）"));
   lg.appendChild(el("span", "glowkey", "　／　黄色＝いま直ったマス"));   // 印刷では隠す（紙に黄色は出ない）
 }
 
@@ -404,26 +412,37 @@ function renderTable() {
   }
   var t = el("table", "grid");
   var thead = el("thead");
-  var hr = el("tr");
-  hr.appendChild(el("th", "name", ""));
+  // 施設の Excel の並べ方（作者 2026-11-06）。上に曜日の行と日付の行、ユニットごとに見出しの行と職員の行、下に人数の行
+  var wr = el("tr", "wdrow"), hr = el("tr", "dayrow");
+  var corner = el("th", "name", "");
+  corner.rowSpan = 2;
+  wr.appendChild(corner);
   for (var d = 1; d <= S.days; d++) {
-    var th = el("th", "", String(d));
     var wd = S.weekdays[d - 1];
-    var sm = el("small", "", WD[wd] || "");
-    th.appendChild(sm);
-    if (wd === "sat" || wd === "sun" || S.holidays.indexOf(d) >= 0) th.className = "off";
-    hr.appendChild(th);
+    var off = wd === "sat" || wd === "sun" || S.holidays.indexOf(d) >= 0;
+    wr.appendChild(el("th", off ? "off" : "", WD[wd] || ""));
+    hr.appendChild(el("th", off ? "off" : "", String(d)));
   }
+  thead.appendChild(wr);
   thead.appendChild(hr);
   t.appendChild(thead);
   var tb = el("tbody");
+  var supCell = {}, supOut = {};   // 応援。マス "名前|日" → 応援先、ユニット → 日 → 出ていく人
+  (S.support || []).forEach(function (x) {
+    supCell[x.name + "|" + x.day] = x.to;
+    var o = supOut[x.from] = supOut[x.from] || {};
+    (o[x.day] = o[x.day] || []).push(x);
+  });
+  var ordered = [];
+  unitNames().forEach(function (u) {
+    S.staff.forEach(function (st) { if (st.unit === u) ordered.push(st); });
+  });
   var prevUnit = null;
-  S.staff.forEach(function (st) {
-    var tr = el("tr");
-    if (prevUnit !== null && prevUnit !== st.unit) tr.className = "firstrow";
+  ordered.forEach(function (st) {
+    if (multiUnit() && prevUnit !== st.unit) tb.appendChild(unitHead(st.unit, supOut[st.unit] || {}));
     prevUnit = st.unit;
+    var tr = el("tr");
     var nm = el("td", "name");
-    if (multiUnit()) nm.appendChild(el("span", "unit", st.unit));
     nm.appendChild(document.createTextNode(st.name));
     if (person === st.name) nm.className += " picked";
     (function (name) {
@@ -450,6 +469,11 @@ function renderTable() {
       td.className += toneCls(td.textContent);   // 光る間に見せる前の記号も、その記号の色で
       if (glowCells[key] || cardGlow[key]) td.className += " glow";
       if (whyKey === key) td.className += " picked";
+      if (supCell[key]) {
+        var sp = el("span", "sup", supCell[key].replace("ユニット", "").slice(0, 2));
+        sp.title = "この日は" + supCell[key] + "で働きます";
+        td.appendChild(sp);
+      }
       (function (name, day) {
         td.addEventListener("click", function () { showWhy(name, day); });
       })(st.name, d2);
@@ -475,6 +499,21 @@ function renderTable() {
   t.appendChild(tb);
   t.appendChild(countRows());
   wrap.appendChild(t);
+}
+
+// ユニットの見出しの行。応援が出る日の欄に矢印（行き先のユニットが下なら↓、上なら↑）
+function unitHead(unit, out) {
+  var tr = el("tr", "unithead");
+  tr.appendChild(el("td", "name", unit.indexOf("ユニット") >= 0 ? unit : unit + "ユニット"));
+  for (var d = 1; d <= S.days; d++) {
+    var xs = out[d] || [];
+    var arrows = [];
+    xs.forEach(function (x) { if (arrows.indexOf(x.arrow) < 0) arrows.push(x.arrow); });
+    var td = el("td", "", arrows.join(""));
+    if (xs.length) td.title = xs.map(function (x) { return x.name + "さんが" + x.to + "へ応援"; }).join("、");
+    tr.appendChild(td);
+  }
+  return tr;
 }
 
 // 日ごとの勤務の人数の行（ユニットごとと施設全体）。人数のルールに足りない日は太字と下線
@@ -1686,10 +1725,14 @@ function renderResult() {
   names.forEach(function (n) {
     var tr = el("tr");
     var u = unitOf[n];
-    if (prevUnit !== null && u !== undefined && prevUnit !== u) tr.className = "firstrow";
+    if (multiUnit() && u !== undefined && prevUnit !== u) {
+      var uh = el("tr", "unithead");
+      uh.appendChild(el("td", "name", u.indexOf("ユニット") >= 0 ? u : u + "ユニット"));
+      for (var ud = 1; ud <= b.days; ud++) uh.appendChild(el("td", "", ""));
+      tb.appendChild(uh);
+    }
     if (u !== undefined) prevUnit = u;
     var nm = el("td", "name");
-    if (u !== undefined && multiUnit()) nm.appendChild(el("span", "unit", u));
     nm.appendChild(document.createTextNode(n));
     tr.appendChild(nm);
     for (var d2 = 1; d2 <= b.days; d2++) {

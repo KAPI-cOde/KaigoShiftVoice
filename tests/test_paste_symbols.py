@@ -120,8 +120,8 @@ def test_ひだまりは今と同じ(built_dir, tmp_path):
     store = Store(root)
     assert "paste_symbols" not in store.facility().settings
     st, rows = export(store, 2026, 11)
-    assert [r[-st["days"]:] for r in rows[2:2 + len(st["staff"])]] == \
-        [st["table"][s["name"]][:st["days"]] for s in st["staff"]]
+    people = [r for r in rows[2:] if not r[0].endswith("ユニット")]   # ユニットの見出しの行を除いた職員の行
+    assert [r[-st["days"]:] for r in people] == [st["table"][s["name"]][:st["days"]] for s in st["staff"]]
 
 
 def test_対応の無い記号はそのままで先頭の式の守りは戻した後にも効く():

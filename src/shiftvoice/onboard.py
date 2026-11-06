@@ -342,7 +342,7 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
                 skipped += 1
                 continue
             days = [cells[c] if c < len(cells) else "" for c in cols]
-            if not any(days) and kind != "sym":
+            if not any(c.strip("↓↑") for c in days) and kind != "sym":   # 応援の矢印だけの行も見出し（table_tsv）
                 if not _is_role_heading(name):
                     items.append(("unit", name))
                 continue
@@ -369,7 +369,7 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
                 skipped += 1
                 continue
             rest = cells[k + 1:]
-            if any(rest):
+            if any(c.strip("↓↑") for c in rest):
                 items.append(("staff", lineno, name, rest, ""))
             elif not _is_role_heading(name):
                 items.append(("unit", name))
