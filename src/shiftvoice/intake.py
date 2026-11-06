@@ -191,6 +191,10 @@ def _tidy_leave(items: list[dict], text: str) -> list[dict]:
     def staff_key(v):
         return tuple(v) if isinstance(v, list) else (v,)
     offs = [it for it in items if it.get("type") == "day_off" and it.get("days")]
+    if "公休" not in text and not offs:   # 「あさっては有給取るって」を公休のマスと読むことがある（本物の Haiku、2026-11-06）
+        rest = [it for it in items if it.get("type") == "set_cell" and it.get("shift") == "公" and it.get("days")]
+        if len(rest) == 1:
+            items = [{**it, "shift": "有"} if it is rest[0] else it for it in items]
     out = []
     for it in items:
         # 有給にするのは、休みの頼みが1つだけの時か、その頼みの理由に有給の言葉がある時だけ
@@ -295,6 +299,20 @@ def _same_day_move(items: list[dict], text: str, facility: Facility, names: set[
             sname = next((t.name for t in facility.shift_types if sym in (t.symbol, t.name)), "勤務")
             q = f"{who}{d}日の{sname}を、何日に移しますか。表もルールも変えていません"
         out.append({"type": "unclear", "question": q})
+    return out
+
+
+def _self_fix(items: list[dict], text: str) -> list[dict]:
+    """「25、あ、ごめん26日」は話の途中の言い直しで、25日から移す頼みではない。読み取りが移す形で返したら、後の日の頼みにする
+    （本物の Haiku、2026-11-06。3回に1回、25日のマスまで動いた）。"""
+    out = []
+    for it in items:
+        a, b = it.get("from_day"), it.get("to_day")
+        if it.get("type") == "move" and a and b and it.get("shift") and re.search(
+                rf"(?<!\d){a}日?[、,\s]*(?:あ|え|いや)?[、,\s]*(?:ごめん|違う|ちがう|間違え|まちがえ|じゃなく)[^\d]*(?<!\d){b}日", text):
+            it = {"type": "set_cell", "staff": it.get("staff"), "days": [b], "shift": it["shift"], "strength": "wish",
+                  "reason": it.get("reason")}
+        out.append(it)
     return out
 
 
@@ -506,7 +524,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     """leave_caps は人ごとの有給の上限（帳面の回数の決まりから。日数のない有給の頼みに使う。13章）。
     rules はこの月の帳面のルール（人数の頼みを、今の同じ勤務の人数のルールと同じ数え方にそろえるのに使う）。"""
     names = {s.name for s in staff}
-    items = _tidy_leave(_weekday_off(_was_really(_same_day_move(_tidy(items, month), text, facility, names), text, facility), text), text)
+    items = _tidy_leave(_weekday_off(_was_really(_same_day_move(_self_fix(_tidy(items, month), text), text, facility, names), text, facility), text), text)
     real = [it for it in items if it.get("type") != "none"]
     if not real:
         raise Clarify("表を変える頼みが見つかりませんでした。もう一度言ってください")
