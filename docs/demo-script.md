@@ -14,7 +14,7 @@
 | 1分25秒〜1分50秒 休みの電話 | 配った後に休みの電話の一言を言う。待機の小島さんに頼む案（4マス。11月1日の2マスと、小島さんの休みを移す10日・青木さんが代わりに入る6日）が光り、「小島さん 公休9日のまま（休みは10日へ移す）」と1行。［了承をもらって直す］ | `tests/test_act2.py::test_d3_d5_accept`、`tests/test_standby.py::test_d3_only_duty_moves` | 本物の Claude Haiku 5.5 で撮影と試験の一言36件を読む、3周108回すべて用意と同じ |
 | 1分50秒〜2分02秒 12月のルールの見直し | 期限が来た試験のルールを［履歴へ片付ける］、ほかの2件は［今月も使う］ | `tests/test_act3.py::test_act3_flow`、`tests/test_review.py::test_m10_expired_never_applies` | （数字の行は使わない） |
 | 2分02秒〜2分30秒 山場（小島さんの12月） | ［12月の表を作る］。小島さんの主表示の1行を見せる | `tests/test_act3.py::test_act3_flow`、`tests/test_act3.py::test_hard_rules_zero_nov_dec` | 引き受けた3人とも有給 0→1日、いちばん長い連勤 5→4日（1人は4→3日） |
-| 2分30秒〜2分45秒 返す案の表 | 返さない案から変わったマスだけが光る。［12月はこれで作る］ | `tests/test_giveback.py::test_b1_both_plans_same_conditions`、`tests/test_act3.py::test_act3_flow` | 返さない案から変わるのは18マス（公休移動の後に測り直した。前は5マス）。ほかの人の5日続く勤務の窓 18→17・飛び石 0→0、19秒 |
+| 2分30秒〜2分45秒 返す案の表 | 返さない案から変わったマスだけが光る。［12月はこれで作る］ | `tests/test_giveback.py::test_b1_both_plans_same_conditions`、`tests/test_act3.py::test_act3_flow` | 返さない案から変わるのは、希望休なしで18マス（公休移動の後に測り直した。前は5マス）、動画の希望休2人を入れた月で7マス。ほかの人の5日続く勤務の窓 18→17・飛び石 0→0、19秒 |
 | 2分45秒〜3分00秒 締め | 引き受けの記録に戻る（操作なし） | `uv run pytest -q` の全件 | 台本の3幕を本物の Claude で通す（11-04 夜の版）、14件すべて通る（Claude を156回呼ぶ） |
 
 ## 気をつけること
