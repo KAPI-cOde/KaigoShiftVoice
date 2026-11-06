@@ -270,7 +270,7 @@ class NextFlow:
             # 引き受けた人がいない月（取り込んで作ったばかりの施設など）。返す物が無いので、返さない案だけで採れるようにする
             dec_days = dec.days
             out.update({"status": "ok", "message": "", "main": f"{self.month}月に引き受けた人はいません。{self.nm}月はふだんの作り方で作りました",
-                        "who": None, "sub": "人数とルールはそのまま", "line2": "", "people": [], "others": {},
+                        "who": None, "sub": "" if gb.base_note else "人数とルールはそのまま", "line2": "", "people": [], "others": {},
                         "changed": 0, "leave_avg": round(gb.leave_avg, 1), "stage": [],
                         "seconds": round(gb.base_seconds, 2), "tables": {"base": gb.base.table, "give": gb.base.table},
                         "days": dec_days, "weekdays": [dec.weekday(d) for d in range(1, dec_days + 1)],

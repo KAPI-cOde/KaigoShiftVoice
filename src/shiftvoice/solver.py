@@ -111,9 +111,11 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                 fixed_cells: dict[tuple[str, int], str] | None = None,
                 max_dtime: float | None = None,
                 skip: set[tuple[str, str]] | None = None,
+                dev_cap: int | None = None,
                 extra=None) -> SolveResult:
     """fixed_cells は 動かさないマス（人, 日）→ 記号。狭い範囲の直しで、範囲の外を止めるのに使う。
-    skip は課さない場面（決まりの id, 場面の名前）。相談できる決まりで前の表で既に外れていた場面に使う。"""
+    skip は課さない場面（決まりの id, 場面の名前）。相談できる決まりで前の表で既に外れていた場面に使う。
+    dev_cap は、運用の都合の回数のルールを外す時の、1人あたりのずれの上限。"""
     st = facility.settings.get("solve", {})
     weights = {**DEFAULT_WEIGHTS, **facility.settings.get("weights", {})}
     quality = facility.settings.get("quality", {})
@@ -156,7 +158,6 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
     hard_flex = {"fixed"} if stage >= 4 else ({"fixed", "wish", "operational"} if stage == 1 else
                                               {"fixed", "operational"} if stage == 2 else {"fixed", "wish"})
     penalties = []
-    devs = []
     switches: list[tuple[Instance, cp_model.IntVar | None]] = []
     for r in with_overrides(rules):
         for inst in expand(r, facility, staff, month):
@@ -182,21 +183,15 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                 penalties.append(w * (1 - b))
                 switches.append((inst, b))
                 if r.kind == "count" and r.flex == "operational":
-                    # 外した後のずれにも罰を付ける。外すかどうかだけだと、外す人を少なくするために1人へ全部寄り、
-                    # 公休9日の施設で1人だけ19日の表ができた（2026-11-06 通しの試し）。いちばん大きいずれを罰して薄く分ける。
-                    # ずれの2乗と段階の罰は時間内に解ききれず、31日全休や17日の人が出たので使わない（同じ日に測った）
-                    dev = m.new_int_var(0, D, "")
+                    # 外した後のずれに上限を付ける。外すかどうかだけだと、外す人を少なくするために1人へ全部寄り、公休9日の施設で
+                    # 1人だけ19日の表ができた（2026-11-06 通しの試し）。上限が無い時も、ずれの分だけ罰する。ずれの2乗・段階の罰・
+                    # いちばん大きいずれの罰は、希望休が入ると時間内に解ききれず、30日全休の人が出たので使わない（同じ日に測った）
+                    dev = m.new_int_var(0, D if dev_cap is None else dev_cap, "")
                     if inst.lo is not None:
                         m.add(dev >= inst.lo - e)
                     if inst.hi is not None:
                         m.add(dev >= e - inst.hi)
-                    devs.append(dev)
                     penalties.append(w // 4 * dev)
-
-    if devs:
-        worst = m.new_int_var(0, D, "")
-        m.add_max_equality(worst, devs)
-        penalties.append(weights["operational"] * 10 * worst)
 
     # 質の物差し（施設の設定。既定は控えめ）
     work = set(facility.workday_symbols())

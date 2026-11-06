@@ -2,6 +2,7 @@
 
 見本は作り話の3ユニット16人の11月の表。公休9日のまま12月（31日）へ進むと、毎日の人数より人が余り、段3へ下がる。
 直す前は、外す人を少なくするために久保さんだけ公休19日の表が「できました」と出て、誰が外れたかも画面に出なかった。"""
+import copy
 from pathlib import Path
 
 from shiftvoice.onboard import create_facility, infer, parse_paste
@@ -54,3 +55,29 @@ def _long_rest() -> str:
             c[1:16] = ["公"] * 15
         out.append("\t".join(c))
     return "\n".join(out) + "\n"
+
+
+def test_wish_on_the_morning_after_a_night_does_not_drop_the_others(nov):
+    """前の月の末が夜勤の人の1日の希望休は叶わない。その日だけ外して知らせ、同じ人のほかの日と、ほかの人の希望は守る"""
+    from shiftvoice.build import solve_staged
+    from shiftvoice.model import Rule
+    fac, staff, m, rules = nov
+    m = copy.deepcopy(m)
+    rs = [r for r in rules if not r.meta.get("premise")]
+    a, b = staff[0].name, staff[1].name
+    m.prev_tail = {**m.prev_tail, a: ["公", "公", "公", "公", "夜"], b: ["公", "公", "公", "公", "公"]}
+    wishes = [Rule(id="w1", ver=1, name=f"{a}さん 1・9日 希望休", kind="cell", flex="wish", params={"in": ["公"]}, who=[a], when=[1, 9]),
+              Rule(id="w2", ver=1, name=f"{b}さん 1日 希望休", kind="cell", flex="wish", params={"in": ["公"]}, who=[b], when=[1])]
+    r = solve_staged(fac, staff, rs + wishes, m)
+    assert r.ok and r.result.stage in (1, 3)
+    assert f"{a}さんの1日は前の月の夜勤の明け" in r.note
+    assert r.result.table[a][0] == "明" and r.result.table[a][8] == "公"
+    assert r.result.table[b][0] == "公"
+
+
+def test_next_month_does_not_say_rules_are_kept_when_one_was_dropped(tmp_path):
+    from shiftvoice.nextflow import NextFlow
+    made(tmp_path)
+    out = NextFlow(Store(tmp_path / "f"), 2026, 11).build()
+    assert out["note"] and "外れたのは" in out["note"]
+    assert "そのまま" not in out["sub"]
