@@ -11,6 +11,7 @@ from __future__ import annotations
 import calendar
 import dataclasses
 import json
+import os
 import re
 import datetime as dt
 from dataclasses import dataclass, field
@@ -270,6 +271,42 @@ def _next_id(led) -> int:
 def _no_table(rr) -> str:
     msg = rr.staged.message or "直せませんでした"
     return NO_TABLE if msg in (C3_MESSAGE, TIMEOUT_MESSAGE) else msg
+
+
+REBUILD_OFFER = "全部のルールで一から作り直しますか"
+UNDO_OFFER = "このままにするか、［ひとつ戻す］で前の表に戻すかを選んでください"   # 作り直しを受けない公開版・配った後
+_SYM_KEYS = ("shifts", "in", "not_in", "if", "then", "next_in", "next_not_in", "prev_in", "next2_in", "after", "yes", "no")
+
+
+def _rule_syms(r: Rule | None, facility) -> set[str]:
+    """そのルールが数える・決める勤務の記号（"work" は勤務の日の記号の全部）。"""
+    from .rules import _syms
+    return {x for k in _SYM_KEYS if r is not None and r.params.get(k) for x in _syms(r.params[k], facility)}
+
+
+def conflict_warning(targets: list[Rule], broken: list[dict], rules: dict[str, Rule], facility,
+                     before: set[tuple[str, str]], offer: str) -> str:
+    """段を下げて作った時の知らせを、理由1つと提案1つの2文にする（作者 2026-11-07「『こういう理由でできなかったけれど、
+    こうしてもいいですか？』くらいが、人間に判断できる限度」）。理由は、新しいルールと、いちばんぶつかったルールを1つ。
+    選ぶのは、外れた運用の都合と本人の希望のうち、新しいルールと同じ勤務の記号を数えるルールを先に、次に新しく外れた場面の
+    多いルール、次に外れた場面の多いルール、次に帳面の順。before は直す前の表で外れていた場面（前からの外れで選ばないように）"""
+    ids = {r.id for r in targets}
+    want = set().union(*(_rule_syms(r, facility) for r in targets)) if targets else set()
+    seen: dict[str, list[dict]] = {}
+    for b in broken:
+        if b["flex"] in ("operational", "wish") and b["rule"] not in ids:
+            seen.setdefault(b["rule"], []).append(b)
+    order = list(seen)
+
+    def rank(rid: str):
+        bs = seen[rid]
+        return (bool(want & _rule_syms(rules.get(rid), facility)),
+                sum((b["rule"], b["key"]) not in before for b in bs), len(bs), -order.index(rid))
+    label = f"「{targets[0].name}」" + (f"ほか{len(targets) - 1}件" if len(targets) > 1 else "")
+    if seen:
+        top = seen[max(order, key=rank)][0]["name"]
+        return f"{label}を守ると、「{top}」が守れません。{offer}"
+    return f"{label}は、ほかのルールとぶつかって守れませんでした。{offer}"
 
 
 class Session:
@@ -675,6 +712,7 @@ class Session:
         changes: list[dict] = []
         secs = 0.0
         warning = ""
+        extra_broken = None
         if added and all(r.kind == "layer" for r in added):
             fac = self.store.facility()
             pins = {int(k): v for k, v in ((self.store.premise(self.year, self.month) or {})
@@ -718,12 +756,22 @@ class Session:
             if missed:
                 notes.insert(0, f"{'・'.join(missed)}は、ほかのルールとぶつかって守れませんでした")
             warning = "。".join(notes)
+            dt_ = rr.staged.detail
+            if rr.staged.result.stage > 1 and dt_ and (missed or dt_["items"] or dt_["off_rules"]):
+                # 段を下げて外れた時は、本文を理由1つと提案1つにし、外れの全部は画面でたたんで見せる（extra の broken）
+                rebuild = os.environ.get("SHIFTVOICE_PUBLIC") != "1" and not m.distributed
+                before = {(b["rule"], b["key"]) for b in check_table(rules, fac, staff, m, m.table)}
+                gone = [r for r in added if r.name in missed] or added
+                warning = conflict_warning(gone, rr.staged.result.broken, {r.id: r for r in rules}, fac, before,
+                                           REBUILD_OFFER if rebuild else UNDO_OFFER)
+                extra_broken = {"count": len(dt_["items"]) + dt_["off_rules"], "lead": dt_["lead"],
+                                "items": dt_["items"], "notes": dt_["notes"], "rebuild": rebuild}
             self.store.save_ledger(led)            # 1 帳面
             m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev,
                               "said": u["text"], "rest_adjust": m.rest_adjust, "support": m.support})
             m.table, m.built_rev, m.support = rr.table, led.rev, support
             self.store.save_month(m)               # 2 月の表
-        extra = {}
+        extra = {"broken": extra_broken} if extra_broken else {}
         if p.staff_changes:
             staff = self.store.staff()
             before = {s.name: list(s.changes) for s in staff}

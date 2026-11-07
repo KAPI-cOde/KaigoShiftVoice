@@ -169,7 +169,10 @@ def resolve(facility: Facility, staff: list[Staff], rules: list[Rule], month: Mo
         return ResolveResult(staged, w, changed_cells(base, r.table), tries)
     staged = solve_staged(facility, staff, all_rules, month, hint=base)
     if staged.ok:
-        staged.note = "。".join(x for x in (staged.note, worse_note(was, staged.result.broken)) if x) or None
+        worse = worse_note(was, staged.result.broken)
+        staged.note = "。".join(x for x in (staged.note, worse) if x) or None
+        if worse and staged.detail is not None:
+            staged.detail["notes"].append(worse)
     rr = ResolveResult(staged, None, changed_cells(base, staged.result.table) if staged.ok else [], tries)
     rr.tries.append({"window": "staged", "status": staged.result.status, "seconds": round(staged.seconds, 3)})
     return rr

@@ -30,6 +30,9 @@ class StagedResult:
     message: str | None = None     # 作成者へ聞く一文（表が無い時だけ）
     note: str | None = None        # 表はできたが段を下げた時の知らせ
     choke: list[dict] = field(default_factory=list)   # 段1で組めなかった時の詰まり所（choke.chokepoints。explain の時だけ）
+    # 段を下げて作った時の外れの中身（note と同じことを、画面でたたんで見せる形で）。lead は段の知らせ、items は外れた
+    # ルールごとの1行（broken_parts）、notes は希望休の相談などの添え書き、off_rules は外れた希望休のルールの数
+    detail: dict | None = None
 
     @property
     def ok(self) -> bool:
@@ -52,6 +55,12 @@ STAGE_NOTE = {
 
 def broken_text(broken: list[dict], names: set[str], limit: int = 6) -> str:
     """段を下げて作った時に、実際に外れた本人の希望と運用の都合を一文で言う。人ごとの数のルールは、人と数まで言う。"""
+    parts = broken_parts(broken, names, limit)
+    return "外れたのは、" + "、".join(parts) if parts else ""
+
+
+def broken_parts(broken: list[dict], names: set[str], limit: int = 6) -> list[str]:
+    """外れた本人の希望と運用の都合を、ルールごとに1つずつ（「夜勤の回数が菊池さん6」「早番の人数が1か所」）。"""
     groups: dict[str, list[dict]] = {}
     for b in broken:
         if b["flex"] in ("operational", "wish"):
@@ -65,7 +74,7 @@ def broken_text(broken: list[dict], names: set[str], limit: int = 6) -> str:
         ones = [f"{b['key']}さん{b['value']}" for b in who[:limit]] + ([f"ほか{len(who) - limit}人"] if len(who) > limit else [])
         same = items[0]["lo"] is not None and items[0]["lo"] == items[0]["hi"]
         parts.append(f"{name}{'（' + str(items[0]['lo']) + '）' if same else ''}が{'・'.join(ones)}")
-    return "外れたのは、" + "、".join(parts) if parts else ""
+    return parts
 
 
 CONSULT_LIMIT = 6
@@ -279,9 +288,13 @@ def _solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], mon
             # 外れた希望休は、ほかの外れと分けて、人と日とぶつかったルールで言い、本人との相談をすすめる
             consult, off = day_off_consult(facility, staff, rules, month, r)
             offkeys = {(b["rule"], b["key"]) for b in off}
-            detail = broken_text([b for b in r.broken if (b["rule"], b["key"]) not in offkeys], {s.name for s in staff})
+            rest = [b for b in r.broken if (b["rule"], b["key"]) not in offkeys]
+            detail = broken_text(rest, {s.name for s in staff})
             return StagedResult(r, stages, note=STAGE_NOTE[st] + ("。" + detail if detail else "")
-                                + ("。" + consult if consult else ""), choke=chokes)
+                                + ("。" + consult if consult else ""), choke=chokes,
+                                detail={"lead": STAGE_NOTE[st], "items": broken_parts(rest, {s.name for s in staff}),
+                                        "notes": [consult] if consult else [],
+                                        "off_rules": len({b["rule"] for b in off})})
         timed_out = timed_out or r.status == "timeout"
         if st == 3 and r.status == "timeout" and any(x.flex == "wish" for x in rules):
             # 希望を全部守って作れるかが分からないまま、希望を外す段（2・4）へ進まない（作者 2026-11-07「希望休は原則

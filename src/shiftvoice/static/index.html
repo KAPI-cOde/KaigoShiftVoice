@@ -45,6 +45,10 @@
   .reply { margin-top: 8px; min-height: 22px; }
   .reply .summary { font-weight: 700; }
   .reply .warning { color: #c0392b; margin-top: 4px; }
+  .reply .brokenbtns { margin-top: 8px; }
+  .reply details.brokenlist { margin-top: 8px; font-size: 12px; }
+  .reply details.brokenlist summary { cursor: pointer; text-decoration: underline; }
+  .reply details.brokenlist ul { margin: 4px 0; padding-left: 18px; }
   .reply .q { margin: 4px 0 6px; font-weight: 700; }
   button { font: inherit; background: #fff; color: #000; border: 1px solid #000; border-radius: 3px; padding: 4px 14px; cursor: pointer; }
   button:hover { background: #f4f4f4; }
@@ -1236,6 +1240,31 @@ function renderReplyBody(r) {
     // 引き受けの記録（その人のこの月の分）。1行ずつ「11/1 引き受け（休みは10日へ）」
     ((r.extra && r.extra.records) || []).forEach(function (t) { box.appendChild(el("div", "records", t)); });
     if (r.warning) box.appendChild(el("div", "warning", r.warning));
+    var bx = r.extra && r.extra.broken;
+    if (bx) {
+      // 段を下げて外れた時。本文は理由と提案の2文だけにし、選ぶボタンと、たたんだ外れの全部を下に出す（作者 2026-11-07）
+      var bb = el("div", "btns brokenbtns");
+      if (bx.rebuild && !(S && (S.public || S.distributed))) {
+        var rbb = el("button", "primary", "一から作り直す"); rbb.type = "button";
+        rbb.addEventListener("click", startRebuild);
+        bb.appendChild(rbb);
+      }
+      var ubb = el("button", "", "ひとつ戻す"); ubb.type = "button";
+      ubb.disabled = !(S && S.can_undo);
+      ubb.addEventListener("click", doUndo);
+      bb.appendChild(ubb);
+      box.appendChild(bb);
+      var det = el("details", "brokenlist");
+      det.appendChild(el("summary", "", "外れたルール（" + (bx.count || 0) + "件）"));
+      if (bx.lead) det.appendChild(el("div", "q2", bx.lead));
+      if ((bx.items || []).length) {
+        var ul = el("ul");
+        bx.items.forEach(function (t) { ul.appendChild(el("li", "", t)); });
+        det.appendChild(ul);
+      }
+      (bx.notes || []).forEach(function (t) { det.appendChild(el("div", "", t)); });
+      box.appendChild(det);
+    }
     return;
   }
   if (r.kind === "ask_period") {
@@ -1524,7 +1553,7 @@ function doRetry(uid) {
   }).catch(fail);
 }
 
-document.getElementById("undo").addEventListener("click", function () {
+function doUndo() {
   if (busy || !S || !S.can_undo) return;
   setBusy(true);
   post("undo", {}).then(function (res) {
@@ -1532,7 +1561,8 @@ document.getElementById("undo").addEventListener("click", function () {
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
     handle(res, true);
   }).catch(fail);
-});
+}
+document.getElementById("undo").addEventListener("click", doUndo);
 
 // 声の入口。マイクの音を16kHz・モノラルに直してこのパソコンのサーバーへ送る（外へは送らない）
 var rec = null;
@@ -2602,7 +2632,7 @@ function copyExtra(restored, merged, leftOut, blankRows, topRows) {
   if (blankRows) out += "。人の行の間にあった集計の" + blankRows + "行は、行がずれないよう空で入ります。Excel の式を残す時は、ユニットごとに分けて貼ってください";
   return out;
 }
-document.getElementById("rebuild").addEventListener("click", function () {
+function startRebuild() {
   // 根本のルールを足した後は、一言の狭い直しではなく、全部のルールで白紙から作り直す（作者 2026-11-07）
   if (busy || !S) return;
   setBusy(true);
@@ -2616,7 +2646,8 @@ document.getElementById("rebuild").addEventListener("click", function () {
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
     handle(res);
   }).catch(fail);
-});
+}
+document.getElementById("rebuild").addEventListener("click", startRebuild);
 document.getElementById("toggleprev").addEventListener("click", function () {
   showPrev = !showPrev; setViewPref("sv_show_prev", showPrev); renderTable();
 });
