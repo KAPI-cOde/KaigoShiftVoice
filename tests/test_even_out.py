@@ -280,3 +280,51 @@ def test_imported_facility_keeps_totals(imported, shifts):
         lo, hi = _spread(rr.table, staff, sym)
         assert hi - lo <= 1, (sym, lo, hi)
     assert check_table(rules, fac, staff, month, rr.table) == []
+
+
+# ---- ならした後に、総数を減らす回数の頼みを足す
+
+def _two_with_fixed_partner():
+    """早番に入れるのは2人だけで、人数のルールが無いので早番の総数は減らせる。井上さんは早番ちょうど10回（動かせない）。
+    前の表は2人とも早番10回。"""
+    fac, _, _, _ = _small()
+    staff = [Staff(n, "東", ["早", "日", "遅"]) for n in ("赤坂", "井上")]
+    month = Month(2026, 11, [], {n: ["日"] * 5 for n in ("赤坂", "井上")})
+    rules = [Rule("o1", 1, "公休の数", "count", "fixed", {"shifts": ["公"], "min": 8, "max": 8}),
+             Rule("b10", 1, "井上さん 早番は月10回", "count", "fixed", {"shifts": ["早"], "min": 10, "max": 10}, who=["井上"])]
+    row = ["早"] * 10 + ["公"] * 8 + ["日"] * 12
+    base = {"赤坂": list(row), "井上": list(row)}
+    ask = Rule("a2", 1, "赤坂さん 早番はできれば月2回まで", "count", "negotiable", {"shifts": ["早"], "max": 2}, who=["赤坂"])
+    return fac, staff, month, rules, base, ask
+
+
+@pytest.mark.parametrize("with_even", [False, True])
+def test_later_count_request_that_lowers_total_is_kept(with_even):
+    """ならすルールがある月に「赤坂さんはできれば早番2回まで」と言うと、赤坂さんは2回になる。井上さんへは移せないので
+    早番の総数は20回から12回に減るが、それは頼みで減る分なので罰さない。直す前は、総数を前の表に近づける罰（8回で12000）が
+    相談できるルール1件（5000）より重く、ならすルールがある時だけ赤坂さんが10回のまま頼みが外れた。"""
+    fac, staff, month, rules, base, ask = _two_with_fixed_partner()
+    rs = rules + ([_even_rule()] if with_even else []) + [ask]
+    rr = resolve(fac, staff, rs, month, base, [ask])
+    assert rr.ok
+    t = rr.table
+    assert t["赤坂"].count("早") == 2, t["赤坂"]
+    assert t["井上"].count("早") == 10
+    assert check_table(rs, fac, staff, month, t) == []
+
+
+def test_count_rule_everyone_keeps_does_not_drop_the_total_guard(imported):
+    """全員の回数のルール（早番・遅番は月20回まで。前の表で全員が守っている）があっても、ならした勤務の総数は前の表のまま。
+    回数のルールがあるだけの人まで総数から外すと、帯の上の人の勤務を移さずに消して、総数が減る。"""
+    fac, staff, month, rules, base = imported
+    shifts = ["早", "遅"]
+    caps = [Rule(f"cap{sym}", 1, f"全員 {sym}は月20回まで", "count", "negotiable", {"shifts": [sym], "max": 20}) for sym in shifts]
+    assert check_table(caps, fac, staff, month, base) == []
+    ev = _even_rule(shifts)
+    rr = resolve(fac, staff, rules + caps + [ev], month, base, [ev])
+    assert rr.ok
+    for sym in shifts:
+        total = [sum(row.count(sym) for row in t.values()) for t in (base, rr.table)]
+        assert total[1] == total[0], (sym, total)
+        lo, hi = _spread(rr.table, staff, sym)
+        assert hi - lo <= 1, (sym, lo, hi)

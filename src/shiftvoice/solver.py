@@ -17,7 +17,7 @@ from ortools.sat.python import cp_model
 
 from .interval import short_pairs
 from .model import Facility, Month, Rule, Staff
-from .rules import Instance, _syms_of, cell_value, check_table, expand, is_day_off_wish, is_fair_on, with_overrides
+from .rules import Instance, _syms_of, broken, cell_value, check_table, expand, is_day_off_wish, is_fair_on, with_overrides
 
 DEFAULT_WEIGHTS = {"wish": 100000, "operational": 20000, "negotiable": 5000}
 # 希望休（rules.is_day_off_wish）の重み。本人の希望を外す段（段2・段4）でも、ほかの本人の希望（曜日の勤務の希望など）と
@@ -234,15 +234,34 @@ def _own_bounds(rules: list[Rule], r: Rule, name: str, sym: str) -> tuple[int | 
     return lo, hi
 
 
+def _moved_by_count(rules: list[Rule], facility: Facility, staff: list[Staff], month: Month,
+                   hint: dict[str, list[str]]) -> dict[str, set[str]]:
+    """勤務 → 前の表（hint）でその勤務を数える回数のルールを破っている人。"""
+    out: dict[str, set[str]] = {}
+    for q in with_overrides(rules):
+        if q.kind != "count":
+            continue
+        for inst in expand(q, facility, staff, month):
+            if inst.terms and broken(inst, hint, month):
+                for t in inst.terms:
+                    for sym in t.symbols:
+                        out.setdefault(sym, set()).add(t.staff)
+    return out
+
+
 def _even(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[Staff], days, weights: dict,
-          hint: dict[str, list[str]] | None = None) -> None:
+          month: Month, hint: dict[str, list[str]] | None = None) -> None:
     """言われた勤務の人ごとの回数をならす目的（rule の even）。勤務ごとに、数える人の平均の切り捨て t を帯の下にして、
     t〜t+1 回の人は罰さず、帯から外れた分を罰する。数えるのは、その勤務に入れる人だけ（入れない人を0回として数えない）。
     名指しの回数のルールがある人は、帯をそのルールの回数まで広げる（「月7回以上」なら t〜7 回は罰さない）。帯の外は数える
     ので、ほかの人をならすためにその人へ寄せもしない。本人の希望は外せない強さで先に効く。
     前の表（hint）があれば、数える人のその勤務の合計が前の表から離れた分も罰する。ならすのは人の間で移すことで、
-    帯から外れた人を、勤務を消したり足したりして帯に入れると、移すより動かすマスが少なくて済むため。"""
+    帯から外れた人を、勤務を消したり足したりして帯に入れると、移すより動かすマスが少なくて済むため。
+    前の表でその勤務を数える回数のルールを破っている人は、この合計に入れない。その人の回数はルールで動くはずで、ほかの人へ
+    移せない時に減った（増えた）分まで罰すると、何回分も重なって相談できるルール1件より重くなり、回数の頼みが外れるため。
+    回数のルールがあっても前の表で守っている人は合計に残す。"""
     w = weights.get("even", EVEN_WEIGHT)
+    moved = _moved_by_count(rules, facility, staff, month, hint) if hint and any(r.kind == "even" for r in rules) else {}
     for r in rules:
         if r.kind != "even":
             continue
@@ -264,10 +283,12 @@ def _even(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[St
             m.add(len(people) * t <= total)
             m.add(total <= len(people) * t + len(people) - 1)
             if hint:
-                old = sum(1 for nm in names for d in ds if (hint.get(nm) or [])[d - 1:d] == [sym])
+                kept = [(p[0], nm) for p, nm in zip(people, names) if nm not in moved.get(sym, ())]
+                now = sum(c for c, _ in kept)
+                old = sum(1 for _, nm in kept for d in ds if (hint.get(nm) or [])[d - 1:d] == [sym])
                 gap = m.new_int_var(0, len(people) * top, "")
-                m.add(gap >= total - old)
-                m.add(gap >= old - total)
+                m.add(gap >= now - old)
+                m.add(gap >= old - now)
                 penalties.append(w * gap)
             for c, n, lo, hi in people:
                 upper, lower = t + 1, t
@@ -387,7 +408,7 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
 
     _fair_leave(m, x, penalties, rules, facility, staff, days, weights)
     _thin_even(m, x, penalties, rules, facility, staff, days, weights)
-    _even(m, x, penalties, rules, facility, staff, days, weights, hint)
+    _even(m, x, penalties, rules, facility, staff, days, weights, month, hint)
 
     # 質の物差し（施設の設定。既定は控えめ）
     work = set(facility.workday_symbols())
