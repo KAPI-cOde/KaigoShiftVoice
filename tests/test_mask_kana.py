@@ -234,3 +234,13 @@ def test_kun_after_a_name_is_still_a_person(store, text):
     with pytest.raises(Clarify):
         to_proposal([{"type": "consecutive_limit", "max": 3, "everyone": True}], text,
                     store.facility(), store.staff(), store.month(2026, 11))
+
+
+def test_返事の言葉の中のユニットと数は名前に戻さない(store):
+    """Claude が自分の言葉で書いた「各ユニット1人」を、伏せたユニットの番号と取り違えて「各東人」に戻していた
+    （2026-11-08、言い回しの測りの読み直しの返事）。番号として書いた「ユニット1の早番」は戻す"""
+    m = Masker(_roster(store), store.facility())
+    u1 = next(u for u, c in m.unit_code.items() if c == "ユニット1")
+    assert m.unmask("夜勤は毎日各ユニット1人で、全員が同じ回数にはできません") == "夜勤は毎日各ユニット1人で、全員が同じ回数にはできません"
+    assert m.unmask("ユニット1人ずつ") == "ユニット1人ずつ"
+    assert m.unmask("ユニット1の早番は2人") == f"{u1}の早番は2人"

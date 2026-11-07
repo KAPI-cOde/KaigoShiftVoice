@@ -291,7 +291,8 @@ class Masker:
         if isinstance(obj, str):
             s = re.sub(rf"職員\d{{{self.width}}}", lambda m: self.to_name.get(m.group(0), m.group(0)), obj)
             for u, code in self.unit_code.items():
-                s = s.replace(code, u)
+                # 「各ユニット1人」のように、Claude が自分の言葉で書いた数は番号でないので戻さない
+                s = re.sub(rf"(?<!各){re.escape(code)}(?![0-9０-９人回日名つか])", u, s)
             s = re.sub(r"職員(?:NN|ＮＮ|nn|XX|ＸＸ|xx|○○|〇〇)(?:さん)?", "〇〇さん", s)
             s = re.sub(r"職員(?:番号|ID|ＩＤ)", "名前", s)
             return s
