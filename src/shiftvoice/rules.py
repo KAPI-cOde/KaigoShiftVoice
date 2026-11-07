@@ -36,6 +36,8 @@ class Instance:
 def _sides(new: dict, old: dict) -> set[str]:
     """新しい回数のルールが言った側（下限・上限）と、言っていない側でも新しい値とぶつかる古い側。"""
     out = {side for side in ("min", "max") if new.get(side) is not None}
+    if new.get("per_month"):
+        out = {"min", "max"}   # 「その月の土日祝の数」は両方の側を言っている（数は月ごとに決まる）
     if "max" in out and "min" not in out and old.get("min") is not None and new["max"] < old["min"]:
         out.add("min")
     if "min" in out and "max" not in out and old.get("max") is not None and new["min"] > old["max"]:
@@ -148,6 +150,8 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
         if r.kind == "count" and r.who and not r.when and r.flex in ("operational", "fixed"):
             for w in r.who:
                 v = {side: r.params[side] for side in ("min", "max") if r.params.get(side) is not None}
+                if r.params.get("per_month"):
+                    v = {"min": None, "max": None}   # 数は月ごとに決まる（month_days_off）。両方の側を上書きする
                 if v:
                     named.setdefault(tuple(sorted(r.params.get("shifts") or [])), []).append((r, w, v))
     if not named:
@@ -500,6 +504,19 @@ def _days(rule: Rule, month: Month) -> list[int]:
     return list(rule.when) if rule.when else list(range(1, month.days + 1))
 
 
+# 事務の人の公休は、その月の土日祝の数に、年末年始（12/29〜1/3）を休み扱いで足した数（作者 2026-11-07）
+YEAR_END = frozenset({(12, 29), (12, 30), (12, 31), (1, 1), (1, 2), (1, 3)})
+
+
+def month_days_off(rule: Rule, month: Month) -> int | None:
+    """「その月の土日祝の数」で数える回数のルール（params の per_month）の、その月の数。ほかのルールは None。"""
+    p = rule.params or {}
+    if p.get("per_month") != "weekend_holidays":
+        return None
+    return sum(1 for d in _days(rule, month)
+               if month.is_weekend_or_holiday(d) or (p.get("year_end") and (month.month, d) in YEAR_END))
+
+
 def fit_count(lo: int | None, hi: int | None, seen: dict, people: int, days: int,
               units: dict[str, int] | None = None) -> tuple[int | None, int | None]:
     """取り込みで見つけた回数の幅（夜勤の回数）を、数える日数と入れる人の数に合わせて広げる。
@@ -581,6 +598,9 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
         rest = {st.symbol for st in facility.shift_types if st.kind == "rest"}
         adjust = month.rest_adjust if set(syms) <= rest else {}
         lo0, hi0 = p.get("min"), p.get("max")
+        n_month = month_days_off(rule, month)
+        if n_month is not None:
+            lo0 = hi0 = n_month
         if p.get("seen"):   # 取り込みで見つけた回数の幅は、月ごとに日数と入れる人の数に合わせて広げる（言った側だけ）
             lo0, hi0 = fit_count(lo0, hi0, p["seen"], len(people), len(_days(rule, month)),
                                  Counter(s.unit for s in people))   # ユニットごとの入れる人の数（その勤務に入れる人で数える）

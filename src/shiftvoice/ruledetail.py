@@ -18,7 +18,8 @@ from __future__ import annotations
 from collections import Counter
 
 from .model import Facility, Month, Rule, Staff
-from .rules import _days, _syms, _who, broken, cell_value, evaluate, expand, fit_count, with_overrides
+from .rules import (_days, _syms, _who, broken, cell_value, evaluate, expand, fit_count, month_days_off,
+                    with_overrides)
 
 WD_JP = {"mon": "月", "tue": "火", "wed": "水", "thu": "木", "fri": "金", "sat": "土", "sun": "日"}
 
@@ -172,6 +173,9 @@ def _count(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: Mont
         people = [s for s in people if any(x in s.can for x in syms)]
     days = _days(orig, month)
     lo0, hi0 = p.get("min"), p.get("max")
+    n_month = month_days_off(orig, month)
+    if n_month is not None:
+        lo0 = hi0 = n_month
     if p.get("seen"):   # 表を作る時と同じく、月の日数と入れる人の数に合わせて広げた数（rules.expand）
         lo0, hi0 = fit_count(lo0, hi0, p["seen"], len(people), len(days), Counter(s.unit for s in people))
     if orig.when:
@@ -179,10 +183,15 @@ def _count(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: Mont
     else:
         period = "月"
     line = f"{_who_no(orig.who)}{what}は{period}{_rng(lo0, hi0, u)}"
+    if n_month is not None:
+        line = (f"{_who_no(orig.who)}{what}は、その月の土日祝の数"
+                + ("（12/29〜1/3も数に入れる）" if p.get("year_end") else "") + f"。{month.month}月は{n_month}{u}")
     if p.get("capable_only"):
         line += f"（{what}に入れる{len(people)}人）"
     now: list[str] = []
-    if (lo0, hi0) != (p.get("min"), p.get("max")):
+    if n_month is not None and "holidays" in fac.settings and f"{month.year:04d}-{month.month:02d}" not in fac.settings["holidays"]:
+        now.append(f"{month.year}年{month.month}月の祝日の表がありません。土日だけで数えているので、数が少ないかもしれません")
+    if p.get("seen") and (lo0, hi0) != (p.get("min"), p.get("max")):
         now.append(f"{month.month}月は{month.days}日あるので、{_rng(p.get('min'), p.get('max'), u)}から広げています")
 
     insts = expand(eff, fac, staff, month)
