@@ -449,6 +449,27 @@ def _cell(orig: Rule, eff: Rule, fac, staff, month, table) -> dict:
     return _applies(orig, eff, fac, staff, month, table, line, "日")
 
 
+def _unit_after(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: Month, table) -> dict:
+    """明け番のいるユニットと、いないユニットの朝の勤務（rules.expand の unit_after）。"""
+    p = orig.params
+    a, y, n = (_names(fac, _syms(p[k], fac)) for k in ("after", "yes", "no"))
+    line = f"前の日が{a}の人（明け番）がいるユニットは{y}を1人、いないユニットは{n}を1人"
+    bad = sorted({(int(i.key.rsplit("/", 1)[1]), i.key.split("（")[0]) for i in expand(eff, fac, staff, month)
+                  if broken(i, table, month)})
+    where = "・".join(f"{u} {d}日" for d, u in bad[:3]) + ("ほか" if len(bad) > 3 else "")
+    now = [f"今の表で、この形でない所が{len(bad)}か所（{where}）" if bad else "今の表では、どのユニットもこの形です"]
+    return {"line": line, "now": now, "glow": None, "cells": []}
+
+
+def _unit_apart(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: Month, table) -> dict:
+    """その勤務の人を1つのユニットに固めないルール（rules.expand の unit_apart）。"""
+    what = _names(fac, _syms(orig.params["shifts"], fac))
+    days = sorted({int(i.key.rsplit("/", 1)[1]) for i in expand(eff, fac, staff, month) if broken(i, table, month)})
+    now = [f"今の表で、1つのユニットに固まった日が{len(days)}日（{_days_text(days)}）" if days
+           else "今の表では、どの日も分かれています"]
+    return {"line": f"{what}は1つのユニットに固めず、2つ以上のユニットに分ける", "now": now, "glow": None, "cells": []}
+
+
 def _unknown(orig: Rule, fac: Facility) -> dict | None:
     """知らない種類。読める所（勤務と数）だけを ① にし、② ③ は出さない。"""
     p = orig.params or {}
@@ -468,7 +489,7 @@ def _unknown(orig: Rule, fac: Facility) -> dict | None:
 
 
 KINDS = {"coverage": _coverage, "count": _count, "max_run": _max_run, "sequence": _sequence,
-         "weekday": _weekday, "cell": _cell}
+         "weekday": _weekday, "cell": _cell, "unit_after": _unit_after, "unit_apart": _unit_apart}
 
 
 def rule_detail(rule_id: str, rules: list[Rule], fac: Facility, staff: list[Staff], month: Month,

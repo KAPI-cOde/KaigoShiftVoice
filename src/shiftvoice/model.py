@@ -97,7 +97,7 @@ class Rule:
     id: str
     ver: int
     name: str
-    kind: str            # coverage / count / sequence / max_run / weekday / cell
+    kind: str            # coverage / count / sequence / max_run / weekday / cell / unit_after / unit_apart
     flex: str            # fixed / wish / operational / negotiable
     params: dict
     who: list[str] | None = None

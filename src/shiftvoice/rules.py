@@ -656,6 +656,31 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
                 if "next_not_in" in p:
                     terms = [Term(s.name, 0, a), Term(s.name, 1, _syms(p["next_not_in"], facility))]
                     out.append(Instance(rule, f"{s.name}/0", terms, None, 1))
+    elif k == "unit_apart":
+        # その勤務の人を1つのユニットに固めない。どのユニットの外にも1人はいる（2人以上なら2つ以上のユニットに分かれる）
+        syms = _syms(p["shifts"], facility)
+        for d in _days(rule, month):
+            for u in facility.units:
+                outside = [s for s in people if month.support.get(f"{s.name}/{d}", s.unit) != u]
+                if outside:
+                    out.append(Instance(rule, f"{u}の外/{d}", [Term(s.name, d, syms) for s in outside], 1, None))
+    elif k == "unit_after":
+        # 前の日に after の勤務の人（明け番）がいるユニットは yes の勤務を1人、いないユニットは no の勤務を1人。
+        # yes(d) − after(d−1) = 0、no(d) + after(d−1) = 1。ユニットの after が2人の日は作れない（夜勤は各ユニット1人までの施設の形）
+        after, yes, no = _syms(p["after"], facility), _syms(p["yes"], facility), _syms(p["no"], facility)
+
+        def in_unit(u, d):   # 応援の日は、その日に入るユニットで数える
+            return [s for s in people if month.support.get(f"{s.name}/{d}", s.unit) == u]
+
+        for u in dict.fromkeys(s.unit for s in people):
+            for d in _days(rule, month):
+                if d == 1 and not month.prev_tail:
+                    continue   # 前の月の末が分からなければ、1日の明け番は分からない
+                today, before = in_unit(u, d), in_unit(u, d - 1)
+                out.append(Instance(rule, f"{u}（明け番あり）/{d}", [Term(s.name, d, yes) for s in today]
+                                    + [Term(s.name, d - 1, after, -1) for s in before], 0, 0))
+                out.append(Instance(rule, f"{u}（明け番なし）/{d}", [Term(s.name, d, no) for s in today]
+                                    + [Term(s.name, d - 1, after, 1) for s in before], 1, 1))
     elif k == "max_run":
         syms = _syms(p["shifts"], facility)
         m = p["max"]
