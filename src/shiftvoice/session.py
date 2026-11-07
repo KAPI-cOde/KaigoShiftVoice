@@ -1163,7 +1163,7 @@ class Session:
                 v["assign"] = assign(v["def"], fac, staff, m, m.table, pins=pins)
 
     def rebuild(self, tries: int = 3, budget: float = 180.0, *, op_id: str | None = None,
-                said: str = "全部のルールで一から作り直す", hist: dict | None = None) -> Reply:
+                said: str = "全部のルールで一から作り直す", hist: dict | None = None, pushed: bool = False) -> Reply:
         """［全部のルールで一から作り直す］。今の帳面の全部のルールで、表を白紙から何回か作り、いちばん良い表に置き換える。
         ［ひとつ戻す］で前の表に戻せる。作者の手順は「まずゼロから根本的に回す。だいぶいい感じになったら、少しの変更を
         加え始める」（2026-11-07）。一言の直しは狭い範囲しか動かさないので、根本のルールを足した後は表に無理が出た
@@ -1171,7 +1171,7 @@ class Session:
         回すごとに計算の種を変え、外れたルールの強さと数で比べる。合わせて budget 秒を超えたら、そこまでの表で決める。
         全部のルールで作れず、詰まり所の日があれば、理由1つと穴を埋める提案1つを言う（作者 2026-11-07「こういう理由で
         できなかったけれど、こうしてもいいですか」）。op_id・said・hist は、提案を受けた時（_commit_hole）に、受けた中身と
-        作り直しを［ひとつ戻す］1回で戻せるよう、同じ戻す履歴に入れるため"""
+        作り直しを［ひとつ戻す］1回で戻せるよう、同じ戻す履歴に入れるため。pushed は、呼ぶ側が戻す履歴を先に積んである時"""
         import time
         from dataclasses import replace
         m = self.store.month(self.year, self.month)
@@ -1211,9 +1211,11 @@ class Session:
         uid = op_id or f"rebuild-{self.now().strftime('%Y%m%d%H%M%S')}"
         before = m.table
         self._drop_hole_offers()   # 前の作り直しの提案は、新しい表には当てない
-        m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": said,
-                          "layer_assign": {k: v["assign"] for k, v in m.layers.items() if isinstance(v, dict) and "def" in v},
-                          **(hist or {})})
+        if not pushed:
+            m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": said,
+                              "layer_assign": {k: v["assign"] for k, v in m.layers.items()
+                                               if isinstance(v, dict) and "def" in v},
+                              **(hist or {})})
         m.table, m.built_rev = st.result.table, self.store.ledger().rev
         self._reassign_layers(m)   # 白紙から作ると、当番の人が出勤になることがある。新しい表で割り当て直す
         self.store.save_month(m)
@@ -1321,6 +1323,12 @@ class Session:
         fac = self.store.facility()
         nm = {st.symbol: st.name for st in fac.shift_types}
         at = self.now().isoformat(timespec="seconds")
+        aid = f"a-hole-{uid}"
+        # 戻す履歴を先に積む。この後の保存や作り直しの途中で止まっても、［ひとつ戻す］で受ける前に戻せる
+        m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": c["label"],
+                          "layer_assign": {k: v["assign"] for k, v in m.layers.items() if isinstance(v, dict) and "def" in v},
+                          "rest_adjust": dict(m.rest_adjust), "support": dict(m.support), "acceptance_id": aid})
+        self.store.save_month(m)                                             # 0 戻す履歴
         rid = f"r{_next_id(led)}"
         led.append("add", rule={"id": rid, "name": f"{c['staff']}さん {c['day']}日 {nm.get(c['symbol'], c['symbol'])}"
                                 + (f"（{c['unit']}へ応援）" if c["unit"] else "（穴を埋める）"),
@@ -1338,27 +1346,24 @@ class Session:
             rd["meta"] = meta
             led.append("change", rule_id=x, rule=rd, op_id=uid)
         self.store.save_ledger(led)                                              # 1 帳面
-        hist = {"rest_adjust": dict(m.rest_adjust), "support": dict(m.support)}
         if c["unit"]:
             m.support = {**m.support, f"{c['staff']}/{c['day']}": c["unit"]}
             self.store.save_month(m)                                             # 2 応援
-        aid = f"a-hole-{uid}"
         acc = self.store.acceptances()
         self.store.save_acceptances([a for a in acc if a.id != aid] + [Acceptance(
             id=aid, staff=c["staff"], date=date, layer=f"{nm.get(c['symbol'], c['symbol'])}で穴埋め", op_id=uid,
             tx_rev=led.rev, note=c["label"])])                                  # 3 引き受けの記録
-        hist["acceptance_id"] = aid
         self.store.resolve_pending(self.year, self.month, uid)                   # 4 未反映の案
-        r = self.rebuild(op_id=uid, said=c["label"], hist=hist)                  # 5 作り直し（同じ戻す履歴）
-        if r.kind != "applied":
-            led = self.store.ledger()
-            for t in [t for t in led.txs if t.get("op_id") == uid and t["op"] != "undo"]:
-                led.append("undo", target_rev=t["rev"], op_id=f"undo-{uid}", meta={"at": at})
-            self.store.save_ledger(led)
-            m = self.store.month(self.year, self.month)
-            m.support, m.rest_adjust = hist["support"], hist["rest_adjust"]
-            self.store.save_month(m)
-            self.store.save_acceptances([a for a in self.store.acceptances() if a.id != aid])
+        try:
+            r = self.rebuild(op_id=uid, said=c["label"], pushed=True)          # 5 作り直し（積んだ戻す履歴のまま）
+        except Exception:
+            r = None
+        if r is None or r.kind != "applied":
+            h = self.store.month(self.year, self.month).history
+            if h and h[-1].get("op_id") == uid:
+                self.undo()                                                      # 0〜3 を全部戻す
+            if r is None:
+                return Reply("ask", uid, f"作り直しの途中で止まったので、この案（{c['label']}）は戻しました。表は変えていません")
             r.message = f"この案（{c['label']}）でも表が作れなかったので、何も変えていません。" + r.message
             return r
         r.message = f"{c['staff']}さんの引き受けとして記録し、作り直しました。" + r.message

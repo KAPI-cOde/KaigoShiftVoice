@@ -145,23 +145,32 @@ def test_作り直しで作れない日を理由1つと提案1つで言い受け
 
 
 def test_外す案を受けるとそのルールはその1マスだけ外れと数えない(blocked):
+    """応援の案が上位に来るので、候補の一覧から外す案を取り出して未反映の案に足し、それを受ける"""
     store, _ = blocked
     r = Session(store, 2026, 12, None).rebuild(tries=1)
     uid = r.extra["hole"]["uid"]
-    items = next(x for x in store.pending(2026, 12) if x["id"] == uid)["offer"]["hole"]
-    pick = next((i for i, x in enumerate(items) if x["except"]), None)
-    if pick is None:
-        pytest.skip("外す案が上位3件に入らなかった")
-    c = items[pick]
-    Session(store, 2026, 12, None).accept(uid, pick=pick)
+    fac, staff, m = store.facility(), store.staff_on(2026, 12), store.month(2026, 12)
+    rules, _ = impossible_wishes(fac, month_rules(store, 2026, 12), m)
+    cand = next(o for o in hole_offers(fac, staff, rules, m, 12, limit=10) if o["except"])
+    c = {"staff": cand["staff"], "day": 12, "symbol": cand["symbol"], "unit": None,
+         "except": [rr.id for rr, _i in cand["except"]], "label": "外す案", "ask": "外す案"}
+    u = next(x for x in store.pending(2026, 12) if x["id"] == uid)
+    store.update_pending(2026, 12, uid, offer={**u["offer"], "hole": u["offer"]["hole"] + [c]})
+    r2 = Session(store, 2026, 12, None).accept(uid, pick=len(u["offer"]["hole"]))
+    assert r2.kind == "applied"
     m = store.month(2026, 12)
     assert m.table[c["staff"]][11] == c["symbol"]
-    rules = month_rules(store, 2026, 12)
-    bad = [b for b in check_table(rules, store.facility(), store.staff_on(2026, 12), m, m.table)
-           if b["rule"] in c["except"] and b["key"].startswith(c["staff"])]
-    assert bad == []
     cur = store.ledger().rules_at()
     assert all(f"{c['staff']}/2026-12-12/{c['symbol']}" in cur[x].meta["except_cells"] for x in c["except"])
+    # 外したのはその人のその日の1マスだけ。ほかの日は今までどおり数える（この施設は月全体の事情で段を下げるので、
+    # ほかの日の外れは表しだいで残りうる）
+    for x in c["except"]:
+        terms = [t for i in expand(cur[x], fac, staff, m) for t in i.terms if t.staff == c["staff"]]
+        assert not any(t.day == 12 for t in terms) and any(t.day == 13 for t in terms)
+    hit = [b for b in check_table(month_rules(store, 2026, 12), fac, staff, m, m.table)
+           if b["rule"] in c["except"] and b["key"].startswith(c["staff"])]
+    other = sum(1 for d, v in enumerate(m.table[c["staff"]], 1) if d != 12 and v in ("早", "遅", "夜"))
+    assert bool(hit) == bool(other)   # 12日を数えても数えなくても、外れはほかの日の入れない勤務の分だけ
 
 
 def test_1人では埋まらない日は理由と次の手だけを言い押す案を出さない(made, tmp_path, monkeypatch):
@@ -188,3 +197,21 @@ def test_案を作った後に表が変わったら古い案では直さない(b
     assert r2.kind == "ask" and "この案は使えません" in r2.message
     assert _snap(store) == before
     assert not any(x["id"] == uid for x in store.pending(2026, 12))
+
+
+def test_受けた後の作り直しが途中で止まったら書いた物を全部戻す(blocked, monkeypatch):
+    """帳面・応援・引き受けの記録を書いた後に作り直しが例外で止まっても、受ける前に戻る（Astra 2026-11-07。前は書いた物が
+    残り、戻す履歴も無いので［ひとつ戻す］でも戻せなかった）"""
+    import shiftvoice.session as SS
+    store, _ = blocked
+    r = Session(store, 2026, 12, None).rebuild(tries=1)
+    uid = r.extra["hole"]["uid"]
+    before = _snap(store)
+
+    def boom(*a, **k):
+        raise RuntimeError("作り直しの途中で止まった")
+
+    monkeypatch.setattr(SS, "solve_staged", boom)
+    r2 = Session(store, 2026, 12, None).accept(uid)
+    assert r2.kind == "ask" and "戻しました" in r2.message
+    assert _snap(store) == before
