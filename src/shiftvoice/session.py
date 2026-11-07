@@ -21,7 +21,7 @@ from .addshift import add_shift_items, fix_spoken, hide_spoken, read_spoken, sho
 from .heard import fix_heard
 from .build import C3_MESSAGE, broken_parts, TIMEOUT_MESSAGE, build_original, clip_to_month, month_rules, patience_of, solve_staged
 from .daycount import day_counts as _day_counts
-from .intake import EVERYONE_HINT, WHO_UNKNOWN, Clarify, Proposal, said_strength, to_proposal
+from .intake import EVERYONE_HINT, WHO_UNKNOWN, Clarify, Proposal, _said_weekdays, said_strength, to_proposal
 from .ledger import Ledger
 from .model import Rule
 from .names import Masker
@@ -65,6 +65,12 @@ _REPLACE_ONLY = {"replace": re.compile(_FILLER + r"置き換え(?:る|て|ます
 
 
 COVER_ID = "a-cover-"   # 残業・早出などでの穴埋めの記録の ID の頭（待機の記録「a-発言ID」と見分ける）
+# 取り消しの一言が、マスの頼みではなく曜日・回数などのルールそのものを指している言葉。言葉ごとに、当てはまるルールの種類
+RULE_TALK = re.compile(r"ルール|決まり|曜|土日|平日|週末|毎週|回数|回まで|\d+回|上限|下限|人数|\d+人|連勤|連続|続けて|\d連")
+_KIND_TALK = ((re.compile(r"回数|回まで|\d+回|上限|下限"), {"count", "max_run"}),
+              (re.compile(r"人数|\d+人"), {"coverage"}),
+              (re.compile(r"連勤|連続|続けて|\d連"), {"max_run"}),
+              (re.compile(r"曜|土日|平日|週末|毎週"), {"weekday", "coverage"}))
 
 
 def _days_ago(text: str) -> int:
@@ -759,7 +765,7 @@ class Session:
             offer = self._standby_offer(u, p, m)
             return offer if offer is not None else self._fix_offer(u, p, m)
         scope = u.get("scope") or p.scope
-        kept = self._kept(p, m, scope)
+        kept = "" if p.from_next else self._kept(p, m, scope)   # 来月からのルールは今月の表で確かめない
         if kept and (scope == "once" or p.until):
             # 期限つきの頼みは毎月のルールではないので、今月だけと同じに扱う（「毎月のルールとして残しました」が事実と違った）。
             # 今の表で、もう守られている指摘。今月だけなら表もルールも変えず、何と読んだかを添えてそう言う
@@ -877,6 +883,13 @@ class Session:
         start, end = self._span()
         at = self.now().isoformat(timespec="seconds")
         added: list[Rule] = []
+        # 「来月から」の毎月のルールは翌月1日から効かせ、今月の表は動かさない（前は開いている月から効き、今月の表も直した。
+        # 2026-11-08 言い回し150件の試し）。置き換える前のルールは今月の終わりまで残す
+        later = p.from_next and scope == "rule"
+        if later:
+            from .nextmonth import next_ym
+            ny, nm = next_ym(self.year, self.month)
+            start = f"{ny:04d}-{nm:02d}-01"
         # 言われた変更が全部もう入っている時だけ、ルールを足さない（10章。変更を飛ばす作りは希望が消える道になったのでしない）。
         # 今の表で守れていなければ、表だけ直す（_already_in）
         cur = list(led.rules_at(between=self._span()).values())
@@ -919,7 +932,9 @@ class Session:
                                               if any(same_count(rd, r, scope, p.until) for rd in p.rules)]
             replaced = "（前の頼みと置き換えました）" if drops else "（前のルールと置き換えました）" if counts else ""
             for d in drops + [{"rule_id": r.id, "rest": []} for r in counts]:
-                if d["rest"]:
+                if later and not d["rest"]:
+                    self._end_this_month(led, d["rule_id"], u["id"], at)
+                elif d["rest"]:
                     led.append("change", rule_id=d["rule_id"], rule={"when": d["rest"], "name": d["name"]}, op_id=u["id"],
                                meta={"kind": "replaced", "at": at})
                 else:
@@ -938,13 +953,20 @@ class Session:
                 added.append(Rule.from_dict(tx["rule"]))
             if u.get("dup") == "replace":
                 for oid in u.get("dup_old", []):
-                    if oid in led.rules_at():
+                    if oid in led.rules_at() and later:
+                        self._end_this_month(led, oid, u["id"], at)
+                    elif oid in led.rules_at():
                         led.append("remove", rule_id=oid, op_id=u["id"], meta={"kind": "replaced", "at": at})
         changes: list[dict] = []
         secs = 0.0
         warning = ""
         extra_broken = None
-        if added and all(r.kind == "layer" for r in added):
+        if added and later:
+            self.store.save_ledger(led)
+            m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev, "said": u["text"]})
+            m.built_rev = led.rev
+            self.store.save_month(m)
+        elif added and all(r.kind == "layer" for r in added):
             fac = self.store.facility()
             pins = {int(k): v for k, v in ((self.store.premise(self.year, self.month) or {})
                                             .get("standby_pins", {})).items()}
@@ -1028,8 +1050,16 @@ class Session:
         summary = p.summary + ("（前のルールと置き換えました）" if u.get("dup") == "replace" and u.get("dup_old") else replaced)
         if kept and added:
             summary = f"{kept}。毎月のルールとして残しました（来月からの表にも効きます）"
+        if later and added:
+            summary = f"{summary}。{nm}月の表を作る時から効きます（{self.month}月の表は変えていません）"
         return Reply("applied", u["id"], summary, changes=changes, rule_ids=[r.id for r in added],
                      summary=summary, seconds=secs, warning=warning, extra=extra)
+
+    def _end_this_month(self, led, rule_id: str, op_id: str, at: str) -> None:
+        """置き換える前のルールを、開いている月の終わりまでにする（来月からの言い直しで、今月の分は残す）。"""
+        old = led.rules_at()[rule_id]
+        led.append("change", rule_id=rule_id, rule={"name": old.name}, op_id=op_id, frm=old.meta.get("from"),
+                   until=self._span()[1], meta={"kind": "replaced", "at": at})
 
     def _already_in(self, u: dict, m, olds: list[Rule]) -> Reply:
         """言われたルールが全部もう帳面にある。今の表で守れていれば「もう入っています」。守れていない場面があれば
@@ -1161,6 +1191,8 @@ class Session:
         if any(t.get("op_id") == u["id"] for t in led.txs):
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("applied", u["id"], p.summary, summary=p.summary)
+        if any(rq.get("rule_id") for rq in p.removes):
+            return self._drop_rules(u, p, led, m)
         rules = led.rules_at(between=self._span())
         if any(rq["days"] is None for rq in p.removes):
             return self._cancel_offer(u, p, rules, led)
@@ -1205,6 +1237,50 @@ class Session:
         return Reply("applied", u["id"], f"{p.summary}。表のマスはそのままです",
                      summary=f"{p.summary}。表のマスはそのままです",
                      rule_ids=list(drop), warning=warning)
+
+    def _drop_rules(self, u: dict, p: Proposal, led, m) -> Reply:
+        """曜日・回数などのルールを一言で外す（確かめた後。帳面から remove し、［ひとつ戻す］で戻る）。
+        マスの取り消しと同じく表のマスは動かさない（外したルールが無くても、今の表は誤りではない）。"""
+        now = led.rules_at()
+        gone = [rq["rule_id"] for rq in p.removes if rq.get("rule_id") in now]
+        if not gone:
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("ask", u["id"], "外すルールが見つかりませんでした。表もルールも変えていません")
+        meta = {"said": u["text"], "who": self.who, "at": self.now().isoformat(timespec="seconds"), "kind": "cancel"}
+        for rid in gone:
+            led.append("remove", rule_id=rid, op_id=u["id"], meta=meta)
+        self.store.save_ledger(led)                # 1 帳面
+        m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev, "said": u["text"],
+                          "rest_adjust": m.rest_adjust, "support": m.support})
+        m.built_rev = led.rev
+        self.store.save_month(m)                   # 2 月の表（マスは動かさない。戻す時のために履歴だけ）
+        self.store.resolve_pending(self.year, self.month, u["id"])
+        msg = f"{p.summary}。表のマスはそのままです"
+        return Reply("applied", u["id"], msg, summary=msg, rule_ids=gone)
+
+    def _rule_cands(self, text: str, rq: dict, rules: dict, fac) -> list[Rule]:
+        """取り消しの一言（人・勤務・曜日・ルールの種類の言葉）に当てはまる、マスの頼みと当番以外のルール。
+        勤務は、ルールが記号で名指ししている時だけ当てる（「夜勤の上限」に、勤務の全部を数える連勤の上限を当てない）。"""
+        w, sym = (rq.get("who") or [None])[0], rq.get("shift")
+        kinds = None
+        for pat, ks in _KIND_TALK:
+            if pat.search(text):
+                kinds = ks if kinds is None else kinds & ks
+        wds = set(_said_weekdays(text) or [])
+
+        def named(r: Rule) -> set[str]:
+            return {x for k in _SYM_KEYS for v in [r.params.get(k)]
+                    for x in (v if isinstance(v, list) else [v] if isinstance(v, str) and v != "work" else [])}
+        out = [r for r in rules.values() if r.kind not in ("cell", "layer")
+               and (kinds is None or r.kind in kinds)
+               and (w is None or r.who == [w])
+               and (sym is None or sym in named(r))
+               and (not wds or wds & set(r.params.get("weekdays") or []))
+               and (sym is not None or "連勤" not in text or r.params.get("shifts") == "work")]
+        if w is None:
+            out = [r for r in out if not r.who] or out   # 人を言っていなければ、全員のルールを先に
+        said = [r for r in out if len(core := re.sub(r"（[^）]*）", "", r.name).split()[-1]) >= 4 and core in text]
+        return said or out
 
     def _back_to_before(self, u: dict, p: Proposal, rules: dict, led, m) -> Reply:
         """「元の勤務に戻して」。頼みを外し、マスも頼む前の勤務へ戻す（前は頼みを外すだけで、休みのマスが残った。2026-11-06 作者の答え）。
@@ -1278,6 +1354,23 @@ class Session:
                 and str(r.meta.get("source", "")).startswith("話した")
                 and (sym is None or sym in r.params.get("in", []) + r.params.get("not_in", []))]
         fac = self.store.facility()
+        cands = self._rule_cands(u["text"], rq, rules, fac)
+        # ルールの言葉（曜日・回数・上限など）があればルールを先に。無ければマスの頼みが先で、マスが無く、人か勤務を言って
+        # ルールが1つに決まる時だけルールを確かめる（前は取り消しがマスの頼みだけで、「〇〇さんの水曜の早番のルール、
+        # もういらない」が「何日の早番を取り消しますか」で止まった。2026-11-08 言い回し150件の試し）
+        if cands and (RULE_TALK.search(u["text"]) or (not hits and len(cands) == 1 and (w or sym))):
+            if len(cands) > 1:
+                self.store.resolve_pending(self.year, self.month, u["id"])
+                return Reply("ask", u["id"], f"当てはまるルールが{len(cands)}件あります（「"
+                             + "」「".join(c.name for c in cands[:5]) + "」" + ("など" if len(cands) > 5 else "")
+                             + "）。どれを外すか、ルールの名前で言ってください。表もルールも変えていません")
+            r = cands[0]
+            msg = f"「{r.name}」のルールを外しますか。表のマスはそのままです"
+            offer = {"cancel": [{"rule_id": r.id}], "rules": [], "changes": [],
+                     "summary": f"「{r.name}」のルールを外す。表のマスはそのまま", "done": f"「{r.name}」のルールを外しました",
+                     "message": msg, "base_rev": led.rev}
+            self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
+            return Reply("fix_offer", u["id"], msg, summary=offer["summary"])
         what = "" if not sym else "休み" if fac.shift(sym).kind == "rest" else fac.shift(sym).name
         if w is None:
             # 人も日も無い取り消し（「さっきのやっぱりなし」）。この月に話したマスの頼みが1件で、1人の頼みの時だけ

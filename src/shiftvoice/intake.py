@@ -38,6 +38,7 @@ class Proposal:
     covers: list[dict] = field(default_factory=list)   # 穴埋めの記録の候補 {staff, day（言っていなければ None）, how}
     support: dict[str, str] = field(default_factory=dict)   # ユニット間の応援 "名前/日" → その日に働くユニット
     shift_type: dict | None = None     # 話して足す勤務の種類（facility.json の1件の形）
+    from_next: bool = False            # 「来月から」の毎月のルール。帳面の始まりを翌月1日にする（今月の表は変えない）
 
 
 class Clarify(Exception):
@@ -926,8 +927,23 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                                   "日付か曜日のどちらかで、もう一度言ってください")
                 wds, hol = [], False
             if hol and not wds:
-                # 「祝日は日勤を3人に」が曜日の無いルールになり、毎日に効いていた（敵対レビュー 2026-11-03）
-                raise Clarify("祝日だけの人数ですか。土日も入れるなら「土日祝は」と言ってください")
+                # 祝日だけの人数は、人数のルールの型で表せない（曜日の無い人数は毎日に効く。敵対レビュー 2026-11-03）。
+                # 前は「祝日だけの人数ですか」と言ったことを聞き返すだけで、どう言えば通るかが分からなかった（2026-11-08
+                # 言い回し150件の試し）。毎日の同じ勤務の人数のルールで、もう祝日にも足りていればそう言い、
+                # 足りなければ今月の祝日の日付で言い直す形を示す
+                sname = facility.shift(sym).name
+                every = next((r for r in rules or [] if r.kind == "coverage" and not r.params.get("weekdays")
+                              and not r.when and r.params.get("op") in (">=", "==")
+                              and (r.params.get("scope") == "all" or len(facility.units) <= 1)
+                              and sym in _syms_of_rule(r)), None)
+                if every is not None and lo is not None and hi is None and every.params["n"] >= lo:
+                    raise Clarify(f"祝日の{sname}{lo}人以上は、もう入っています（毎日のルール「{every.name}」が祝日にも効いて"
+                                  f"います）。表もルールも変えていません。祝日だけ人数を変えるルールは、まだ作れません")
+                hols = [d for d in month.holidays if 1 <= d <= month.days]
+                said = f"{sname}{lo if lo is not None else hi}人"
+                raise Clarify("祝日だけの人数は、まだルールにできません。" + (
+                    f"今月の祝日（{'・'.join(f'{d}日' for d in hols)}）だけなら「{'日と'.join(map(str, hols))}日は{said}」、"
+                    if hols else "") + f"土日も同じでよければ「土日祝は{said}」と言ってください")
             # 今の同じ勤務の人数のルール（曜日の無いもの）と同じ数え方（記号の組・ユニットごとか）にそろえる
             base = next((r for r in rules or [] if r.kind == "coverage" and not r.params.get("weekdays")
                          and sym in (r.params["shifts"] if isinstance(r.params["shifts"], list)
@@ -1181,6 +1197,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         p.scope = "rule" if p.until else read_period(text)
         if any(r.get("kind") == "coverage" and r.get("when") for r in p.rules):
             p.scope = "once"   # 日付を決めた人数は、その月の頼み（毎月か聞かない）
+        p.from_next = p.scope == "rule" and not p.until and bool(re.search(r"(?:来月|翌月)(?:から|以降)(?!.*元に戻)", text))
     else:  # 職員の情報は言われた月から。聞かない
         p.scope = "rule"
     if kind == "cells" and "か" in text:
