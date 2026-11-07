@@ -1,6 +1,9 @@
 """回数をならすルール（even）を入れた時の返事に、1人あたりの回数の幅を「早番は1人2〜6回 → 3〜4回」の形で添える。
 数えるのはその勤務に入れる人だけ（名指しなら名指しの人だけ）。ほかのルールの返事には添えない。"""
 import re
+import sys
+
+import pytest
 
 from shiftvoice.model import Rule
 from shiftvoice.rules import even_spread
@@ -43,6 +46,15 @@ def test_even_reply_says_spread_before_and_after(sess):
         b, a = _range(before, staff, sym), _range(after, staff, sym)
         want = f"1人{_fmt(*b)} → {_fmt(*a)}" if b != a else f"1人{_fmt(*a)}のまま"
         assert want in line, (line, b, a)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="OR-Tools の道筋が OS で違い、回数の幅が変わる")
+def test_見本の3つの一言の平均化は_READMEと動画に書いた回数の幅になる(sess):
+    sess.open()
+    for text, ans in SCENE:
+        _say(sess, text, ans)
+    r = _say(sess, EVEN, "毎月")
+    assert r.extra["spread"] == ["早番は1人2〜7回 → 3〜4回", "遅番は1人1〜6回 → 3〜4回"]
 
 
 def test_named_rule_counts_only_the_named_people(sess):

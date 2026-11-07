@@ -474,6 +474,7 @@ def test_公開版でも動画の3つの一言が通り_チャットでルール
         assert code == 200 and res["reply"]["kind"] == "applied", (text, res)
         assert calls() == i
     assert [x[:2] for x in res["reply"]["extra"]["spread"]] == ["早番", "遅番"], res["reply"]
+    assert all("→" in x and "のまま" not in x for x in res["reply"]["extra"]["spread"]), res["reply"]   # 幅が変わった事を言う
     for text, topic in [("外れているルールは？", "broken"), ("ルールを見せて", "list"), ("ルールを整理して", "tidy")]:
         code, res, _ = req(base, "/api/say", "POST", {"text": text}, cookie=a)
         r = res["reply"]
