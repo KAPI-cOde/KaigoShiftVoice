@@ -147,6 +147,16 @@
   #topbar { gap: 10px; align-items: center; }
   #v12 { display: none; max-width: 1440px; margin: 0 auto; padding: 14px 20px 0; }
   #vclean { display: none; max-width: 860px; margin: 0 auto; padding: 14px 20px 0; }
+  /* ルールを全部見るページ（作者 2026-11-08「ルールの一覧は詳細のページに」）。中身は前の右の一覧のまま */
+  #vrules { display: none; max-width: 860px; margin: 0 auto; padding: 14px 20px 0; }
+  #vrules h1 { font-size: 22px; margin: 6px 0 10px; }
+  #vrules .cards { max-height: none; overflow: visible; }
+  /* 右の欄の上。今の表で守れていないルールだけ */
+  .brokenhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .brokenhead .bt { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; font-size: 18px; font-weight: 700; }
+  .brokenhead .bt.bad { color: #b00; }
+  .brokenhead button { font-size: 12px; padding: 2px 10px; white-space: nowrap; }
+  .blist { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 34vh; overflow-y: auto; padding-right: 2px; }
   #vclean h1 { font-family: "Hiragino Mincho ProN", serif; font-size: 22px; margin: 6px 0 6px; }
   .cl-head { margin: 0 0 14px; line-height: 1.7; }
   .cl-grp { border: 1px solid #bbb; border-radius: 3px; padding: 12px 16px; margin: 10px 0; }
@@ -362,10 +372,13 @@
     <div class="hint" id="hint">例「岡田さん、15と16は法事で休み」「遅番の次の日に早番はきついから、やめてあげて」。名簿の名前は番号に伏せてから Claude へ送ります。直した後も［ひとつ戻す］で戻せます。</div>
   </section>
   <section class="right">
-    <h2>ルール</h2>
-    <div class="cards" id="cards"></div>
+    <div class="brokenbox" id="brokenbox"></div>
   </section>
 </main>
+<section id="vrules">
+  <div class="navrow"><h1>今のルール</h1><button type="button" id="rulesback">表へ</button></div>
+  <div class="cards" id="cards"></div>
+</section>
 <section id="vsetup"><div class="su-wrap" id="susbody"></div></section>
 <section id="vclean">
   <div class="navrow"><span class="small"></span><button type="button" id="cleanback">表へ</button></div>
@@ -946,11 +959,40 @@ function revealNew(g) {
   Object.keys(newIds).forEach(function (id) { revealed[id] = true; });
 }
 
-// 右の一覧（作者 2026-11-07「右のルールも煩雑で見にくくて、施設のハードルール、ソフトルールそれぞれの重み付けと、個人ごとに
+// 右の欄の上は、今の表で守れていないルールだけ（作者 2026-11-08「右に全てのルールを置くのはやめて。『外れ何件』のように、
+// うまく適用できなかったものだけを載せていく。ルールの一覧は詳細のページに」）。数え方はカードの「外れ」の印と同じで、
+// 相談できるルールの外れは数えない。カードは一覧と同じ物なので、押すと表の届いているマスが光る
+function renderBroken() {
+  var box = document.getElementById("brokenbox");
+  box.textContent = "";
+  var bad = (S.cards || []).filter(function (c) { return c.broken && c.flex !== "negotiable"; });
+  var head = el("div", "brokenhead");
+  head.appendChild(el("span", "bt" + (bad.length ? " bad" : ""), "ルールの外れ " + bad.length + "件"));
+  var g = groupCards(S.cards || [], (S.staff || []).map(function (s) { return s.name; })), n = g.total + g.only.length;   // ページの一覧に並ぶ数
+  var all = el("button", "", "ルールを全部見る" + (n ? "（" + n + "件）" : ""));
+  all.type = "button"; all.id = "toallrules";
+  all.addEventListener("click", function () { showRules(true); });
+  head.appendChild(all);
+  box.appendChild(head);
+  if (!bad.length) return;
+  var list = el("div", "blist");
+  bad.forEach(function (c) { list.appendChild(makeCard(c)); });
+  box.appendChild(list);
+}
+function showRules(on) {
+  document.getElementById("v11").style.display = on ? "none" : "";
+  document.getElementById("topbar").style.display = on ? "none" : "";
+  document.getElementById("vrules").style.display = on ? "block" : "none";
+  if (on) { renderCards(); window.scrollTo(0, 0); }
+}
+document.getElementById("rulesback").addEventListener("click", function () { showRules(false); renderTable(); });
+
+// ルールを全部見るページの一覧（作者 2026-11-07「右のルールも煩雑で見にくくて、施設のハードルール、ソフトルールそれぞれの重み付けと、個人ごとに
 // まとめられたハードルールとソフトルールが分かりやすく見れるといい」）。上から 今月だけ・施設のルール・人ごとのルール。
 // 見出しを押すと、たたむ・開く（消すのではなく見えなくするだけ）。人ごとの見出しは、ふだんたたんで件数だけ出す
 var personShown = null;
 function renderCards() {
+  renderBroken();
   var box = document.getElementById("cards");
   box.textContent = "";
   var g = groupCards(S.cards, (S.staff || []).map(function (s) { return s.name; }));
@@ -1020,6 +1062,7 @@ function showClean(on) {
   document.getElementById("vclean").style.display = on ? "block" : "none";
   document.getElementById("v12").style.display = "none";
   document.getElementById("vsetup").style.display = "none";
+  document.getElementById("vrules").style.display = "none";
 }
 function openClean() {
   showClean(true); CL = null; clMsg = ""; clPick = {}; clOpen = {};
@@ -2066,6 +2109,7 @@ function show12(on) {
   document.getElementById("topbar").style.display = on ? "none" : "";
   document.getElementById("v12").style.display = on ? "block" : "none";
   document.getElementById("vsetup").style.display = "none";
+  document.getElementById("vrules").style.display = "none";
   if (on) document.getElementById("to11").textContent = S.month + "月の表へ";
 }
 var splitAdded = false;   // 先月増えたルールを［1件ずつ見る］にしたか
@@ -2563,6 +2607,7 @@ function resetForFacility(st, bannerText) {
   document.getElementById("ptt").style.display = st.has_voice ? "" : "none";
   document.getElementById("vsetup").style.display = "none";
   document.getElementById("v12").style.display = "none";
+  document.getElementById("vrules").style.display = "none";
   document.getElementById("v11").style.display = "";
   document.getElementById("topbar").style.display = "";
   renderAll();
@@ -2586,6 +2631,7 @@ function openSetup() {
   document.getElementById("v11").style.display = "none";
   document.getElementById("topbar").style.display = "none";
   document.getElementById("v12").style.display = "none";
+  document.getElementById("vrules").style.display = "none";
   document.getElementById("vsetup").style.display = "block";
   renderSetup();
 }
