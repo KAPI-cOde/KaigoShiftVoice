@@ -72,3 +72,28 @@ def test_rebuild_reassigns_standby_and_undo_puts_it_back(sess):
             assert eligible(m.layers[lid]["def"], m, m.table, n, int(day)), (day, n, m.table[n][int(day) - 1])
     sess.undo()
     assert sess.store.month(2026, 11).layers[lid]["assign"] == was
+
+
+def test_rebuild_message_is_two_sentences_with_before_and_after_counts(sess):
+    """本文は結果と、残った外れの1つの2文まで（作者 2026-11-07「こういう理由でできなかったけれど、こうしてもいいですか、
+    くらいが人間に判断できる限度」）。外れの全部は extra の broken でたたんで見せる。"""
+    import re
+    sess.open()
+    m = sess.store.month(2026, 11)
+    broken = {n: list(r) for n, r in m.table.items()}
+    broken[next(iter(broken))] = ["夜"] * len(next(iter(broken.values())))
+    m.table = broken
+    sess.store.save_month(m)
+    was = len({b["rule"] for b in _hard(sess)})
+    r = sess.rebuild(tries=1)
+    assert r.kind == "applied", r.message
+    assert r.message.count("。") == 2 and len(r.message) < 120, r.message
+    mm = re.search(r"外れていたルールは(\d+)件から(\d+)件になりました", r.message)
+    assert mm and int(mm.group(1)) == was and was > 0, r.message
+    assert "ひとつ戻す" in r.message
+    assert "変わったマス" not in r.message and "回作って" not in r.message and r.warning == r.message   # 画面は applied の本文を warning で出す
+    left = int(mm.group(2))
+    if left:
+        assert r.extra["broken"]["count"] == left and r.extra["broken"]["items"] and not r.extra["broken"]["rebuild"]
+    else:
+        assert "broken" not in (r.extra or {})

@@ -17,7 +17,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 
 from .addshift import add_shift_items, fix_spoken, hide_spoken, read_spoken, show_spoken
-from .build import C3_MESSAGE, TIMEOUT_MESSAGE, build_original, clip_to_month, month_rules, patience_of, solve_staged
+from .build import C3_MESSAGE, broken_parts, TIMEOUT_MESSAGE, build_original, clip_to_month, month_rules, patience_of, solve_staged
 from .daycount import day_counts as _day_counts
 from .intake import WHO_UNKNOWN, Clarify, Proposal, to_proposal
 from .ledger import Ledger
@@ -1086,10 +1086,29 @@ class Session:
         self._reassign_layers(m)   # 白紙から作ると、当番の人が出勤になることがある。新しい表で割り当て直す
         self.store.save_month(m)
         changes = changed_cells(before, m.table)
-        msg = (f"全部のルールで一から作り直しました（{n}回作って、いちばん良い表）。変わったマスは{len(changes)}です。"
-               "前の表に戻す時は［ひとつ戻す］")
-        return Reply("applied", uid, msg, changes=changes, summary="全部のルールで一から作り直す",
-                     seconds=round(time.perf_counter() - t0, 1), warning=st.note or "")
+        hard = ("fixed", "wish", "operational")
+        left = [b for b in check_table(rules, fac, staff, m, m.table) if b["flex"] in hard]
+        was = ({b["rule"] for b in check_table(rules, fac, staff, m, before) if b["flex"] in hard} if before else set())
+        now_n = len({b["rule"] for b in left})
+        # 本文は結果と、残った外れのいちばん大きい物1つの2文まで。外れの全部は画面でたたんで見せる（作者 2026-11-07）
+        if left:
+            cnt: dict[str, int] = {}
+            for b in left:
+                cnt[b["rule"]] = cnt.get(b["rule"], 0) + 1
+            top = next(b["name"] for b in left if b["rule"] == max(cnt, key=cnt.get))
+            second = f"残った外れでいちばん大きいのは「{top}」で、［ひとつ戻す］で前の表に戻せます。"
+        else:
+            second = "外れているルールはなくなり、［ひとつ戻す］で前の表に戻せます。"
+        head = (f"一から作り直しました（外れていたルールは{len(was)}件から{now_n}件になりました）。" if before
+                else f"一から作り直しました（外れているルールは{now_n}件です）。")
+        extra = {}
+        if left:
+            dt_ = st.detail or {"lead": "", "items": [], "notes": [], "off_rules": 0}
+            items = dt_["items"] or broken_parts(left, {x.name for x in staff})
+            extra = {"broken": {"count": now_n, "lead": dt_["lead"], "items": items, "notes": dt_["notes"],
+                                "rebuild": False}}
+        return Reply("applied", uid, head + second, changes=changes, summary="全部のルールで一から作り直す",
+                     seconds=round(time.perf_counter() - t0, 1), warning=head + second, extra=extra)   # 画面は applied の本文を warning で出す
 
     def undo(self) -> Reply:
         """［ひとつ戻す］。最後に採用した一言の札を取り消し（帳面に取り消しの1行）、表を直す前に戻す。"""
