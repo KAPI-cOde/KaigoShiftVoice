@@ -90,3 +90,12 @@ def test_AとBの記号で伏せた字を当て直さない():
     t, tokens = hide_spoken("職員01さん、3日はBで4日はA", fac)
     assert sorted(tokens.values()) == ["A", "B"]
     assert t.count("勤務") == 2 and "勤務勤務" not in t
+
+
+def test_数字だけの記号の勤務は回数や日付の数を勤務Aにしない():
+    fac = Fac(ShiftType(symbol="8", name="8時の日勤", kind="work"))
+    for s in ("職員17の現場の勤務は月に8回までで", "8日は休み", "8人で回す", "8連勤まで", "8か月", "全角８回まで"):
+        t, tokens = hide_spoken(s, fac)
+        assert (t, tokens) == (s, {}), s
+    t, tokens = hide_spoken("10日の職員12さん、8に", fac)
+    assert tokens and t == "10日の職員12さん、勤務Aに"

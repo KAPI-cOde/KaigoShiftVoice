@@ -229,6 +229,9 @@ def fix_spoken(text: str, facility) -> str:
     return text
 
 
+_COUNT_AFTER = "[回日人時連件週月分名歳％%度倍番]|か月|ヶ月|カ月|ヵ月|ケ月|ヶ|カ所|か所"
+
+
 def hide_spoken(masked: str, facility) -> tuple[str, dict[str, str]]:
     """一言の中の足した勤務の名前を「勤務A」に置き換える。返すのは送る文と、{勤務A: 記号}（言っていなければ文はそのまま）。"""
     t = masked.translate(_ZEN)
@@ -237,7 +240,14 @@ def hide_spoken(masked: str, facility) -> tuple[str, dict[str, str]]:
                for i, st in enumerate(spoken_shifts(facility)) for w in _words(st)}
     if not by_word:
         return masked, {}
-    words = "|".join(re.escape(w) for w in sorted(by_word, key=len, reverse=True))   # 長い名前を先に当てる
+    def alt(ws):
+        return "|".join(re.escape(w) for w in sorted(ws, key=len, reverse=True))   # 長い名前を先に当てる
+
+    plain = [w for w in by_word if not w.isdigit()]
+    digits = [w for w in by_word if w.isdigit()]
+    # 数字だけの言い方は、数を数える言葉が続く時は回数・日付などの数なので勤務として扱わない
+    parts = ([alt(plain)] if plain else []) + ([rf"(?:{alt(digits)})(?!{_COUNT_AFTER})"] if digits else [])
+    words = "|".join(parts)
 
     def put(m: re.Match) -> str:
         token, sym = by_word[m.group(0)]
