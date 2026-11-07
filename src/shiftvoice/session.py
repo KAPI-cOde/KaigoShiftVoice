@@ -1448,7 +1448,7 @@ class Session:
         if m.distributed:
             return Reply("ask", None, "配った後の表は、一から作り直しません。直したい所を一言で伝えてください")
         fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
-        rules = month_rules(self.store, self.year, self.month)
+        rules = month_rules(self.store, self.year, self.month, with_premise=False)
         py, pm = (self.year, self.month - 1) if self.month > 1 else (self.year - 1, 12)
         try:
             prev = self.store.month(py, pm).table or {}

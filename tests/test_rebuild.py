@@ -4,8 +4,9 @@ from shiftvoice.rules import check_table
 
 
 def _hard(sess):
+    """表の上の帯と同じく、撮影用の前提（p-*）を除いて数える（month_rules の既定は前提込み）。"""
     m = sess.store.month(2026, 11)
-    rules = __import__("shiftvoice.build", fromlist=["month_rules"]).month_rules(sess.store, 2026, 11)
+    rules = __import__("shiftvoice.build", fromlist=["month_rules"]).month_rules(sess.store, 2026, 11, with_premise=False)
     return [b for b in check_table(rules, sess.store.facility(), sess.store.staff(), m, m.table)
             if b["flex"] in ("fixed", "wish", "operational")]
 
@@ -99,3 +100,29 @@ def test_rebuild_message_is_two_sentences_with_before_and_after_counts(sess):
     else:
         assert r.warning == "" and r.extra["note"] == r.message
         assert "broken" not in (r.extra or {})
+
+
+def test_rebuild_after_readme_phrases_counts_like_the_band_and_keeps_the_table(sess):
+    """README の3つの一言（遅番の次の日の早番・遅番の3連続・平均化）を毎月で入れた後に作り直す。返事の「外れていた
+    ルールはN件」は表の上の帯の「ルールの外れ」と同じ数で、遅番の次の日の早番は0のまま、早番・遅番の回数の幅も
+    押す前より広がらない。"""
+    import re
+    from test_even_out import EVEN, SCENE, _late_then_early, _spread
+    sess.open()
+    for text, ans in SCENE + [(EVEN, "毎月")]:
+        r = sess.answer(sess.say(text).uid, ans)
+        assert r.kind == "applied", (text, r.message)
+    staff = sess.store.staff_on(2026, 11)
+    band = sum(1 for c in sess.state()["cards"] if c["broken"] and c["flex"] != "negotiable")
+    m = sess.store.month(2026, 11)
+    wide = {sym: _spread(m.table, staff, sym) for sym in ("早", "遅")}
+    assert _late_then_early(m.table) == 0
+    r = sess.rebuild()   # 画面の黒いボタンと同じ回し方（種を変えて3回）
+    assert r.kind == "applied", r.message
+    mm = re.search(r"外れていたルールは(\d+)件", r.message)
+    assert mm and int(mm.group(1)) == band, (band, r.message)
+    m = sess.store.month(2026, 11)
+    assert _late_then_early(m.table) == 0
+    for sym in ("早", "遅"):
+        lo, hi = _spread(m.table, staff, sym)
+        assert hi - lo <= wide[sym][1] - wide[sym][0], (sym, wide[sym], (lo, hi))
