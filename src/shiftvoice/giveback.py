@@ -88,8 +88,12 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
     yu = gs["leave"]
     # 返さない案は段の順で作る（作る時に段を下げた施設や、一言でぶつかるルールを足した施設でも翌々月へ進める。
     # 敵対レビュー 2026-11-03）。段1で作れる時は、これまでと同じ表になる
-    staged = solve_staged(facility, staff, rules, month)
+    from .build import patience_of
+    patience = patience_of(facility)   # 一から作るので、段1が時間切れなら長く探す（build.PATIENCE_DTIME）
+    staged = solve_staged(facility, staff, rules, month, patience=patience)
     base = staged.result
+    # 返さない案を長く探して作った時は、返す案も同じ量で探す（A21。同じ計算の量で作る。少ないと返す案が作れない）
+    give_dtime = patience if any(s.get("patience") and s["status"] == "ok" for s in staged.stages) else None
     if base.status != "ok" or _hard_broken(base):
         return GiveBack("base_failed", base, None, message=staged.message or "返さない案が作れませんでした",
                         base_seconds=staged.seconds)
@@ -172,7 +176,7 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
         add = stage_rules(stage)
         if not add:
             continue
-        give = solve_month(solve_fac, staff, rules + add, month, hint=base.table, extra=extra)
+        give = solve_month(solve_fac, staff, rules + add, month, hint=base.table, extra=extra, max_dtime=give_dtime)
         if give.status != "ok":
             continue
         pat1 = pattern_counts({n: give.table[n] for n in others}, facility)

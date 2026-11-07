@@ -83,3 +83,13 @@ if os.environ.get("SHIFTVOICE_LIVE") == "1":
 
     def pytest_terminal_summary(terminalreporter):
         terminalreporter.write_line(f"本物の Claude を呼んだ回数 {len(LIVE_CALLS)}")
+
+
+@pytest.fixture(autouse=True)
+def _no_patience(monkeypatch, request):
+    """取り込んだ施設で段1を長く探す作り（build.patience_of）は、試験では止める（1回で1〜2分かかり、前からの試験の
+    段を下げる道すじと秒が変わるため）。長く探す作りそのものは tests/test_patience.py が確かめる"""
+    if request.module.__name__.endswith("test_patience"):
+        monkeypatch.delenv("SHIFTVOICE_PATIENCE", raising=False)
+    else:
+        monkeypatch.setenv("SHIFTVOICE_PATIENCE", "0")

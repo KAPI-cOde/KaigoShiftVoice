@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field, replace
 
 from .model import Facility, Month, Rule, Staff
@@ -173,6 +174,24 @@ def solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], mont
     return out
 
 
+# 取り込んだ施設で一から表を作る時、段1が時間切れなら、段を下げる前にこの計算の量でもう一度段1を探す（作者 2026-11-07
+# 「希望休は原則守る。外す前にほかの調整を探す」）。実際の施設の10月の写し（17人・3ユニット、名前は作り話）で、量40では
+# 一度も見つからず段3へ下がって夜勤が2人でない日が8日残ったが、量300では7回とも、全部のルールと希望休51日を守る表が
+# 見つかった（量150では2回に1回）。待ちはこの Mac で1〜2分ほど増える
+PATIENCE_DTIME = 300.0
+
+
+def patience_of(facility: Facility) -> float | None:
+    """一から表を作る時に段1を長く探す計算の量。取り込んだ施設（設定に pasted_month がある）だけ。施設の設定
+    solve.patience_dtime があればその量（0で止める）。見本の施設と公開版（SHIFTVOICE_PUBLIC=1。重い処理の枠を長く
+    占めないように）は None。環境変数 SHIFTVOICE_PATIENCE（0で止める。試験で使う）があればそれを先に見る。"""
+    if os.environ.get("SHIFTVOICE_PUBLIC") == "1" or "pasted_month" not in facility.settings:
+        return None
+    env = os.environ.get("SHIFTVOICE_PATIENCE")
+    v = float(env) if env not in (None, "") else facility.settings.get("solve", {}).get("patience_dtime", PATIENCE_DTIME)
+    return float(v) if v else None
+
+
 # 運用の都合の回数のルールを外す時の、1人あたりのずれの上限。小さい方から試す。3の次がすぐ無制限だと、公休9日の施設で
 # 14日の希望休が1件あるだけで2人が公休26日・28日になった（Astra 2026-11-06 の指摘2）
 DEV_CAPS = (1, 2, 3, 5, 8, 13, None)
@@ -180,8 +199,12 @@ DEV_CAPS = (1, 2, 3, 5, 8, 13, None)
 
 def _solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month,
                   **kw) -> StagedResult:
-    """段の順で解く。秒は全段の合計で数え、段ごとの状態を残す。"""
+    """段の順で解く。秒は全段の合計で数え、段ごとの状態を残す。
+    patience（計算の量）を渡された時だけ、段1が時間切れなら段を下げる前に、その量で段1をもう一度探す（patience_of）。
+    一言の直し・静かなルールの確かめ・作れない時の診断は渡さないので、今までどおりの速さ"""
     stages: list[dict] = []
+    patience = kw.pop("patience", None)
+    original = facility
 
     def run(stage: int) -> SolveResult:
         secs = 0.0
@@ -208,6 +231,14 @@ def _solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], mon
             return StagedResult(r2, stages, note=SHORT_REST_NOTE)
         facility = lite   # 目安なしでも段1で作れない時は、目安を外したまま今までの段の順へ
         r = r2
+    if r.status == "timeout" and patience and "max_dtime" not in kw:
+        # 段を下げる前に、計算の量を増やして段1をもう一度探す（目安は戻す。量300なら目安ありでも見つかった）。
+        # 作れないと分かった時（infeasible）は長く探しても無駄なので、ここへは来ない
+        r3 = solve_month(original, staff, rules, month, stage=1, max_dtime=patience, **kw)
+        stages.append({"stage": 1, "status": r3.status, "seconds": round(r3.seconds, 3), "patience": patience})
+        if r3.status == "ok":
+            return StagedResult(r3, stages)
+        r = r3
     if r.status == "infeasible":
         order = [3, 2, 4]   # 運用の都合を先に外し、本人の希望は最後まで守る（作者の答え 2026-11-06）
     else:  # 時間切れは段3だけ。希望を外す段（2・4）へは進まない
@@ -273,4 +304,4 @@ def build_original(store: Store, year: int, month: int, *, with_premise: bool = 
     fac, staff = store.facility(), store.staff_on(year, month)
     m = store.month(year, month)
     rules = month_rules(store, year, month, with_premise=with_premise)
-    return solve_staged(fac, staff, rules, m)
+    return solve_staged(fac, staff, rules, m, patience=patience_of(fac))   # 一から作るので、段1を長く探してよい
