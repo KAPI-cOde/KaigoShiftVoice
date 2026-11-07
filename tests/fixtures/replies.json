@@ -48,5 +48,7 @@
  "職員11の現場勤務は8日まで": "{\"items\":[{\"type\":\"count_limit\",\"staff\":[\"職員11\"],\"shift\":\"現場\",\"min\":null,\"max\":8,\"until_day\":null,\"strength\":\"operational\",\"reason\":null}]}",
  "職員12さんの夜勤は4回まで": "{\"items\":[{\"type\":\"count_limit\",\"staff\":[\"職員12\"],\"shift\":\"夜\",\"min\":null,\"max\":4,\"until_day\":null,\"strength\":\"operational\",\"reason\":null}]}",
  "職員01さんは有給消化。夜勤は単発で1〜3回なら手伝える。24日と25日と年末は夜勤に入れない": "{\"items\":[{\"type\":\"leave_count\",\"staff\":\"職員01\",\"count\":null,\"reason\":\"有給消化\"},{\"type\":\"consecutive_limit\",\"staff\":\"職員01\",\"shift\":\"夜\",\"max\":1,\"strength\":\"wish\",\"reason\":null},{\"type\":\"count_limit\",\"staff\":[\"職員01\"],\"shift\":\"夜\",\"min\":1,\"max\":3,\"until_day\":null,\"strength\":\"wish\",\"reason\":null},{\"type\":\"day_off\",\"staff\":\"職員01\",\"days\":[24,25],\"strength\":\"fixed\",\"reason\":null},{\"type\":\"custom\",\"summary\":\"年末に夜勤を入れない\"}]}",
- "委員会の日は、できるだけ委員の3人を午前の勤務に。全員が無理なら2人いればいい": "{\"items\":[{\"type\":\"custom\",\"summary\":\"委員会の日は委員3人を午前の勤務に（全員が無理なら2人でよい）\"}]}"
+ "委員会の日は、できるだけ委員の3人を午前の勤務に。全員が無理なら2人いればいい": "{\"items\":[{\"type\":\"custom\",\"summary\":\"委員会の日は委員3人を午前の勤務に（全員が無理なら2人でよい）\"}]}",
+ "遅番4回はやめましょう。": "{\"items\":[{\"type\":\"none\"}]}",
+ "遅番4連続はやめよう": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":\"遅\",\"max\":3,\"except_staff\":null,\"strength\":\"negotiable\",\"reason\":null}]}"
 }

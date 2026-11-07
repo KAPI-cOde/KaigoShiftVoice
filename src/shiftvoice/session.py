@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from .addshift import add_shift_items, fix_spoken, hide_spoken, read_spoken, show_spoken
 from .build import C3_MESSAGE, broken_parts, TIMEOUT_MESSAGE, build_original, clip_to_month, month_rules, patience_of, solve_staged
 from .daycount import day_counts as _day_counts
-from .intake import WHO_UNKNOWN, Clarify, Proposal, to_proposal
+from .intake import EVERYONE_HINT, WHO_UNKNOWN, Clarify, Proposal, to_proposal
 from .ledger import Ledger
 from .model import Rule
 from .names import Masker
@@ -530,7 +530,8 @@ class Session:
         return self._safe_propose(u)
 
     # 読み直し（最初の読みが型に当てはまらずに止まる時だけ）
-    STUCK_WORDS = ("まだ扱えません", "頼みが混ざっています")
+    STUCK_WORDS = ("まだ扱えません", "頼みが混ざっています", "表を変える頼みが見つかりませんでした",
+                   "うまく聞き取れませんでした")
 
     def _proposal(self, items: list[dict], text: str) -> Proposal:
         """読み取りの結果を手元で確かめて、候補にする（_propose と同じ当て方）。"""
@@ -540,9 +541,10 @@ class Session:
         its = items if m.distributed else as_redo(items, spoken)
         return to_proposal(its, text, fac, staff, m, leave_caps=self._leave_caps(), rules=list(spoken.values()))
 
-    def _stuck(self, items: list[dict], text: str) -> str | None:
-        """最初の読みが、型に当てはまらない・知らない形・聞き返しで止まるなら、止まった理由。通るなら None。
-        名前の無い一言（誰の頼みか）と、答えをつなぐ聞き返し（日付・勤務が足りない）は、読み直しても同じなので当てない。"""
+    def _stuck(self, items: list[dict], text: str, masked: str = "") -> str | None:
+        """最初の読みが、型に当てはまらない・知らない形・頼みが1つも無い・聞き返しで止まるなら、止まった理由。通るなら None。
+        名前を1人も言っていない回数・連勤などのルール（「全員」と付けてと聞く形）も当てる。読み直しが全員のルールと読めば入る。
+        日付の頼みで誰か分からない時と、答えをつなぐ聞き返し（日付・勤務が足りない）は、読み直しても同じなので当てない。"""
         if any(it.get("type") == "unclear" and it.get("question") == WHO_UNKNOWN for it in items):
             return None
         try:
@@ -550,6 +552,8 @@ class Session:
         except Clarify as e:
             asked = next((it.get("question") for it in items if it.get("type") == "unclear"), None)
             if e.need is None and (any(w in str(e) for w in self.STUCK_WORDS) or (asked is not None and str(e) == asked)):
+                return str(e)
+            if str(e) == WHO_UNKNOWN + EVERYONE_HINT and not re.search(r"職員\d{2}", masked):
                 return str(e)
             return None
         except Exception:  # noqa: BLE001 想定外の例外は今までどおり _safe_propose に任せる
@@ -580,7 +584,7 @@ class Session:
         reread = getattr(self.reader, "reread", None)
         if reread is None:
             return items, {}
-        why = self._stuck(items, u["text"])
+        why = self._stuck(items, u["text"], masked)
         if why is None:
             return items, {}
         ctx = self._reread_context(masker, tokens)
@@ -596,12 +600,18 @@ class Session:
         if not re.search(r"職員\d{2}", masked) and any(
                 isinstance(it, dict) and it.get("staff") not in (None, [], "") for it in new):
             new = [{"type": "unclear", "question": WHO_UNKNOWN}]   # 名前を言っていない一言に人を当てた（最初の読みと同じ守り）
+        if re.search(r"職員\d{2}", masked):   # 全員と読んだ印は、名前を1人も言っていない一言にだけ使う
+            new = [{k: v for k, v in it.items() if k != "everyone"} if isinstance(it, dict) else it for it in new]
         known = set(self.store.ledger().rules_at(between=self._span()))
         fields = {"reread": True}
         if [x for x in got["replace"] if x in known]:
             fields["reread_replace"] = [x for x in got["replace"] if x in known]
         if got["next"]:
             fields["reread_next"] = masker.unmask(show_spoken(got["next"], tokens))
+        if got.get("how"):
+            fields["reread_how"] = masker.unmask(show_spoken(got["how"], tokens))
+        elif any(isinstance(it, dict) and it.get("everyone") is True for it in new):
+            fields["reread_how"] = "人を言っていないので、全員のルールと読みました"
         return masker.unmask(new), fields
 
     def _safe_propose(self, u: dict) -> Reply:
@@ -609,6 +619,10 @@ class Session:
         （取り込んで作った施設で、有給の記号が無くて落ちた。敵対レビュー 2026-11-03）。"""
         try:
             r = self._propose(u)
+            if u.get("reread_how") and r.kind not in ("error", "ask"):
+                # 読み直しが読みを1つに決めた（読みが2通りある・人を言っていないので全員と読んだ）。どう読んだかを読んだ中身に添える
+                r.summary = f"{r.summary}。{u['reread_how']}" if r.summary else u["reread_how"]
+                r.extra = {**(r.extra or {}), "reread_how": u["reread_how"]}
             if u.get("reread_next") and r.kind != "error":
                 # 読み直しで、ルールと日付の頼みが1つの一言に混ざっていた。ルールの方を候補にし、日付の頼みは続けて言ってもらう。
                 # 聞き返しは本文だけが画面に出るので本文に、直した時は読んだ中身（summary）に添える

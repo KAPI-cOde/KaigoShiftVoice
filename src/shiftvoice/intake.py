@@ -56,6 +56,7 @@ KEEP_NOW = r"追加しない|追加せず|増やさない|増やさず|そのま
 REMOVE_WORDS = r"外し|外す|はずし|はずす|0回|０回|ゼロ|なし|無し|抜い|抜く|消し|消す|全部"
 NOBODY = re.compile(r"^(職員)?(不明|未定|未指定|NN|ＮＮ|XX|ＸＸ|〇〇|○○)(さん)?$|^(本人|自分|私|わたし|僕|俺|話者|依頼者)$")
 WHO_UNKNOWN = "誰の頼みか読み取れませんでした。表もルールも変えていません。名前を入れて、もう一度言ってください"
+EVERYONE_HINT = "（全員のルールなら「全員」と付けてください）"
 
 
 def _names(v, staff_names: set[str]) -> list[str] | None:
@@ -1095,7 +1096,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     rules_nobody = any(not r.get("who") for r in p.rules if r["kind"] not in ("layer", "cell"))
     # 回数と連勤は人ごとに言うことが多いので、人が無い返事は「全員」「みんな」と言い、名前も出ていない時だけ
     # 全員に効かせる（言葉の手がかりで人を当てる作りは呼び方ごとに穴が出続けたため。作者の答え 2026-11-03）
-    everyone = bool(re.search(r"全員|みんな|皆(?!勤)", text))
+    # everyone は読み直し（施設の文脈を見た Sonnet）が、人を言っていない一言を全員のルールと読んだ印。session が名前の無い一言にだけ残す
+    everyone = bool(re.search(r"全員|みんな|皆(?!勤)", text)) or any(it.get("everyone") is True for it in real)
     per_nobody = any(not r.get("who") for r in p.rules if r["kind"] in ("count", "max_run"))
     # 「みんな夜勤は月4回までで、井上さんだけは3回までにして」。全員と名指しが1つの一言に入る時は、言った人が
     # 全員、名指しの回数のルールに入っている時だけ通す（名指しは with_overrides で全員向けより優先する）。
@@ -1111,7 +1113,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         (r.get("meta") or {}).get("except_who") for r in p.rules if r["kind"] in ("count", "max_run") and not r.get("who"))
     if cells_nobody or (not except_ok and ((per_nobody and (not everyone or (said and not both)))
                                            or (said and not everyone and rules_nobody))):
-        raise Clarify(WHO_UNKNOWN + ("" if cells_nobody else "（全員のルールなら「全員」と付けてください）"))
+        raise Clarify(WHO_UNKNOWN + ("" if cells_nobody else EVERYONE_HINT))
     if kind == "cells":
         p.scope = "once"
         # 言い直し（「赤坂さんじゃなくて井上さん、10日が休みで」）。読み取りは新しい人の頼みだけを返すので、
