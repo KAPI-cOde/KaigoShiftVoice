@@ -218,8 +218,8 @@ class Masker:
             m = mm.group(1)
             if re.fullmatch(r"職員\d{0,3}", m):
                 continue
-            if mm.group(0)[len(m):] == "くん" and m[-1] in KU_VERBS:
-                continue   # 「続くんは」「行くんやったら」（「続くのは」の言い方）
+            if mm.group(0)[len(m):] == "くん" and len(m) == 1 and m in KU_VERBS:
+                continue   # 「続くんは」「行くんやったら」（「続くのは」の言い方）。「秀行くん」のように前に漢字が付けば名前
             if m in NOT_NAMES or m in FAMILY_WORDS:
                 # 置き換えの後に残った名前でない語は、直前が区切り・数字・呼び方の終わり・文の頭の時だけ通す（閉じる側）
                 i = mm.start(1)

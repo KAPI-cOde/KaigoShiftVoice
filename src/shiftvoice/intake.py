@@ -1154,7 +1154,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     named = {masker.to_name[c] for c in re.findall(r"職員\d{2,3}", masker.mask(text)[0]) if c in masker.to_name}
     # 呼びかけの前の語。「続くんは」「行くんやったら」（関西の「続くのは」）の「続く」は呼びかけでない（伏せる側と同じ見方）
     calls = [w for w, h in re.findall(r"([ぁ-ゖァ-ヺー一-龥々]{1,6}?)(さん|くん|ちゃん)", text)
-             if not (h == "くん" and (w[-1] in KU_VERBS or w.endswith(KANA_KU_VERBS)))]
+             if not (h == "くん" and (re.search(r"(?:^|[^一-龥々])" + "[" + "".join(KU_VERBS) + "]$", w)
+                                     or w.endswith(KANA_KU_VERBS)))]
     said = bool(named) or any(not any(w.endswith(n) for n in not_name) for w in calls)
     # マスの頼み（休み・勤務・移動）と取り消しは、人が無いまま全員に効かせない。「全員15日休み」は頼みとして
     # ありえず、さんの無いかなの名前や「皆」を含む一言でもすり抜けないように（再レビュー2回目 b の指摘）

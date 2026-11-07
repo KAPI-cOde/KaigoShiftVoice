@@ -244,3 +244,20 @@ def test_返事の言葉の中のユニットと数は名前に戻さない(stor
     assert m.unmask("夜勤は毎日各ユニット1人で、全員が同じ回数にはできません") == "夜勤は毎日各ユニット1人で、全員が同じ回数にはできません"
     assert m.unmask("ユニット1人ずつ") == "ユニット1人ずつ"
     assert m.unmask("ユニット1の早番は2人") == f"{u1}の早番は2人"
+
+
+@pytest.mark.parametrize("text", ["秀行くんは12日休み", "雅彦の弟の和行くん、夜勤なしで", "利続くん早番だけ"])
+def test_動詞の字で終わる名前にくんが付いても伏せずに送らない(store, text):
+    """「続くんは」（続くのは）を名前と見ないための字の一覧に「行」などがあり、「秀行くん」の「行」に当たって、
+    名簿に無い名前がそのまま送られうた（自動の安全確認 2026-11-08）。動詞として通すのは、その字が1字だけで立つ時"""
+    m = Masker(_roster(store), store.facility())
+    masked, unknown = m.mask(text)
+    name = re.search(r"([一-龥]+)くん", text).group(1)
+    assert unknown or name not in masked, (text, masked, unknown)
+
+
+def test_続くんはと行くんやったらは名前と見ない(store):
+    m = Masker(_roster(store), store.facility())
+    for text in ("遅番が3日も続くんは、やめて", "夜勤に行くんやったら、次の日は休みで"):
+        masked, unknown = m.mask(text)
+        assert not unknown, (text, unknown)
