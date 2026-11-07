@@ -56,5 +56,6 @@ def test_できれば休みにしないでは相談できる強さ(nov):
     （作者 2026-11-07「年末年始に入れてしまって構わない」）。言い切った時は今までどおり本人の希望の強さ。"""
     avoid = lambda s: [{"type": "avoid_cell", "staff": "岡田", "days": [28, 29, 30], "shift": "公", "strength": s}]
     assert _flex(nov, "岡田さん、28日から30日は、できれば休みにしないで", avoid("negotiable")) == ["negotiable"]
+    assert _flex(nov, "岡田さん、28日から30日は、できれば休みにしないで", avoid(None)) == ["negotiable"]   # 読み取りが強さを付けない時
     assert _flex(nov, "岡田さん、28日から30日は休みにしないで", avoid("negotiable")) == ["wish"]   # 言い切りは弱めない
     assert _flex(nov, "岡田さん、28日から30日は絶対に休みにしないで", avoid("fixed")) == ["wish"]   # 動かせない強さにはしない
