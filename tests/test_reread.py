@@ -1,6 +1,7 @@
 """読み直し（最初の読みが型に当てはまらずに止まった時だけ、文脈つきで Sonnet に読ませ直す）。
 録った返事（replies.json の最初の読み・rereads.json の読み直し）で回す。鍵は要らない。"""
 import json
+import re
 
 import pytest
 
@@ -243,12 +244,21 @@ def test_part_of_a_roster_name_left_in_what_is_sent_stops_the_reread(sess, monke
 
 
 def test_given_name_without_honorific_is_not_read_as_everyone(sess):
+    """下の名前だけ・敬称なしの名指しは、全員のルールにしない。名簿の下の名前と分かれば番号に伏せて送り、その人のルールになる"""
+    from shiftvoice.names import Masker
     _rename_chiba_to_full_name(sess)
     t = "花子は日勤を月1回まで"
-    rule = {"type": "count_limit", "staff": None, "shift": "日", "min": None, "max": 1, "until_day": None,
+    masked = Masker(sess.store.staff(), sess.store.facility()).mask(t)[0]
+    assert "花子" not in masked
+    code = re.search(r"職員\d{2,3}", masked).group(0)
+    rule = {"type": "count_limit", "staff": code, "shift": "日", "min": None, "max": 1, "until_day": None,
             "strength": "operational", "reason": None}
-    sess.reader = RecordedReader({t: json.dumps({"items": [rule]})},
-                                 {t: json.dumps({"items": [{**rule, "everyone": True}]})})
-    r = sess.say(t)   # 名簿の名前の一部（下の名前）がある一言は、全員のルールにしない
+    sess.reader = RecordedReader({masked: json.dumps({"items": [rule]})},
+                                 {masked: json.dumps({"items": [{**rule, "staff": None, "everyone": True}]})})
+    r = sess.say(t)
     assert sess.reader.reread_sent == []
-    assert r.kind == "ask" and r.message.startswith("誰の頼みか読み取れませんでした")
+    if r.kind == "ask_period":
+        r = sess.answer(r.uid, "once")
+    added = [x for x in sess.store.ledger().rules_at().values() if x.kind == "count" and x.params.get("max") == 1
+             and x.params.get("shifts") == ["日"]]
+    assert added and all(x.who == ["千葉花子"] for x in added)

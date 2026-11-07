@@ -54,7 +54,7 @@ def _reply(*items):
 
 
 def test_明日の一言を日付にして送り_表が直る(built_dir, tmp_path):
-    s = _session(built_dir, tmp_path, {"職員12さん、6日の日勤、有給にしてくれる？": _reply(
+    s = _session(built_dir, tmp_path, {"職員12さん、6日の日勤、有給にしてくれる": _reply(
         {"type": "set_cell", "staff": "職員12", "days": [6], "shift": "有", "strength": "wish", "reason": None})})
     r = s.say("斉藤さん、明日の日勤、有給にしてくれる？")
     assert r.kind == "applied", r
@@ -160,7 +160,7 @@ def test_送り直しても_明日は言った日から数える(built_dir, tmp_
     s.open()
     r = s.say("斉藤さん、明日の日勤、有給にしてくれる？")
     assert r.kind == "error"
-    s.reader = RecordedReader({"職員12さん、6日の日勤、有給にしてくれる？": _reply(
+    s.reader = RecordedReader({"職員12さん、6日の日勤、有給にしてくれる": _reply(
         {"type": "set_cell", "staff": "職員12", "days": [6], "shift": "有", "strength": "wish", "reason": None})})
     s.now = lambda: NOW + dt.timedelta(days=1)
     r = s.retry(r.uid)
