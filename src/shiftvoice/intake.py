@@ -127,8 +127,10 @@ def _leave_sym(facility: Facility) -> str | None:
     return next((st.symbol for st in facility.shift_types if st.kind == "leave"), None)
 
 
-FIXED_WORDS = ("必ず", "かならず", "絶対", "ぜったい", "どうしても", "外せない", "動かせない")
-MAYBE_WORDS = ("できれば", "出来れば", "できるだけ", "出来るだけ", "なるべく", "可能なら", "できたら", "出来たら")
+FIXED_WORDS = ("必ず", "かならず", "絶対", "ぜったい", "どうしても", "外せない", "動かせない", "ハードルール", "ハードで", "ハードに")
+MAYBE_WORDS = ("できれば", "出来れば", "できるだけ", "出来るだけ", "なるべく", "可能なら", "できたら", "出来たら", "ソフトルール", "ソフトで", "ソフトに")
+# 強さを言う言葉そのもの。理由の欄に入れない（「ハードルールで夜勤3回まで」の理由が「ハードル」と出た。作者 2026-11-07）
+_STRENGTH_TALK = re.compile(r"強めのソフト(?:ルール)?|ハードルール|ソフトルール|ハードル|ハード|ソフト")
 CARE_WORDS = ("きつい", "あげて")      # 配慮の言い方（指示文の negotiable の決め）
 OWN_WORDS = ("希望", "本人")
 
@@ -178,7 +180,10 @@ def _said_whole(text: str) -> bool:
 
 def _count_strength(v, text: str, single: bool) -> str:
     """回数の強さ。必ず系の言葉があれば fixed（件が1つの時だけ）。本人の希望・できればと言った時は読み取りの値を残す。
-    ほかは施設の運用（operational）にそろえる（「今月は夜勤0で」が wish だと全員向けの下限に負ける）。"""
+    ほかは施設の運用（operational）にそろえる（「今月は夜勤0で」が wish だと全員向けの下限に負ける）。
+    「強めのソフト」は運用の都合（守るが、どうしても組めない時だけ外す）"""
+    if single and "強めのソフト" in text:
+        return "operational"
     if single and any(w in text for w in FIXED_WORDS):
         return "fixed"
     if single and any(w in text for w in MAYBE_WORDS):
@@ -683,6 +688,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     p = Proposal(kind=kind)
     sums = []
     for it in real:
+        if it.get("reason") and _STRENGTH_TALK.search(str(it["reason"])):
+            it["reason"] = _STRENGTH_TALK.sub("", str(it["reason"])).strip("、。 で") or None
         t = it["type"]
         reason = it.get("reason") or None
         p.reason = p.reason or reason
