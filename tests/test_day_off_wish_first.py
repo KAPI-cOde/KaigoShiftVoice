@@ -54,3 +54,19 @@ def test_希望休でない本人の希望は今までどおり外れたのは�
     r = solve_staged(fac(), STAFF, [COVER, sunday, sunday2], NOV)
     assert r.ok and r.result.stage == 2
     assert "外れたのは" in r.note and "相談" not in r.note
+
+
+def test_希望休の日に動かせない有給があっても_守れなかったとは言わない():
+    """希望休（公）の日に「有給」を動かせない形で頼んだ人は、その日も休み。前は「希望休を守れませんでした」と知らせた
+    （実際の施設の10月の写しで6件中2件）。勤務を頼んだ日（応援の日勤など）は今までどおり知らせる"""
+    from shiftvoice.build import impossible_wishes
+    f = Facility("x", "x", ["東"], [ShiftType("日", "日勤", "work"), ShiftType("公", "公休", "rest"),
+                                     ShiftType("有", "有給", "leave", on_request_only=True)], {})
+    wish = Rule("w1", 1, "職員01さん 16・20・25日 休み", "cell", "wish", {"in": ["公"]}, who=["職員01"], when=[16, 20, 25])
+    leave = Rule("l1", 1, "職員01さん 16日 有給", "cell", "fixed", {"in": ["有"]}, who=["職員01"], when=[16])
+    work = Rule("d1", 1, "職員01さん 20日 日勤", "cell", "fixed", {"in": ["日"]}, who=["職員01"], when=[20])
+    out, notes = impossible_wishes(f, [wish, leave, work], NOV)
+    assert not any("16日" in n for n in notes)
+    assert any("20日" in n for n in notes)
+    kept = next(x for x in out if x.id == "w1")
+    assert kept.when == [25]   # 16日と20日は希望休のマスの頼みからは外す（有給・日勤と1マスでぶつかるため）

@@ -105,6 +105,7 @@ def impossible_wishes(facility: Facility, rules: list[Rule], month: Month) -> tu
     ake = {t.symbol for t in facility.shift_types if t.kind == "ake"}
     nights = _ake_as_rest_nights(facility)
     rest = {t.symbol for t in facility.shift_types if t.kind == "rest"}
+    off_syms = {t.symbol for t in facility.shift_types if t.kind in ("rest", "leave")}
     for r in rules:
         if not (r.kind == "cell" and r.flex == "wish" and r.when and r.who and len(r.who) == 1):
             out.append(r)
@@ -122,7 +123,8 @@ def impossible_wishes(facility: Facility, rules: list[Rule], month: Month) -> tu
             if o.kind == "cell" and o.flex == "fixed" and o.who == [who] and o.params.get("in") and not want & set(o.params["in"]):
                 for d in set(o.when or []) & set(r.when) - bad:
                     bad.add(d)
-                    notes.append(f"{who}さんの{d}日は「{o.name}」があるので、希望休を守れませんでした")
+                    if not (want <= off_syms and set(o.params["in"]) <= off_syms):   # 希望休の日の有給は、その日も休みなので言わない
+                        notes.append(f"{who}さんの{d}日は「{o.name}」があるので、希望休を守れませんでした")
         if set(r.when) - bad:
             r = replace(r, when=[d for d in r.when if d not in bad]) if bad else r
             out.append(r)
