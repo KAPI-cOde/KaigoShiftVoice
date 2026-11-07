@@ -33,13 +33,14 @@ LEAVE_STEP_WEIGHT = 2000
 THIN_EVEN_WEIGHT = 1000   # 300では回数が2〜8回のまま、3000では配慮の外れが増えた（17人の12月）
 THIN_EVEN_STEPS = 12
 HOLD_CELLS = 10   # 外れている回数を悪くしないために動かしてよいマスの目安（hold）
-# 言われた勤務の人ごとの回数をならす（rule の even。「早番も遅番も、可能な範囲で平均化して」）罰。k 回を超えた分ごとに
-# EVEN_WEIGHT。回数が増えるほど1回が重いので、多い人から少ない人へ移す方を選ぶ。相談できるルールの1件（5000）より軽く、
-# 前に足したルールを崩してまではならさない。一言の直しでは1マス動かすごとに keep_weight（500）がかかるので、1000 だと
-# 1回の差を移す（2マス）と得が無く、見本の11月で「遅番が偏らないように」が3〜5回で止まった。1500 で3〜4回、3000 まで
-# 上げても遅番の次の日の早番・ルールの外れは0のままだった（2026-11-08 に測った）
+# 言われた勤務の人ごとの回数をならす（rule の even。「早番も遅番も、可能な範囲で平均化して」）罰。数える人の平均の切り捨てを
+# t として、t〜t+1 回の帯から外れた分に、k 回を超えた分ごとに EVEN_WEIGHT（外れが大きいほど1回が重いので、多い人から少ない
+# 人へ移す方を選ぶ）。帯の中は罰さないので、総数を減らしても得が無い（回数そのものを罰すると、人数に下限しかない施設で早番の
+# 総数が60から30に減った）。1回目の外れは相談できるルールの1件（5000）より軽い。一言の直しでは1マス動かすごとに
+# keep_weight（500）がかかる。見本の11月（遅番の次の日の早番・遅番の3連続をやめた後）で、1000 では「遅番が偏らないように」が
+# 3〜5回で止まり、1500 で3〜4回。3000 まで上げても遅番の次の日の早番・ルールの外れは0のままだった（2026-11-08 に測った）
 EVEN_WEIGHT = 1500
-EVEN_STEPS = 20
+EVEN_STEPS = 12
 
 
 @dataclass
@@ -218,27 +219,70 @@ def _thin_even(m, x, penalties, rules: list[Rule], facility: Facility, staff: li
                     penalties.append(w * over)
 
 
-def _even(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[Staff], days, weights: dict) -> None:
-    """言われた勤務の人ごとの回数をならす目的（rule の even）。数えるのは、その勤務に入れる人だけ（入れない人を0回として
-    数えない）。勤務ごとに別にならす。名指しの回数のルールや本人の希望は、外せない強さか、この罰より重い罰で先に効く。
-    名指しのルールがある人も数えるのは、外すと計算がその人へ寄せて（上限まで入れて）ほかの人をならすため。"""
+def _own_bounds(rules: list[Rule], r: Rule, name: str, sym: str) -> tuple[int | None, int | None]:
+    """その人の名指しの回数のルール（sym を数える count）の下限と上限。ならすルールがその人を名指ししていれば数えない。"""
+    if r.who and name in r.who:
+        return None, None
+    lo = hi = None
+    for q in rules:
+        if q.kind != "count" or not q.who or name not in q.who or sym not in _syms_of(q.params.get("shifts")):
+            continue
+        if q.params.get("min") is not None:
+            lo = max(lo or 0, q.params["min"])
+        if q.params.get("max") is not None:
+            hi = q.params["max"] if hi is None else min(hi, q.params["max"])
+    return lo, hi
+
+
+def _even(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[Staff], days, weights: dict,
+          hint: dict[str, list[str]] | None = None) -> None:
+    """言われた勤務の人ごとの回数をならす目的（rule の even）。勤務ごとに、数える人の平均の切り捨て t を帯の下にして、
+    t〜t+1 回の人は罰さず、帯から外れた分を罰する。数えるのは、その勤務に入れる人だけ（入れない人を0回として数えない）。
+    名指しの回数のルールがある人は、帯をそのルールの回数まで広げる（「月7回以上」なら t〜7 回は罰さない）。帯の外は数える
+    ので、ほかの人をならすためにその人へ寄せもしない。本人の希望は外せない強さで先に効く。
+    前の表（hint）があれば、数える人のその勤務の合計が前の表から離れた分も罰する。ならすのは人の間で移すことで、
+    帯から外れた人を、勤務を消したり足したりして帯に入れると、移すより動かすマスが少なくて済むため。"""
     w = weights.get("even", EVEN_WEIGHT)
     for r in rules:
         if r.kind != "even":
             continue
         ds = list(r.when) if r.when else list(days)
         for sym in sorted(_syms_of(r.params.get("shifts"))):
+            people, names = [], []
             for s in staff:
                 if (r.who and s.name not in r.who) or sym not in s.can:
                     continue
                 vs = [x[(s.name, d, sym)] for d in ds if (s.name, d, sym) in x]
-                if not vs:
-                    continue
-                c = sum(vs)
-                for k in range(1, min(len(vs), EVEN_STEPS)):
-                    over = m.new_int_var(0, len(vs), "")
-                    m.add(over >= c - k)
-                    penalties.append(w * over)
+                if vs:
+                    people.append((sum(vs), len(vs), *_own_bounds(rules, r, s.name, sym)))
+                    names.append(s.name)
+            if len(people) < 2:
+                continue
+            top = max(n for _, n, _, _ in people)
+            t = m.new_int_var(0, top, "")
+            total = sum(c for c, _, _, _ in people)
+            m.add(len(people) * t <= total)
+            m.add(total <= len(people) * t + len(people) - 1)
+            if hint:
+                old = sum(1 for nm in names for d in ds if (hint.get(nm) or [])[d - 1:d] == [sym])
+                gap = m.new_int_var(0, len(people) * top, "")
+                m.add(gap >= total - old)
+                m.add(gap >= old - total)
+                penalties.append(w * gap)
+            for c, n, lo, hi in people:
+                upper, lower = t + 1, t
+                if lo is not None:
+                    upper = m.new_int_var(0, top + 1, "")
+                    m.add_max_equality(upper, [t + 1, min(lo, n)])
+                if hi is not None:
+                    lower = m.new_int_var(0, top, "")
+                    m.add_min_equality(lower, [t, hi])
+                for k in range(min(n, EVEN_STEPS)):
+                    up, down = m.new_int_var(0, n, ""), m.new_int_var(0, top, "")
+                    m.add(up >= c - upper - k)
+                    m.add(down >= lower - c - k)
+                    penalties.append(w * up)
+                    penalties.append(w * down)
 
 
 def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month, *,
@@ -343,7 +387,7 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
 
     _fair_leave(m, x, penalties, rules, facility, staff, days, weights)
     _thin_even(m, x, penalties, rules, facility, staff, days, weights)
-    _even(m, x, penalties, rules, facility, staff, days, weights)
+    _even(m, x, penalties, rules, facility, staff, days, weights, hint)
 
     # 質の物差し（施設の設定。既定は控えめ）
     work = set(facility.workday_symbols())

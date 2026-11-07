@@ -92,7 +92,7 @@ def test_scene_narrows_without_breaking_earlier_rules(sess):
     m = st.month(2026, 11)
     for sym in ("早", "遅"):
         lo, hi = _spread(m.table, staff, sym)
-        assert hi - lo <= 1, (sym, lo, hi)   # 16人で月30回なので、3〜4回
+        assert hi - lo <= 1, (sym, lo, hi)   # 16人で月60回なので、3〜4回
     assert _late_then_early(m.table) == 0
     assert _late_runs3(m.table, m) == 0
     rules = month_rules(st, 2026, 11, with_premise=False)
@@ -226,3 +226,57 @@ def test_rest_days_are_not_evened(sess):
     assert r.kind in ("ask", "error")
     assert sess.store.month(2026, 11).table == before
     assert not any(c["kind"] == "even" for c in sess.state()["cards"])
+
+
+def test_named_people_are_not_pulled_down(sess):
+    """名指しの2人（菊池さん6回・久保さん4回）をならしても、2人の早番は合わせて減らず、少ない方の回数より減らない。
+    回数そのものを罰すると、2人とも1回まで下がる。"""
+    from shiftvoice.reader import RecordedReader
+    sess.reader = RecordedReader({"職員09さんと職員10さんの早番を同じくらいにして":
+                                  '{"items":[{"type":"even_out","staff":["職員09","職員10"],"shift":["早"],"reason":null}]}'})
+    pair = ("菊池", "久保")
+    t = sess.store.month(2026, 11).table
+    before = {n: t[n].count("早") for n in pair}
+    assert before == {"菊池": 6, "久保": 4}
+    r = sess.answer(sess.say("菊池さんと久保さんの早番を同じくらいにして").uid, "毎月")
+    assert r.kind == "applied", r.message
+    t = sess.store.month(2026, 11).table
+    after = {n: t[n].count("早") for n in pair}
+    assert sum(after.values()) >= sum(before.values()), (before, after)
+    assert min(after.values()) >= min(before.values()), (before, after)
+    assert abs(after["菊池"] - after["久保"]) <= 1, after
+
+
+@pytest.fixture(scope="module")
+def imported():
+    """取り込んだ施設の形。人数のルールが「下限は動かせない・上限は相談できる」の幅なので、日ごとの人数が決まらない。
+    前の表は、早番が2人の日が多い（取り込んだ勤務表のように）。"""
+    names = NAMES + ["川口", "木下"]
+    fac, _, _, _ = _small()
+    staff = [Staff(n, "東", ["早", "日", "遅"]) for n in names]
+    month = Month(2026, 11, [], {n: ["日"] * 5 for n in names})
+    rules = [Rule("o1", 1, "公休の数", "count", "fixed", {"shifts": ["公"], "min": 9, "max": 9})]
+    for i, (sym, hi) in enumerate((("早", 2), ("日", 3), ("遅", 2))):
+        rules += [Rule(f"c{i}", 1, "人数（下限）", "coverage", "fixed", {"shifts": [sym], "scope": "all", "op": ">=", "n": 1}),
+                  Rule(f"c{i}b", 1, "人数（上限）", "coverage", "negotiable",
+                       {"shifts": [sym], "scope": "all", "op": "<=", "n": hi})]
+    lean = Rule("x", 1, "早番を2人に寄せる", "coverage", "fixed", {"shifts": ["早"], "scope": "all", "op": "==", "n": 2})
+    res = solve_month(fac, staff, rules + [lean], month)
+    assert res.status == "ok"
+    return fac, staff, month, rules, res.table
+
+
+@pytest.mark.parametrize("shifts", [["早"], ["早", "遅"], ["日"]])
+def test_imported_facility_keeps_totals(imported, shifts):
+    """人数に幅がある施設でならしても、ならした勤務の総数は前の表と同じで、人の間で移すだけ。"""
+    fac, staff, month, rules, base = imported
+    ev = _even_rule(shifts)
+    rr = resolve(fac, staff, rules + [ev], month, base, [ev])
+    assert rr.ok
+    for sym in shifts:
+        assert _spread(base, staff, sym)[1] - _spread(base, staff, sym)[0] >= 3, sym
+        total = [sum(row.count(sym) for row in t.values()) for t in (base, rr.table)]
+        assert total[1] == total[0], (sym, total)
+        lo, hi = _spread(rr.table, staff, sym)
+        assert hi - lo <= 1, (sym, lo, hi)
+    assert check_table(rules, fac, staff, month, rr.table) == []
