@@ -118,3 +118,34 @@ def test_希望休の無いぶつかりは_ルールの日を指し希望休の�
     assert c and m.weekday(c[0]["day"]) == "sat"
     t = explain(c, m)[0]
     assert "希望休" not in t and "同時には守れません" in t
+
+
+def test_前の月の末が絡むぶつかりでも月の中の日を指し_止まらない():
+    """前の月の末が夜勤で「夜勤の次の日は公休」と「1日は日勤」がぶつかる。場面の日が0日（前の月）になり、画面へ返す所で
+    止まった（Astra 2026-11-07。3×8）"""
+    fac, staff, m = _night_fac()
+    m.prev_tail = {"職員00": ["公", "夜"]}
+    rules = [Rule("seq", 1, "夜勤の次の日は公休", "sequence", "fixed", {"if": ["夜"], "next_in": ["公"]}),
+             Rule("c", 1, "職員00さん 1日 日勤", "cell", "fixed", {"in": ["日"]}, who=["職員00"], when=[1])]
+    c = chokepoints(fac, staff, rules, m)
+    assert c and c[0]["day"] == 1
+    assert "1日（火）" in explain(c, m)[0]
+
+
+def test_日付でゆるめた人数は_ゆるめた後の数で言う():
+    """「早番は毎日2人」を「12日は早番1人」でゆるめた日に、早番に入れる人が全員希望休。前は「早番は毎日2人」と、ゆるめる前の
+    数で言い、要る人数を作成者が取り違えた（Astra 2026-11-07。3×7）"""
+    from shiftvoice.model import Facility, Month, ShiftType, Staff
+    fac = Facility("x", "x", ["東"], [ShiftType("早", "早番", "work"), ShiftType("日", "日勤", "work"),
+                                       ShiftType("公", "公休", "rest")], {})
+    staff = [Staff(f"職員{i:02d}", "東", ["早", "日"] if i < 3 else ["日"]) for i in range(10)]
+    m = Month(2026, 12, [], {})
+    rules = [Rule("cov", 1, "早番は毎日2人", "coverage", "fixed", {"shifts": ["早"], "scope": "all", "op": "==", "n": 2}),
+             Rule("d12", 1, "12日の早番は1人", "coverage", "operational", {"shifts": ["早"], "scope": "all", "op": "==", "n": 1},
+                  when=[12], scope="once")]
+    rules += [Rule(f"w{i}", 1, f"職員{i:02d}さん 12日 休み", "cell", "wish", {"in": ["公"]}, who=[f"職員{i:02d}"], when=[12])
+              for i in range(3)]
+    c = chokepoints(fac, staff, rules, m)
+    assert c and c[0]["day"] == 12
+    t = explain(c, m)[0]
+    assert "「早番は毎日2人」を" not in t and "12日は1〜2人" in t

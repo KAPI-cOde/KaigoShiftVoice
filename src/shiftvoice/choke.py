@@ -121,6 +121,8 @@ def _describe(core: list, facility: Facility, center: int) -> dict:
     cov, other, wish_days = Counter(), Counter(), Counter()
     for r, inst in core:
         d = _day_of(inst.key)
+        if d is not None and d < 1:
+            d = 1   # 前の月の末の日の場面（「夜勤の次の日は公休」の0日）は、月の1日の詰まり（0日を指して止まった。Astra）
         if is_day_off_wish(r, facility):
             who = inst.key.rsplit("/", 1)[0]
             derived = r.meta.get("derived") == "rest_not_ake"
@@ -135,6 +137,9 @@ def _describe(core: list, facility: Facility, center: int) -> dict:
         unit = inst.key.rsplit("/", 1)[0] if r.kind == "coverage" else None
         if unit and unit != "全体" and unit not in name:
             name += f"（{unit}）"
+        if r.kind == "coverage" and d is not None and "op" in r.params and (inst.lo, inst.hi) != _orig(r.params):
+            # 日付の人数などでその日だけゆるめた数は、ゆるめた後の数で言う（前は元の「毎日2人」と言った。Astra）
+            name += f"（{d}日は{_amount(inst.lo, inst.hi)}）"
         if name not in rules:
             rules.append(name)
         if d is not None:
@@ -142,6 +147,21 @@ def _describe(core: list, facility: Facility, center: int) -> dict:
     pick = cov or other or wish_days
     day = pick.most_common(1)[0][0] if pick else center
     return {"day": day, "wishes": wishes, "rules": rules, "cells": cells}
+
+
+def _orig(p: dict) -> tuple:
+    n = p["n"]
+    return {"==": (n, n), ">=": (n, None), "<=": (None, n)}[p["op"]]
+
+
+def _amount(lo, hi) -> str:
+    if lo is not None and lo == hi:
+        return f"{lo}人"
+    if hi is None:
+        return f"{lo}人以上"
+    if lo is None:
+        return f"{hi}人まで"
+    return f"{lo}〜{hi}人"
 
 
 def _wd(month: Month, d: int) -> str:
