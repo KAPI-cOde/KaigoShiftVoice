@@ -52,6 +52,7 @@
   .reply .holeother { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin: 6px 0; }
   .reply .q { margin: 4px 0 6px; font-weight: 700; }
   .reply ul.infolist { margin: 4px 0 2px; padding-left: 18px; }
+  .reply .spread { margin-top: 2px; }
   .msg.ai.local::before { content: "アプリ"; }
   .reply ul.infolist li { margin: 2px 0; }
   .reply .infobtns { margin-top: 8px; flex-wrap: wrap; }
@@ -1702,6 +1703,8 @@ function renderReplyBody(r) {
       if (r.extra && r.extra.note) sm.appendChild(el("span", "note", r.extra.note));
       box.appendChild(sm);
     }
+    // 回数をならすルールを入れた時の、1人あたりの回数の幅（「早番は1人2〜6回 → 3〜4回」）
+    ((r.extra && r.extra.spread) || []).forEach(function (t) { box.appendChild(el("div", "spread", t)); });
     // 引き受けの記録（その人のこの月の分）。1行ずつ「11/1 引き受け（休みは10日へ）」
     ((r.extra && r.extra.records) || []).forEach(function (t) { box.appendChild(el("div", "records", t)); });
     if (r.warning) box.appendChild(el("div", "warning", r.warning));

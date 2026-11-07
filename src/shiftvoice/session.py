@@ -32,7 +32,7 @@ from .giveback import accepted_counts
 from .model import Acceptance
 from .resolve import _off, changed_cells, resolve
 from .ruleask import rule_question
-from .rules import check_table, dated_same_as_latest, restated_count, restated_run, same_slot
+from .rules import check_table, dated_same_as_latest, even_spread, restated_count, restated_run, same_slot
 from .review import history as _history
 from .standby import ASK_WIDER, NO_MOVE, assign, duty_days, fix_absence, oncall_layer, use_move
 from .store import Store
@@ -973,6 +973,7 @@ class Session:
         secs = 0.0
         warning = ""
         extra_broken = None
+        spread: list[str] = []
         if added and later:
             self.store.save_ledger(led)
             m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev, "said": u["text"]})
@@ -1034,9 +1035,12 @@ class Session:
             self.store.save_ledger(led)            # 1 帳面
             m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev,
                               "said": u["text"], "rest_adjust": m.rest_adjust, "support": m.support})
+            spread = [x for r in added if r.kind == "even" for x in even_spread(r, fac, staff, m, m.table, rr.table)]
             m.table, m.built_rev, m.support = rr.table, led.rev, support
             self.store.save_month(m)               # 2 月の表
         extra = {"broken": extra_broken} if extra_broken else {}
+        if spread:
+            extra["spread"] = spread   # ならした結果を回数の幅で見せる（点数でなく回数で。画面は返事の下に1行ずつ）
         if p.staff_changes:
             staff = self.store.staff()
             before = {s.name: list(s.changes) for s in staff}

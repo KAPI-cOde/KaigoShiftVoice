@@ -158,6 +158,26 @@ def is_fair_on(r: Rule) -> bool:
     return r.kind == "count" and bool(r.params.get("fair")) and bool(r.meta.get("fair_on"))
 
 
+def even_spread(rule: Rule, facility: Facility, staff: list[Staff], month: Month,
+                before: dict[str, list[str]], after: dict[str, list[str]]) -> list[str]:
+    """回数をならすルール（even）を入れた前と後の、1人あたりの回数の幅を勤務ごとに1行。数えるのはその勤務に入れる人だけ
+    （名指しなら名指しの人だけ）。「早番は1人2〜6回 → 3〜4回」。"""
+    days = list(rule.when) if rule.when else list(range(1, month.days + 1))
+    names = {st.symbol: st.name for st in facility.shift_types}
+    out = []
+    for sym in _syms(rule.params.get("shifts"), facility):
+        who = [s.name for s in staff if sym in s.can and (not rule.who or s.name in rule.who)
+               and s.name in before and s.name in after]
+        if not who:
+            continue
+        b = [sum(1 for d in days if cell_value(before, month, n, d) == sym) for n in who]
+        a = [sum(1 for d in days if cell_value(after, month, n, d) == sym) for n in who]
+        rng = lambda v: f"{min(v)}回" if min(v) == max(v) else f"{min(v)}〜{max(v)}回"
+        out.append(f"{names.get(sym, sym)}は1人{rng(b)} → {rng(a)}" if (min(b), max(b)) != (min(a), max(a))
+                   else f"{names.get(sym, sym)}は1人{rng(a)}のまま")
+    return out
+
+
 def thin_counts(rule: Rule, staff: list[Staff], month: Month, table: dict[str, list[str]]) -> dict[str, int]:
     """手薄なユニット（その日に none の勤務の人がいないユニット）で work の勤務に入った、人ごとの回数。数える人は全員（0回も）。"""
     none, work = _syms_of(rule.params["none"]), _syms_of(rule.params["work"])
