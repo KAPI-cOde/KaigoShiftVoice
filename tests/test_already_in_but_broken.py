@@ -109,3 +109,72 @@ def test_公開版では作り直しを勧めず_直したい所を聞く(sess, 
     assert r.kind == "ask"
     assert r.message.endswith("。直したい所を一言で伝えてください"), r.message
     assert "作り直し" not in r.message
+
+
+def test_配った後は案にして_これで直すを押すまで表を変えない(sess):
+    sess.open()
+    assert _say(sess, KIKUCHI, "once").kind == "applied"
+    _break_kikuchi(sess)
+    sess.distribute()
+    table = {n: list(v) for n, v in sess.store.month(2026, 11).table.items()}
+    rev, hist = sess.store.ledger().rev, len(sess.store.month(2026, 11).history)
+
+    r = _say(sess, KIKUCHI, "once")
+    assert r.kind == "fix_offer", r.message
+    assert r.message.startswith("「菊池さん 早番は月5回まで」は今の表で1か所守れていません。直すと"), r.message
+    assert r.changes
+    assert sess.store.month(2026, 11).table == table and len(sess.store.month(2026, 11).history) == hist
+
+    a = sess.accept(r.uid)
+    assert a.kind == "applied", a.message
+    assert _broken(sess) == []
+    assert sess.store.ledger().rev == rev   # ルールは足さない
+    assert sess.store.pending(2026, 11) == []
+    assert sess.undo().kind == "applied"
+    assert sess.store.month(2026, 11).table == table
+
+
+def _negotiable_swap(sess, table):
+    """表で、同じユニットの同じ日の2人の 日勤↔早番 を入れ替え、相談できる「早番の2連続を避ける」だけを1か所外す"""
+    st = sess.store
+    m = st.month(2026, 11)
+    units = {s.name: s.unit for s in st.staff()}
+    rules = month_rules(st, 2026, 11, with_premise=False)
+    base = {(b["rule"], b["key"]) for b in check_table(rules, st.facility(), st.staff_on(2026, 11), m, table)}
+    for d in range(1, m.days - 1):
+        for x in table:
+            if x in ("菊池", "斉藤") or table[x][d - 1] != "早" or table[x][d] != "日" or table[x][d + 1] == "早":
+                continue
+            for y in table:
+                if y == x or y == "菊池" or units[y] != units[x] or table[y][d] != "早":
+                    continue
+                t = {n: list(v) for n, v in table.items()}
+                t[x][d], t[y][d] = "早", "日"
+                new = [b for b in check_table(rules, st.facility(), st.staff_on(2026, 11), m, t)
+                       if (b["rule"], b["key"]) not in base]
+                if len(new) == 1 and new[0]["flex"] == "negotiable":
+                    return t, new[0]["name"]
+    raise AssertionError("相談できるルールだけを外す入れ替えが見つからない")
+
+
+def test_相談できるルールを外して直した時は_返事にそう添える(sess, monkeypatch):
+    from shiftvoice.resolve import changed_cells
+    from shiftvoice.session import Session
+    sess.open()
+    assert _say(sess, KIKUCHI, "once").kind == "applied"
+    good = {n: list(v) for n, v in sess.store.month(2026, 11).table.items()}
+    _break_kikuchi(sess)
+    gave, name = _negotiable_swap(sess, good)
+    real = Session._resolve
+
+    def resolve_giving(self, m, olds):   # 狭い範囲の直しが、相談できるルールを1か所譲って直した形にする
+        rr = real(self, m, olds)
+        rr.staged.result.table = gave
+        rr.changes = changed_cells(m.table, gave)
+        return rr
+    monkeypatch.setattr(Session, "_resolve", resolve_giving)
+
+    r = _say(sess, KIKUCHI, "once")
+    assert r.kind == "applied", r.message
+    assert r.message == f"「菊池さん 早番は月5回まで」は今の表で1か所守れていなかったので、直しました（相談できる「{name}」が1か所外れました）"
+    assert sess.store.month(2026, 11).table == gave

@@ -971,18 +971,37 @@ class Session:
         was = {(b["rule"], b["key"]): b for b in before}
         after = check_table(rules, fac, staff, m, rr.table) if rr.ok else []
         # ほかのルールの外れを、新しく作るか前より離すなら、直せたことにしない（外れの付け替えになるため）
-        worse = {(b["rule"], b["key"]) for b in after if b["flex"] in ("fixed", "wish", "operational")
-                 and ((b["rule"], b["key"]) not in was or _off(b) > _off(was[(b["rule"], b["key"])]))}
+        new_off = [b for b in after if b["rule"] not in ids
+                   and ((b["rule"], b["key"]) not in was or _off(b) > _off(was[(b["rule"], b["key"])]))]
+        worse = {(b["rule"], b["key"]) for b in new_off if b["flex"] in ("fixed", "wish", "operational")}
         if rr.ok and not worse and not any(b["rule"] in ids for b in after):
+            # 相談できるルールは譲ってよいが、黙って外さない
+            neg: dict[str, int] = {}
+            for b in new_off:
+                if b["flex"] == "negotiable":
+                    neg[b["name"]] = neg.get(b["name"], 0) + 1
+            gave = (f"相談できる「{max(neg, key=neg.get)}」" + (f"ほか{len(neg) - 1}件" if len(neg) > 1 else "")
+                    + f"が{sum(neg.values())}か所外れ") if neg else ""
+            note = (rr.staged.note or "") if rr.staged.result.stage == 1 else ""
+            if m.distributed:
+                # 配った後は、ほかの直しと同じく案にして、［これで直す］を押すまで表を変えない
+                who = "・".join(sorted({c["staff"] for c in rr.changes}))
+                message = (f"{label}は今の表で{n}か所守れていません。直すと{who}さんの{len(rr.changes)}マスが動きます"
+                           + (f"（{gave}ます）" if gave else "") + (f"。{note}" if note else ""))
+                offer = {"rules": [], "scope": "once", "table": rr.table, "changes": rr.changes, "support": m.support,
+                         "replace": [], "summary": message, "base_rev": self.store.ledger().rev,
+                         "base_table": json.dumps(m.table), "source": "直した（配った後）", "message": message,
+                         "said_who": sorted({w for r in olds for w in (r.who or [])})}
+                self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
+                return Reply("fix_offer", u["id"], message, changes=rr.changes, seconds=rr.seconds, summary=message)
             led = self.store.ledger()
             m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev,
                               "said": u["text"], "rest_adjust": m.rest_adjust, "support": m.support})
             m.table, m.built_rev = rr.table, led.rev
             self.store.save_month(m)
             self.store.resolve_pending(self.year, self.month, u["id"])
-            msg = f"{label}は今の表で{n}か所守れていなかったので、直しました"
-            return Reply("applied", u["id"], msg, changes=rr.changes, summary=msg, seconds=rr.seconds,
-                         warning=(rr.staged.note or "") if rr.staged.result.stage == 1 else "")
+            msg = f"{label}は今の表で{n}か所守れていなかったので、直しました" + (f"（{gave}ました）" if gave else "")
+            return Reply("applied", u["id"], msg, changes=rr.changes, summary=msg, seconds=rr.seconds, warning=note)
         self.store.resolve_pending(self.year, self.month, u["id"])
         top = top_conflict(olds, after, {r.id: r for r in rules}, fac, set(was) - worse)
         why = f"直すと「{top}」とぶつかります" if top else "ほかのルールとぶつかって直せません"
