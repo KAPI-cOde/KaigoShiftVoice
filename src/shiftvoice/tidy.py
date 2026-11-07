@@ -23,7 +23,7 @@ from pathlib import Path
 
 from .build import impossible_wishes, month_rules
 from .model import Rule, Staff
-from .names import Masker
+from .names import FAMILY_WORDS, NOT_NAMES, Masker
 from .reader import REREAD_MODEL
 from .rules import cell_value, check_table, expand, fair_on, with_overrides
 from .solver import _allowed, pinned_cells, requested_cells
@@ -143,15 +143,16 @@ def _index(uni: dict, kinds: set[str]) -> dict:
     return idx
 
 
-def _implied(r: Rule, e: tuple, idx: dict, X: "_Expander") -> set[str] | None:
-    """場面 e（ルール r）が、どう置いても守られるか、idx のどれかの場面で必ず守られるなら、守る場面のルールの id。
-    守られないなら None。同じ種類・同じ式の場面だけを見る（数える勤務や範囲が違う組は、迷う組み合わせなので言わない）。
+def _implied(r: Rule, e: tuple, idx: dict) -> set[str] | None:
+    """場面 e（ルール r）が idx のどれかの場面で必ず守られるなら、守る場面のルールの id。守られないなら None。
+    同じ種類・同じ式の場面だけを見る（数える勤務や範囲が違う組は、迷う組み合わせなので言わない）。今月その人が入れる
+    勤務では見ない（入れるようになると要るので、確かとは言えない）。
     守る場面が何件かある時は、強いルール、場面の多い（広く決めた）ルールを選ぶ（残す方として作成者に言うため）。"""
     shape, c, lo, hi = e
     out: set[str] = set()
     for side in ("hi", "lo"):
         want = hi if side == "hi" else lo
-        if want is None or X.always(e, side):
+        if want is None:
             continue
         hits = [(len(HARD_AT[j.flex]), n, j.id) for j, (_s, cj, loj, hij), n in idx.get((r.kind, shape), ())
                 if _covers(j, r) and (hij is not None and hij - cj <= want - c if side == "hi"
@@ -184,16 +185,81 @@ def _redundant(a: Rule, rules: list[Rule], X: _Expander) -> set[str] | None:
     keep: set[str] = set()
     idx_rest = _index(rest, kinds)
     for r, e in lost:
-        got = _implied(r, e, idx_rest, X)
+        got = _implied(r, e, idx_rest)
         if got is None:
             return None
         if r.id == a.id:
             keep |= got
     idx_full = _index(full, kinds)
     for r, e in gained:
-        if _implied(r, e, idx_full, X) is None:
+        if _implied(r, e, idx_full) is None:
             return None
     return keep
+
+
+def _le(fa: dict, fb: dict) -> bool:
+    """式 a の値が、どの表でも式 b の値以下か（マスごと・記号ごとに係数が b 以下。1マスに記号は1つだけ）。"""
+    for c in fa.keys() | fb.keys():
+        da, db = fa.get(c, {}), fb.get(c, {})
+        if any(da.get(x, 0) > db.get(x, 0) for x in da.keys() | db.keys()):
+            return False
+    return True
+
+
+def _by_cell(pairs: list) -> dict:
+    """[(ルール, 場面)] を、場面に入るマスごとに引けるようにする（式は辞書にしておく）。"""
+    idx: dict = {}
+    for j, ej in pairs:
+        fj = {c: dict(coefs) for c, coefs in ej[0]}
+        for c in fj:
+            idx.setdefault(c, []).append((j, ej, fj))
+    return idx
+
+
+def _dominated(r: Rule, e: tuple, idx: dict) -> bool:
+    """場面 e が、idx の場面のどれかで必ず守られるか。式が同じでなくても、値の大小で言える時は守られる。"""
+    shape, c, lo, hi = e
+    fe = {cc: dict(coefs) for cc, coefs in shape}
+    cands = {id(ej): (j, ej, fj) for cc in fe for j, ej, fj in idx.get(cc, ())}.values()
+    for side, want in (("hi", hi), ("lo", lo)):
+        if want is None:
+            continue
+        if not any(_covers(j, r) and (
+                (ej[3] is not None and ej[3] - ej[1] <= want - c and _le(fe, fj)) if side == "hi" else
+                (ej[2] is not None and ej[2] - ej[1] >= want - c and _le(fj, fe)))
+                for j, ej, fj in cands):
+            return False
+    return True
+
+
+def _ai_merge_holds(k: str, d: str, rules: list[Rule], X: "_Expander") -> bool:
+    """AI の「d は k を守れば必ず守られる」を、同じ種類のルールどうしの時だけ計算で確かめる（種類が違う組は確かめられない
+    ので通す）。d を外して計算に入る場面が変わる所が、どれも守られる時だけ True。d の場面は k の場面だけで確かめる。"""
+    rk, rd = next(r for r in rules if r.id == k), next(r for r in rules if r.id == d)
+    if rk.kind != rd.kind:
+        return True
+    full = X.universe(rules)
+    rest = X.universe([r for r in rules if r.id != d])
+    same = lambda uni, only=None: [(r, e) for r, ents in uni.values() if r.kind == rd.kind and (only is None or r.id == only)
+                                   for e in ents]
+    keep_idx, rest_idx, full_idx = _by_cell(same(rest, k)), None, None
+    for rid, (r, ents) in full.items():
+        mine = rest[rid][1] if rid != d else ()
+        if mine is ents:
+            continue
+        c1, c2 = Counter(ents), Counter(mine)
+        lost = list((c1 - c2).elements())
+        if lost:
+            if rid != d and rest_idx is None:
+                rest_idx = _by_cell(same(rest))
+            if not all(_dominated(r, e, keep_idx if rid == d else rest_idx) for e in lost):
+                return False
+        gained = list((c2 - c1).elements())
+        if gained:
+            full_idx = full_idx or _by_cell(same(full))
+            if not all(_dominated(rest[rid][0], e, full_idx) for e in gained):
+                return False
+    return True
 
 
 def _same_cells(a: Rule, rules: list[Rule], fac, staff, month) -> bool:
@@ -227,12 +293,12 @@ def _overrider(a: Rule, rules: list[Rule], X: _Expander) -> str | None:
     return None
 
 
-def contained(rules: list[Rule], fac, staff, month, skip: set[str] = frozenset()) -> list[dict]:
+def contained(rules: list[Rule], fac, staff, month, skip: set[str] = frozenset(), X: "_Expander | None" = None) -> list[dict]:
     """ほかのルールに含まれている毎月のルール。1件は {"drop": id, "keep": [id], "what": 種類}。種類は contained（含まれている）・
-    replaced（後から入ったルールに置き換わっている）・always（どう置いても守られる。keep は空）。
+    replaced（後から入ったルールに置き換わっている）。
     弱いルール・狭く決めたルールから順に見て、片付けの候補にした物を除いた残りで次を確かめる。同じことを決めた2件は
     片方だけになる（両方を片付けると決めが消える）。どれも1件だけ片付けても同じになることを確かめてある。"""
-    X = _Expander(fac, staff, month, rules)
+    X = X or _Expander(fac, staff, month, rules)
     size = {rid: len(ents) for rid, (_r, ents) in X.universe(rules).items()}
     order = sorted((a for a in rules if _candidate(a) and a.id not in skip),
                    key=lambda a: (len(HARD_AT[a.flex]), size.get(a.id, 0)))
@@ -245,9 +311,7 @@ def contained(rules: list[Rule], fac, staff, month, skip: set[str] = frozenset()
         if keep is None:
             continue
         what = "contained"
-        if not keep and X.universe(cur)[a.id][1]:
-            what = "always"
-        elif not keep:
+        if not keep:
             b = _overrider(a, cur, X)
             if b is None:
                 continue
@@ -302,18 +366,22 @@ def collect(store: Store, year: int, month: int) -> dict:
     ghosts = ghost_names(store, roster)
     masker = _masker(staff, ghosts, fac)
     ghost_codes = {masker.to_code[g] for g in ghosts}
-    remove, merge, conflict, stale = [], [], [], []
+    remove, merge, conflict, stale, idle = [], [], [], [], []
     gone_ids: set[str] = set()
+    # 今月の入れる勤務を問わない名簿（入れる勤務だけで当てはまる人がいなくなるルールを見分けるため）
+    anyone = [Staff(name=s.name, unit=s.unit, can=list(fac.symbols)) for s in staff]
     for r in rules:
         if not _candidate(r):
             continue
         if not any(i.terms for i in expand(r, fac, staff, m)):
+            gone_ids.add(r.id)
             gone = [w for w in (r.who or []) if w not in roster]
             if r.who and len(gone) == len(r.who):
                 remove.append({"ids": [r.id], "what": "absent", "who": gone})
+            elif any(i.terms for i in expand(r, fac, anyone, m)):
+                idle.append({"id": r.id})   # 入れるようになると当てはまる。片付けの候補にはしない
             else:
                 remove.append({"ids": [r.id], "what": "no_scene"})
-            gone_ids.add(r.id)
             continue
         masked, unknown = masker.mask(r.name)
         named = [masker.to_name[c] for c in sorted(set(re.findall(rf"職員\d{{{masker.width}}}", masked)) & ghost_codes)]
@@ -322,13 +390,20 @@ def collect(store: Store, year: int, month: int) -> dict:
         if named:
             stale.append({"id": r.id, "who": named})
     same: dict[str, str] = {}
-    for x in contained(rules, fac, staff, m, skip=gone_ids):
-        if x["what"] == "always":
-            remove.append({"ids": [x["drop"]], "what": "always"})
-            continue
+    X = _Expander(fac, staff, m, rules)
+    for x in contained(rules, fac, staff, m, skip=gone_ids, X=X):
         merge.append({"keep": x["keep"], "drop": [x["drop"]], "what": x["what"]})
         if x["what"] == "contained" and len(x["keep"]) == 1:
             same[x["drop"]] = x["keep"][0]
+    # 今月の入れる勤務では、どう置いても守られるルール（夜勤に入れない人の「夜勤なし」など）。入れるようになると要るので、
+    # 片付けの候補にはせず注記だけにする
+    dropped = {i for x in merge for i in x["drop"]}
+    uni = X.universe(rules)
+    for r in rules:
+        ents = uni[r.id][1]
+        if _candidate(r) and r.id not in gone_ids and r.id not in dropped and ents and all(
+                (e[3] is None or X.always(e, "hi")) and (e[2] is None or X.always(e, "lo")) for e in ents):
+            idle.append({"id": r.id})
     # ぶつかっている。今の表で守れていない運用の都合以上のルールと、詰まり所の芯の組
     places: Counter = Counter()
     if m.table:
@@ -360,8 +435,8 @@ def collect(store: Store, year: int, month: int) -> dict:
         for x in found[p]:
             k += 1
             x["key"] = f"m{k}"
-    return {"year": year, "month": month, "rules": rules, "by_id": by_id, "found": found, "stale": stale,
-            "masker": masker, "fac": fac,
+    return {"year": year, "month": month, "rules": rules, "by_id": by_id, "found": found, "stale": stale, "idle": idle,
+            "masker": masker, "fac": fac, "X": X,
             "roster": [{"id": masker.to_code[s.name], "unit": masker.unit_code.get(s.unit, s.unit), "can": s.can}
                        for s in staff],
             "total": sum(1 for r in rules if r.scope == "rule" and not r.meta.get("premise"))}
@@ -376,23 +451,94 @@ def _period(r: Rule) -> str:
     return f"毎月（{int(u[5:7])}月{int(u[8:10])}日まで）" if u else "毎月"
 
 
-def _note(x: dict, pile: str, by_id: dict, code) -> str:
-    """計算で言えたことの短い文（Claude へ送る時は人を番号にする）。"""
-    nm = lambda i: f"{i}「{by_id[i].name}」"
+def _note(x: dict, code) -> str:
+    """計算で言えたことの短い文。ルールは id、人は番号で言う（ルールの名前の文は送らない）。"""
+    ids = lambda v: "・".join(v)
     if x["what"] == "absent":
-        return f"名簿にいない{'・'.join(code(w) for w in x['who'])}さんだけのルールで、当てはまる日が無い"
+        return f"名簿にいない{'・'.join(code(w) for w in x['who'])}だけのルールで、当てはまる日が無い"
     if x["what"] == "no_scene":
         return "当てはまる人や日が無い"
-    if x["what"] == "always":
-        return "入れる勤務などから、どの表でも必ず守られる（表を作る時に効いていない）"
     if x["what"] == "contained":
-        return f"{nm(x['drop'][0])}は{'・'.join(nm(i) for i in x['keep'])}に含まれ、無くても表は同じ"
+        return f"{x['drop'][0]}は{ids(x['keep'])}に含まれ、無くても表は同じ"
     if x["what"] == "replaced":
-        return f"{nm(x['drop'][0])}は後から入った{nm(x['keep'][0])}に置き換わり、表を作る時に使っていない"
+        return f"{x['drop'][0]}は後から入った{x['keep'][0]}に置き換わり、表を作る時に使っていない"
     if x["what"] == "choke":
-        return (f"{x['day']}日を組む時に、{'と'.join(nm(i) for i in x['ids'][:4])}を同時には守れない"
+        return (f"{x['day']}日を組む時に、{'と'.join(x['ids'][:4])}を同時には守れない"
                 + (f"（希望休{x['wishes']}件も重なる）" if x.get("wishes") else ""))
-    return f"{nm(x['ids'][0])}が今の表で{x['places']}か所守れていない"
+    return f"{x['ids'][0]}が今の表で{x['places']}か所守れていない"
+
+
+WEEK = {"mon": "月", "tue": "火", "wed": "水", "thu": "木", "fri": "金", "sat": "土", "sun": "日"}
+
+
+def _syms_text(v) -> str:
+    if v == "work":
+        return "勤務"
+    return "・".join([v] if isinstance(v, str) else list(v or []))
+
+
+def _text(r: Rule, mk: Masker) -> str:
+    """ルールの中身（種類・数・人の番号・日・曜日）から組み立てた文。名前の文は使わない（名前の文に名だけ・名簿にいない人の
+    名前が残っていても、伏せ方では当たらないため）。"""
+    p, k = r.params, r.kind
+    who = "・".join(mk.to_code.get(w, "名簿外") for w in r.who) if r.who else "全員"
+    days = f"{'・'.join(map(str, r.when))}日" if r.when else ""
+    wd = "・".join(WEEK.get(x, "") for x in p.get("weekdays") or [])
+    if k == "coverage":
+        units = "・".join(mk.unit_code.get(u, "ユニット") for u in p.get("units") or [])
+        where = "施設全体" if p.get("scope") != "each_unit" else (f"{units}（ユニットごと）" if units else "各ユニット")
+        n = p.get("n")
+        amount = {"==": f"{n}人", ">=": f"{n}人以上", "<=": f"{n}人まで"}.get(p.get("op"), f"{n}人")
+        when = days or (f"{wd}曜" + ("と祝日" if p.get("holidays") else "") if wd else "毎日")
+        return f"{when}、{where}の{_syms_text(p.get('shifts'))}の人数は{amount}" + (f"（{who}を数える）" if r.who else "")
+    if k == "count":
+        lo, hi = p.get("min"), p.get("max")
+        if p.get("per_month"):
+            rng = "その月の土日祝の数" + ("（年末年始も数える）" if p.get("year_end") else "")
+        elif p.get("fair"):
+            rng = f"なるべく平等に（目安{p.get('at_least')}日）"
+        elif lo is not None and lo == hi:
+            rng = f"{lo}回"
+        elif lo is not None and hi is not None:
+            rng = f"{lo}〜{hi}回"
+        else:
+            rng = f"{lo}回以上" if lo is not None else f"{hi}回まで"
+        cap = "（その勤務に入れる人だけ）" if p.get("capable_only") else ""
+        return f"{who}{cap}の{_syms_text(p.get('shifts'))}は{days + 'のうち' if days else '月に'}{rng}"
+    if k == "sequence":
+        a = _syms_text(p.get("if"))
+        if "next2_in" in p:
+            t = f"{a}の次の日が{_syms_text(p.get('then'))}なら、その次の日は{_syms_text(p['next2_in'])}"
+        elif "next_in" in p:
+            t = f"{a}の次の日は{_syms_text(p['next_in'])}"
+        elif "next_not_in" in p:
+            t = f"{a}の次の日に{_syms_text(p['next_not_in'])}を置かない"
+        else:
+            t = f"{a}の前の日は{_syms_text(p.get('prev_in'))}"
+        return f"{t}（{who}）"
+    if k == "max_run":
+        return f"{who}の{_syms_text(p.get('shifts'))}は続けて{p.get('max')}日まで"
+    if k in ("weekday", "cell"):
+        at = f"{wd}曜" if k == "weekday" else days
+        return f"{who}の{at}は" + (f"{_syms_text(p['in'])}にする" if "in" in p else f"{_syms_text(p.get('not_in'))}にしない")
+    if k == "unit_after":
+        return (f"前の日に{_syms_text(p.get('after'))}の人がいるユニットは{_syms_text(p.get('yes'))}を1人、"
+                f"いないユニットは{_syms_text(p.get('no'))}を1人")
+    if k == "unit_apart":
+        return f"{_syms_text(p.get('shifts'))}の人を1つのユニットに固めない"
+    if k == "thin_even":
+        return "手薄なユニットで働く回数を、できる範囲で平均化する"
+    return KIND.get(k, "ルール")
+
+
+def _fragments(mk: Masker) -> set[str]:
+    """名簿の人と名簿にいない人の名前・呼び名の、2字以上の部分（姓だけ・名だけも含む）。送る文に1つでも残れば送らない。"""
+    out: set[str] = set()
+    for s in mk.staff:
+        for n in (s.name, s.call):
+            for part in (n or "").split() + ["".join((n or "").split())]:
+                out |= {part[i:j] for i in range(len(part)) for j in range(i + 2, len(part) + 1)}
+    return out
 
 
 def _unit_codes(params: dict, mk: Masker) -> dict:
@@ -407,50 +553,35 @@ def _unit_codes(params: dict, mk: Masker) -> dict:
 
 
 def payload(base: dict) -> dict | None:
-    """Claude へ送る材料。人は職員NN、ユニットはユニットN。名前を伏せきれないルールは名前と中身を送らない。
-    それでも名前が残る時は None（送らない）。"""
+    """Claude へ送る材料。ルールは名前の文を使わず、中身から組み立てた文で送る。人は職員NN、ユニットはユニットN。
+    送る文に名簿の人・名簿にいない人の名前の2字以上の部分が残っていれば None（送らない）。"""
     mk: Masker = base["masker"]
-    staff_names = [n for n in list(mk.to_code) + [s.call for s in mk.staff if s.call] if n and len(n) >= 2]
 
     def code(w: str) -> str:
         return mk.to_code.get(w, "名簿外")
 
-    def masked(text: str) -> str | None:
-        t, unknown = mk.mask(text)
-        return None if unknown or mk.leftover else t
-
-    rules = []
-    for r in base["rules"]:
-        detail = masked(json.dumps(_unit_codes(r.params, mk), ensure_ascii=False))
-        rules.append({"id": r.id, "name": masked(r.name), "kind": KIND.get(r.kind, r.kind),
-                      "strength": STRENGTH.get(r.flex, r.flex), "period": _period(r),
-                      "who": [code(w) for w in r.who] if r.who else "全員", "days": r.when,
-                      "detail": json.loads(detail) if detail else None,
-                      "reason": masked(r.meta["reason"]) if r.meta.get("reason") else None})
+    rules = [{"id": r.id, "text": _text(r, mk), "kind": KIND.get(r.kind, r.kind), "strength": STRENGTH.get(r.flex, r.flex),
+              "period": _period(r), "who": [code(w) for w in r.who] if r.who else "全員", "days": r.when,
+              "detail": _unit_codes(r.params, mk)} for r in base["rules"]]
     found = {}
     for p in PILES:
         for x in base["found"][p]:
-            note = masked(_note(x, p, base["by_id"], code)) or "（名前を伏せきれないので中身は送りません）"
-            found[x["key"]] = {"pile": p, "note": note,
+            found[x["key"]] = {"pile": p, "note": _note(x, code),
                                **({"keep": x["keep"], "drop": x["drop"]} if p == "merge" else {"ids": x["ids"]})}
-    gone = sorted({code(w) for s in base["stale"] for w in s["who"]})
-    out = {"month": f"{base['year']:04d}-{base['month']:02d}", "roster": base["roster"],
-           "not_in_roster": gone, "units": list(mk.unit_code.values()), "rules": rules, "found": found}
+    roster = {c["id"] for c in base["roster"]}
+    gone = sorted({c for r in rules if isinstance(r["who"], list) for c in r["who"] if c not in roster})
+    out = {"month": f"{base['year']:04d}-{base['month']:02d}", "roster": base["roster"], "not_in_roster": gone,
+           "units": list(mk.unit_code.values()),
+           "shifts": [{"symbol": t.symbol, "name": t.name, "kind": t.kind} for t in base["fac"].shift_types],
+           "rules": rules, "found": found}
     text = json.dumps(out, ensure_ascii=False)
-    leak = [n for n in staff_names if n and n in text]
-    if leak:
-        for r in out["rules"]:
-            blob = json.dumps(r, ensure_ascii=False)
-            if any(n in blob for n in leak):
-                r["name"], r["detail"], r["reason"] = None, None, None
-        text = json.dumps(out, ensure_ascii=False)
-        if any(n in text for n in leak):
-            return None
+    if any(f in text for f in _fragments(mk)):
+        return None
     return out
 
 
 SYSTEM = """あなたは介護施設の勤務表アプリの整理係です。施設でシフトを作る人（作成者）が「ルールが多くて、何が要るのか分からない」と困っています。
-今月のルールの一覧（rules）と、手元の計算で確かに言えたこと（found）を渡します。人は「職員NN」、ユニットは「ユニットN」と伏せてあります。名簿にいる人は roster の番号だけで（unit はユニット、can は入れる勤務の記号）、not_in_roster は名簿にいない人です。
+今月のルールの一覧（rules）と、手元の計算で確かに言えたこと（found）を渡します。rules の text は、ルールの中身から手元で組み立てた文です（ルールの名前は送っていません）。人は「職員NN」、ユニットは「ユニットN」と伏せてあります。shifts は勤務の記号と名前です。名簿にいる人は roster の番号だけで（unit はユニット、can は入れる勤務の記号）、not_in_roster は名簿にいない人です。
 
 ルールを3つの山に分け、作成者が押すだけで決められるようにします。決めるのは作成者で、あなたは提案だけをします。
 - remove 片付けてよい。それだけで要らないルール（当てはまる人や日が無い、事情が終わったと読み取れる など）。ほかのルールがあるから要らない物は remove に入れず merge に入れる
@@ -475,9 +606,9 @@ SYSTEM = """あなたは介護施設の勤務表アプリの整理係です。�
 - ユニットを名指しした人数は、全ユニット向けの人数より優先する。同じ人の同じ勤務の回数が2件あれば、後から入った方が効く
 - detail の capable_only は、その勤務に入れる人（roster の can にその記号がある人）だけを数える。人は can に無い勤務には入らない
 - 強さは「動かせない」がいちばん強く、「相談できる」がいちばん弱い。表が作れない時は弱い方から外す
-- ai に入れるのは、上の効き方で確かめて外しても表が変わらないと言える物か、事情が終わったとルールの文から読める物だけです。why には、なぜ必ず守られるのかを書きます
+- ai に入れるのは、上の効き方で確かめて外しても表が変わらないと言える物か、事情が終わったとルールの文から読める物だけです。why には、なぜ必ず守られるのかを書きます。守られない日がありうる組、今月その人が入れない勤務だから守られるだけの物は入れません
 
-- 1行は40字ほどまで。作成者はプログラムの言葉が分かりません。r12 のような番号、英語、記号の「：」は書かず、ルールは「」に入れた名前で言います。「札」「決まり」とは言わず「ルール」と言います。人は職員NNのまま書きます
+- 1行は40字ほどまで。作成者はプログラムの言葉が分かりません。ルールは r12 のような id をそのまま書きます（手元でルールの名前に置き換えます）。人は職員NNのまま書き、名前を作りません。英語と記号の「：」は書かず、「札」「決まり」とは言わず「ルール」と言います
 """
 
 
@@ -579,12 +710,30 @@ class SonnetTidier:
 
 # ---- 画面へ出す形
 
+RID = r"(?<![A-Za-z0-9])(r\d{2,4})(?![0-9])"
+
+
+def _ids_pattern(by_id: dict):
+    return re.compile(r"(?<![A-Za-z0-9])(" + "|".join(map(re.escape, sorted(by_id, key=len, reverse=True)))
+                      + r")(?![0-9A-Za-z])") if by_id else None
+
+
 def _clean(s, mk: Masker, by_id: dict) -> str | None:
-    """Claude の1行を、画面に出せる形にする（名前を戻す・番号をルールの名前に・コロンと「札」「決まり」を使わない）。"""
+    """Claude の1行を、画面に出せる形にする（名前を戻す・番号をルールの名前に・コロンと「札」「決まり」を使わない）。
+    知らないルールの番号・知らない職員の番号・送っていない名前（「〇〇さん」）が入った文は捨てる（作った名前を出さない）。"""
     if not isinstance(s, str):
         return None
     t = " ".join(s.split())
-    t = re.sub(r"(?<![A-Za-z0-9])(r\d{2,4})(?![0-9])", lambda m: f"「{by_id[m.group(1)].name}」" if m.group(1) in by_id else m.group(1), t)
+    if any(i not in by_id for i in re.findall(RID, t)):
+        return None
+    if any(c not in mk.to_name for c in re.findall(r"職員\d+", t)):
+        return None
+    if any(m.group(1) not in NOT_NAMES | FAMILY_WORDS
+           for m in re.finditer(r"([一-龥々ァ-ヶA-Za-z]{1,6})(?:さん|さま|様|氏|くん|ちゃん)", t)):
+        return None
+    pat = _ids_pattern(by_id)
+    if pat:
+        t = pat.sub(lambda m: f"「{by_id[m.group(1)].name}」", t)
     t = mk.unmask(t)
     t = re.sub(r"\s*[:：]\s*", "、", t).replace("決まり", "ルール").replace("札", "ルール")
     t = t.strip("、 ")
@@ -599,8 +748,6 @@ def _local_why(x: dict, by_id: dict) -> str:
         return f"名簿にいない{'・'.join(x['who'])}さんだけのルールです"
     if x["what"] == "no_scene":
         return "当てはまる人や日がありません"
-    if x["what"] == "always":
-        return "入れる勤務などから、どの表でもいつも守られています"
     if x["what"] == "contained":
         return f"{'・'.join(nm(i) for i in x['keep'])}に含まれていて、無くても表は同じです"
     if x["what"] == "replaced":
@@ -608,6 +755,11 @@ def _local_why(x: dict, by_id: dict) -> str:
     if x["what"] == "choke":
         return f"{x['day']}日に同時には守れません。どちらを緩めるかを相談してください"
     return f"今の表で{x['places']}か所守れていません。ほかのルールとの兼ね合いを相談してください"
+
+
+def _firm(r: Rule) -> bool:
+    """AI の見立てだけでは片付ける側に入れない強さ（動かせない・本人の希望）。計算で確かに言える物は別。"""
+    return r.flex in ("fixed", "wish")
 
 
 def finish(base: dict, ai=None) -> dict:
@@ -630,7 +782,9 @@ def finish(base: dict, ai=None) -> dict:
     reasons = (got or {}).get("reasons", {})
     lines = (got or {}).get("lines", {})
     monthly = {i for i, r in by_id.items() if _candidate(r)}
-    taken = {i for x in found["remove"] for i in x["ids"]} | {i for x in found["merge"] for i in x["drop"]}
+    # 計算で山に入れた物と、今月の入れる勤務だけで効いていない物（注記）は、AI の案で片付ける側に入れない
+    taken = ({i for x in found["remove"] for i in x["ids"]} | {i for x in found["merge"] for i in x["drop"]}
+             | {x["id"] for x in base["idle"]})
     keeps = {i for x in found["merge"] for i in x["keep"]}
     names = lambda ids: [by_id[i].name for i in ids]
     piles = {p: [] for p in PILES}
@@ -652,7 +806,7 @@ def finish(base: dict, ai=None) -> dict:
                 if isinstance(x.get("by"), list) else []
             if by:   # ほかのルールがあるから要らない、という見立ては、まとめる山で残す方と強さを確かめる
                 merges.append({"keep": by[0], "drop": [i], "why": x.get("why")})
-            elif i in monthly and i not in taken and i not in keeps and why:
+            elif i in monthly and i not in taken and i not in keeps and why and not _firm(by_id[i]):
                 taken.add(i)
                 piles["remove"].append({"basis": "ai", "why": why, "ids": [i], "names": names([i])})
         for x in merges:
@@ -661,10 +815,12 @@ def finish(base: dict, ai=None) -> dict:
             if not (isinstance(k, str) and k in by_id and k not in taken and isinstance(drop, list) and drop and why):
                 continue
             drop = list(dict.fromkeys(d for d in drop if isinstance(d, str)))
-            if any(d not in monthly or d in taken or d in keeps or d == k for d in drop):
+            if any(d not in monthly or d in taken or d in keeps or d == k or _firm(by_id[d]) for d in drop):
                 continue
-            if not all(_covers(by_id[k], by_id[d]) for d in drop):
-                continue   # 残す方が、片付ける方を外せない段のどれかで外れる組（強い方を片付ける組など）は出さない
+            if not all(_covers(by_id[k], by_id[d]) and _outlives(by_id[k], by_id[d]) for d in drop):
+                continue   # 残す方が、片付ける方を外せない段のどれかで外れる組・片付ける方より先に効かなくなる組は出さない
+            if not all(_ai_merge_holds(k, d, base["rules"], base["X"]) for d in drop):
+                continue   # 同じ種類の組で、計算で確かめると守られない所がある
             taken |= set(drop)
             keeps.add(k)
             piles["merge"].append({"basis": "ai", "why": why, "keep": [k], "keep_names": names([k]),
@@ -688,11 +844,13 @@ def finish(base: dict, ai=None) -> dict:
             "片付けた物は、一覧の「片付けたルール」から戻せます") if n else \
         f"ルールは{total}件。いま片付けやまとめの候補は見つかりませんでした"
     note = {"off": "AI を使わずに、計算で確かに言える物だけを出しています",
-            "skipped": "名前を伏せきれないルールがあったので、AI には送らず、計算で確かに言える物だけを出しています",
+            "skipped": "送る文に名前が残りそうだったので、AI には送らず、計算で確かに言える物だけを出しています",
             "error": "AI の見立てを受け取れなかったので、計算で確かに言える物だけを出しています"}.get(ai_state)
     stale = [{"id": s["id"], "name": by_id[s["id"]].name, "who": s["who"]} for s in base["stale"]
              if s["id"] not in taken]
-    return {"total": total, "head": head, "ai": ai_state, "ai_note": note, "piles": out_piles, "stale": stale}
+    idle = [{"id": x["id"], "name": by_id[x["id"]].name} for x in base["idle"]]
+    return {"total": total, "head": head, "ai": ai_state, "ai_note": note, "piles": out_piles, "stale": stale,
+            "idle": idle}
 
 
 def view(store: Store, year: int, month: int, ai=None) -> dict:

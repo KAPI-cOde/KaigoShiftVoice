@@ -1118,7 +1118,15 @@ function renderTidy(box) {
     st.forEach(function (s) { dt.appendChild(el("div", "td-sub", "「" + s.name + "」　" + s.who.join("・") + "さんは名簿にいません")); });
     box.appendChild(dt);
   }
-  return n + st.length;
+  var idle = TD.idle || [];
+  if (idle.length) {   // 今月の入れる勤務では効いていないルール。入れるようになると要るので、片付けの候補にはしない
+    var di = el("details", "td-stale");
+    di.appendChild(el("summary", "", "今月は入れない勤務についてのルール " + idle.length + "件"));
+    di.appendChild(el("div", "td-sub", "入れる勤務が変わると効くので、片付けの候補には入れていません"));
+    idle.forEach(function (s) { di.appendChild(el("div", "td-sub", "「" + s.name + "」")); });
+    box.appendChild(di);
+  }
+  return n + st.length + idle.length;
 }
 
 function renderClean() {

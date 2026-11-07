@@ -60,7 +60,7 @@ def test_含まれている_名簿にいない_場面が無いを計算で見つ
     rm = {x["ids"][0]: x for x in base["found"]["remove"]}
     assert rm["t4"]["what"] == "absent" and rm["t4"]["who"] == ["森田"]
     assert rm["t5"]["what"] == "no_scene"
-    assert rm["t8"]["what"] == "always"           # 夜勤に入れない人の「夜勤なし」は、どう置いても守られる
+    assert "t8" not in rm and [x["id"] for x in base["idle"]] == ["t8"]   # 夜勤に入れない人の「夜勤なし」は注記だけ
     mg = {x["drop"][0]: x for x in base["found"]["merge"]}
     assert mg["t1"]["keep"] == ["r001"] and mg["t1"]["what"] == "contained"
     assert mg["t2"]["keep"] == ["r006"]           # 名指しの数が全員の数と同じなら、外しても斉藤さんは同じ5回まで
@@ -208,7 +208,7 @@ def test_手元のサーバーの口(tmp_path):
         with urllib.request.urlopen(f"http://127.0.0.1:{httpd.server_address[1]}/api/tidy", timeout=60) as res:
             v = json.loads(res.read())
         counts = {p["pile"]: p["count"] for p in v["piles"]}
-        assert v["ai"] == "on" and counts["remove"] == 3 and counts["merge"] >= 3 and counts["conflict"] == 0
+        assert v["ai"] == "on" and counts["remove"] == 2 and counts["merge"] >= 3 and counts["conflict"] == 0
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -223,3 +223,96 @@ def test_公開版では_Claude_を呼ばない(make_server):
     code, v, _ = req(base, "/api/tidy", cookie=ck, timeout=60)
     assert code == 200 and v["ai"] == "off" and v["ai_note"]
     assert calls() == 0
+
+
+# ---- 壊す側の読み（Astra）の指摘
+
+def _given_name(st):
+    """名簿に「姓 名」の人を足し、名前の文に名だけと名簿にいない人の名前を書いたルールを入れる。"""
+    from shiftvoice.model import Staff
+    staff = st.staff() + [Staff(name="山本 尾島", unit="東", can=["早", "日", "遅", "夜"])]
+    st.save_staff(staff)
+    m = st.month(2026, 11)
+    m.table["山本 尾島"] = ["公"] * m.days
+    st.save_month(m)
+    led = st.ledger()
+    led.append("add", rule={"id": "t30", "name": "尾島は夜勤なし（菊地の希望）", "kind": "count", "flex": "wish",
+                            "params": {"shifts": ["夜"], "max": 0}, "who": ["山本 尾島"], "when": None, "scope": "rule",
+                            "meta": {"reason": "菊地の希望"}}, op_id="t-t30", frm="2026-10-01")
+    st.save_ledger(led)
+
+
+def test_名前の文は送らず_名だけや名簿にいない人の名前も送らない(st):
+    _given_name(st)
+    ai = RecordedTidier({})
+    view(st, 2026, 11, ai)
+    assert len(ai.sent) == 1
+    sent = json.dumps(ai.sent[0].payload, ensure_ascii=False)
+    for w in ("尾島", "山本", "菊地", "森田", "青木", "斉藤"):
+        assert w not in sent, w
+    t30 = next(r for r in ai.sent[0].payload["rules"] if r["id"] == "t30")
+    assert "夜" in t30["text"] and "職員" in t30["text"]      # 中身から組み立てた文で送る
+
+
+def test_送る文に名前の2字以上が残れば送らない(st):
+    _given_name(st)
+    st.add_shift_type({"symbol": "特", "name": "尾島当番", "kind": "work", "start": "09:00", "hours": 8.0})
+    fake = _Fake({"lines": {}, "reasons": {}, "ai": {"remove": [], "merge": [], "conflict": []}})
+    v = view(st, 2026, 11, fake)
+    assert fake.sent == [] and v["ai"] == "skipped"
+
+
+def test_AI_の案では動かせない_本人の希望のルールを片付けない(st):
+    fake = _Fake({"lines": {}, "reasons": {},
+                  "ai": {"remove": [{"id": "r010", "why": "連勤は自然に守られる"}, {"id": "r012", "why": "要らない"}],
+                         "merge": [{"keep": "r001", "drop": ["r002"], "why": "同じ人数"}], "conflict": []}})
+    v = view(st, 2026, 11, fake)
+    assert not [x for p in v["piles"] for x in p["items"] if x["basis"] == "ai"]
+
+
+def test_今月入れない勤務だけを理由に確かとは言わない(st):
+    base = collect(st, 2026, 11)
+    assert "t8" not in _ids(base, "remove") | _ids(base, "merge")     # 杉山さんが夜勤に入れるようになると要る
+    assert [x["id"] for x in base["idle"]] == ["t8"]                   # 注記には出す
+    fake = _Fake({"lines": {}, "reasons": {}, "ai": {"remove": [{"id": "t8", "why": "夜勤に入れないので要らない"}],
+                                                     "merge": [], "conflict": []}})
+    v = view(st, 2026, 11, fake)
+    assert [x["id"] for x in v["idle"]] == ["t8"]
+    assert not [x for p in v["piles"] for x in p["items"] if x["basis"] == "ai"]   # AI の案でも片付ける側に入れない
+
+
+def test_AI_の案で今月だけのルールを残して毎月のルールを片付けない(st):
+    led = st.ledger()
+    led.append("add", rule={"id": "t21", "name": "今月は夜勤を続けない", "kind": "max_run", "flex": "fixed",
+                            "params": {"shifts": ["夜"], "max": 1}, "who": None, "when": None, "scope": "once",
+                            "meta": {}}, op_id="t-t21", frm="2026-11-01", until="2026-11-30")
+    st.save_ledger(led)
+    fake = _Fake({"lines": {}, "reasons": {},
+                  "ai": {"remove": [], "merge": [{"keep": "t21", "drop": ["t7"], "why": "同じ"}], "conflict": []}})
+    v = view(st, 2026, 11, fake)
+    assert not [x for p in v["piles"] for x in p["items"] if x["basis"] == "ai"]
+
+
+def test_知らない番号や名前の入った説明は捨てる(st):
+    base = collect(st, 2026, 11)
+    keys = {x["drop"][0]: x["key"] for x in base["found"]["merge"]}
+    fake = _Fake({"lines": {"merge": "職員99さんのルールです"},
+                  "reasons": {keys["t1"]: "r999 に含まれています", keys["t2"]: "齋藤さんの希望と同じです"},
+                  "ai": {"remove": [{"id": "t7", "why": "職員99さんがいないので要らない"}], "merge": [], "conflict": []}})
+    v = view(st, 2026, 11, fake)
+    merge = next(p for p in v["piles"] if p["pile"] == "merge")
+    assert "職員99" not in merge["line"]
+    whys = [x["why"] for x in merge["items"]]
+    assert not any("r999" in w or "齋藤" in w for w in whys)
+    assert not [x for p in v["piles"] for x in p["items"] if x["basis"] == "ai"]
+
+
+def test_AI_のまとめる案は同じ種類なら計算で確かめる(st):
+    """t3（青木さんの夜勤6回まで）は全員の5回より広く、外すと青木さんが5回までに戻る。t9 は明けの翌日は公休に守られる"""
+    fake = _Fake({"lines": {}, "reasons": {},
+                  "ai": {"remove": [], "merge": [{"keep": "r006", "drop": ["t3"], "why": "r006 で5回までなので守られる"},
+                                                 {"keep": "r009", "drop": ["t9"], "why": "r009 で公になる"}],
+                         "conflict": []}})
+    v = view(st, 2026, 11, fake)
+    got = [(x["keep"], x["drop"]) for p in v["piles"] for x in p["items"] if x["basis"] == "ai"]
+    assert got == [(["r009"], ["t9"])]
