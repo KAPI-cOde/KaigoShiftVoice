@@ -40,6 +40,7 @@ HOLD_CELLS = 10   # 外れている回数を悪くしないために動かして
 # keep_weight（500）がかかる。見本の11月（遅番の次の日の早番・遅番の3連続をやめた後）で、1000 では「遅番が偏らないように」が
 # 3〜5回で止まり、1500 で3〜4回。3000 まで上げても遅番の次の日の早番・ルールの外れは0のままだった（この帯の形で 2026-11-08 に測った）
 EVEN_WEIGHT = 1500
+EVEN_FREE_WEIGHT = 100   # 回数の頼みで動く人の分の、総数の離れの罰。相談できるルール（5000）より十分に軽く、0 ではない
 EVEN_STEPS = 12
 
 
@@ -250,18 +251,20 @@ def _moved_by_count(rules: list[Rule], facility: Facility, staff: list[Staff], m
 
 
 def _even(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[Staff], days, weights: dict,
-          month: Month, hint: dict[str, list[str]] | None = None) -> None:
+          month: Month, hint: dict[str, list[str]] | None = None, free: bool = False) -> None:
     """言われた勤務の人ごとの回数をならす目的（rule の even）。勤務ごとに、数える人の平均の切り捨て t を帯の下にして、
     t〜t+1 回の人は罰さず、帯から外れた分を罰する。数えるのは、その勤務に入れる人だけ（入れない人を0回として数えない）。
     名指しの回数のルールがある人は、帯をそのルールの回数まで広げる（「月7回以上」なら t〜7 回は罰さない）。帯の外は数える
     ので、ほかの人をならすためにその人へ寄せもしない。本人の希望は外せない強さで先に効く。
     前の表（hint）があれば、数える人のその勤務の合計が前の表から離れた分も罰する。ならすのは人の間で移すことで、
     帯から外れた人を、勤務を消したり足したりして帯に入れると、移すより動かすマスが少なくて済むため。
-    前の表でその勤務を数える回数のルールを破っている人は、この合計に入れない。その人の回数はルールで動くはずで、ほかの人へ
-    移せない時に減った（増えた）分まで罰すると、何回分も重なって相談できるルール1件より重くなり、回数の頼みが外れるため。
-    回数のルールがあっても前の表で守っている人は合計に残す。"""
+    free の時は、前の表でその勤務を数える回数のルールを破っている人たちの前の回数の合計までの増減を軽く（1回
+    EVEN_FREE_WEIGHT）罰し、それを超える分だけを重く罰する。ほかの人へ移せない時に、回数の頼みで減る分まで重く罰すると、
+    何回分も重なって相談できるルール1件より重くなり、頼みが外れるため。ただ軽くすると、移せる時も、2マス動く「移す」より
+    1マスの「消す」が安くなる（1マス動かす罰は500）。そこで一言の直し（resolve）は、まず重いまま解き、頼みが外れた時だけ
+    free で解き直す。"""
     w = weights.get("even", EVEN_WEIGHT)
-    moved = _moved_by_count(rules, facility, staff, month, hint) if hint and any(r.kind == "even" for r in rules) else {}
+    moved = _moved_by_count(rules, facility, staff, month, hint) if free and hint and any(r.kind == "even" for r in rules) else {}
     for r in rules:
         if r.kind != "even":
             continue
@@ -283,13 +286,18 @@ def _even(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[St
             m.add(len(people) * t <= total)
             m.add(total <= len(people) * t + len(people) - 1)
             if hint:
-                kept = [(p[0], nm) for p, nm in zip(people, names) if nm not in moved.get(sym, ())]
-                now = sum(c for c, _ in kept)
-                old = sum(1 for _, nm in kept for d in ds if (hint.get(nm) or [])[d - 1:d] == [sym])
+                was = {nm: sum(1 for d in ds if (hint.get(nm) or [])[d - 1:d] == [sym]) for nm in names}
+                old = sum(was.values())
+                slack = sum(was[nm] for nm in names if nm in moved.get(sym, ()))
                 gap = m.new_int_var(0, len(people) * top, "")
-                m.add(gap >= now - old)
-                m.add(gap >= old - now)
+                m.add(gap >= total - old - slack)
+                m.add(gap >= old - slack - total)
                 penalties.append(w * gap)
+                if slack:
+                    near = m.new_int_var(0, len(people) * top, "")
+                    m.add(near >= total - old)
+                    m.add(near >= old - total)
+                    penalties.append(EVEN_FREE_WEIGHT * near)
             for c, n, lo, hi in people:
                 upper, lower = t + 1, t
                 if lo is not None:
@@ -313,11 +321,12 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                 skip: set[tuple[str, str]] | None = None,
                 dev_cap: int | None = None,
                 hold: dict[tuple[str, str], int] | None = None,
-                extra=None) -> SolveResult:
+                extra=None, even_free: bool = False) -> SolveResult:
     """fixed_cells は 動かさないマス（人, 日）→ 記号。狭い範囲の直しで、範囲の外を止めるのに使う。
     skip は課さない場面（決まりの id, 場面の名前）。相談できる決まりで前の表で既に外れていた場面に使う。
     dev_cap は、運用の都合の回数のルールを外す時の、1人あたりのずれの上限。
-    hold は skip の場面のうち、今の値（場面 → 値）からルールと反対へ離れるのを罰する場面。"""
+    hold は skip の場面のうち、今の値（場面 → 値）からルールと反対へ離れるのを罰する場面。
+    even_free は、回数をならすルールの総数の罰を、回数のルールを破っている人の分だけ軽くする（_even）。"""
     st = facility.settings.get("solve", {})
     weights = {**DEFAULT_WEIGHTS, **facility.settings.get("weights", {})}
     quality = facility.settings.get("quality", {})
@@ -408,7 +417,7 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
 
     _fair_leave(m, x, penalties, rules, facility, staff, days, weights)
     _thin_even(m, x, penalties, rules, facility, staff, days, weights)
-    _even(m, x, penalties, rules, facility, staff, days, weights, month, hint)
+    _even(m, x, penalties, rules, facility, staff, days, weights, month, hint, even_free)
 
     # 質の物差し（施設の設定。既定は控えめ）
     work = set(facility.workday_symbols())

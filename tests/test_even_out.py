@@ -328,3 +328,22 @@ def test_count_rule_everyone_keeps_does_not_drop_the_total_guard(imported):
         assert total[1] == total[0], (sym, total)
         lo, hi = _spread(rr.table, staff, sym)
         assert hi - lo <= 1, (sym, lo, hi)
+
+
+def test_later_count_request_moves_to_others_when_it_can():
+    """「赤坂さんはできれば早番5回まで」で減らす分は、井上さんへ移せるなら移す（早番の総数12回のまま）。
+    頼みを破っている人を総数の罰から丸ごと外すと、移した先の増えた分だけが罰され、移すより消す方が安くなって
+    総数が5回まで減った（Codex Astra の敵対レビュー。起きやすさ4×影響7）。"""
+    fac, _, _, _ = _small()
+    staff = [Staff(n, "東", ["早", "日", "遅"]) for n in ("赤坂", "井上")]
+    month = Month(2026, 11, [], {n: ["日"] * 5 for n in ("赤坂", "井上")})
+    rules = [Rule("o1", 1, "公休の数", "count", "fixed", {"shifts": ["公"], "min": 8, "max": 8})]
+    base = {"赤坂": ["早"] * 10 + ["公"] * 8 + ["日"] * 12, "井上": ["早"] * 2 + ["公"] * 8 + ["日"] * 20}
+    ask = Rule("a5", 1, "赤坂さん 早番はできれば月5回まで", "count", "negotiable", {"shifts": ["早"], "max": 5}, who=["赤坂"])
+    rs = rules + [_even_rule()] + [ask]
+    rr = resolve(fac, staff, rs, month, base, [ask])
+    assert rr.ok
+    t = rr.table
+    assert t["赤坂"].count("早") <= 5, t["赤坂"]
+    assert t["赤坂"].count("早") + t["井上"].count("早") == 12, t
+    assert check_table(rs, fac, staff, month, t) == []

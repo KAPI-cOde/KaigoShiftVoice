@@ -142,6 +142,7 @@ def resolve(facility: Facility, staff: list[Staff], rules: list[Rule], month: Mo
     was = {(b["rule"], b["key"]): b for b in off if b["flex"] == "operational" and b["rule"] in counts}
     hold = {k: b["value"] for k, b in was.items()}
     tries = []
+    has_even = any(r.kind == "even" for r in all_rules)
     for w in WINDOWS:
         if focus is None and w is not None:
             continue
@@ -157,6 +158,12 @@ def resolve(facility: Facility, staff: list[Staff], rules: list[Rule], month: Mo
                         fixed[(s.name, d)] = base[s.name][d - 1]
         r = solve_month(facility, staff, all_rules, month, hint=base, fixed_cells=fixed, max_dtime=dtime,
                         skip=skip, hold=hold)
+        if r.status == "ok" and has_even and any(b["rule"] in new_ids for b in r.broken):
+            # 回数をならすルールの総数の罰が重く、回数の頼みで減らす分をほかの人へ移せない時は頼みが外れる。その時だけ軽くして解き直す
+            r2 = solve_month(facility, staff, all_rules, month, hint=base, fixed_cells=fixed, max_dtime=dtime,
+                             skip=skip, hold=hold, even_free=True)
+            if r2.status == "ok" and sum(b["rule"] in new_ids for b in r2.broken) < sum(b["rule"] in new_ids for b in r.broken):
+                r = r2
         tries.append({"window": w, "status": r.status, "seconds": round(r.seconds, 3)})
         if r.status != "ok":
             continue
