@@ -177,6 +177,23 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
     return out
 
 
+def dated_same_as_latest(rd: dict, cur) -> bool | None:
+    """日付を決めた人数の頼み rd（when のある coverage）が、帳面の同じ勤務・同じ数え方で日の重なる日付の人数のうち、
+    いちばん後に入ったものと同じ中身か。日付の人数は新しい方が勝つ（_coverage_dates）ので、古いものと同じでも
+    「もう入っています」にしない（「2人→3人→2人」と言い直すと、最後の2人が入らず3人のままだった。Astra 2026-11-07）。
+    rd が日付の人数でなければ None（呼ぶ側の今までの比べ方を使う）"""
+    if rd.get("kind") != "coverage" or not rd.get("when") or (rd.get("params") or {}).get("weekdays"):
+        return None
+
+    def slot(p: dict) -> tuple:
+        return frozenset(_syms_of(p.get("shifts"))), p.get("scope"), tuple(sorted(p.get("units") or []))
+    days = set(rd["when"])
+    same_slot = [r for r in cur if r.kind == "coverage" and r.when and not r.params.get("weekdays")
+                 and set(r.when) & days and slot(r.params) == slot(rd["params"])]
+    last = same_slot[-1] if same_slot else None
+    return bool(last) and last.params == rd["params"] and last.when == rd["when"] and last.flex == rd.get("flex", last.flex)
+
+
 def _coverage_dates(rules: list[Rule]) -> list[Rule]:
     """日付を決めた人数のルール（「28日は行事なので早番を3人」「1日はU2の早番はいなくていい」。when のある coverage）の日は、
     同じ勤務の毎日の人数・曜日の人数・前からの日付の人数のルールが、日付のルールに譲る。譲る側と数は expand で決める

@@ -1848,7 +1848,7 @@ function renderResult() {
   (b.choke || []).forEach(function (x) { (x.cells || []).forEach(function (k) { chokeCells[k] = true; }); });
   if (b.status !== "ok") {
     var w = el("div", "rv-wrap");
-    w.appendChild(el("h1", "", "この条件では返せません"));
+    w.appendChild(el("h1", "", b.title || "この条件では返せません"));
     w.appendChild(el("div", "ln", b.message || ""));
     var cbx = chokeBox(b.choke); if (cbx) w.appendChild(cbx);
     var back = el("button", "", "見直しへ戻る"); back.type = "button"; back.style.marginTop = "14px";

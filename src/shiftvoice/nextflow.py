@@ -9,7 +9,7 @@ import datetime as dt
 import re
 from dataclasses import replace
 
-from .build import month_rules
+from .build import C3_MESSAGE, TIMEOUT_MESSAGE, month_rules
 from .giveback import _months_back, accepted_counts, build_pair
 from .giveback import settings as gb_settings
 from .intake import WHO_UNKNOWN, Clarify, to_proposal
@@ -20,6 +20,7 @@ from .period import other_month, other_month_message, relative_days
 from .nextmonth import copy_next_month, next_ym
 from .reader import LimitError, ReadError
 from .review import answer, history, review_cards, undo_answer
+from .rules import dated_same_as_latest
 from .store import Store
 
 
@@ -75,7 +76,7 @@ ANSWER_WORDS = {"archive": "片付けた", "extend": "延ばした", "keep": "�
 # ---- 表を作る前に入れる希望休（作者の作り方の最初の一歩。全員の希望休を入れてから表を作る） ----
 WISH_SOURCE = "作る前"          # 帳面の meta.source。翌月の表を作る前に入れた頼みの印
 WISH_MARKS = {"希", "希望", "希休", "希望休"}
-WISH_ONLY = "表を作る前に入れられるのは、日付の決まった休みや勤務の頼みです。ほかの頼みは{m}月の表を開いてから言ってください。何も入れていません"
+WISH_ONLY = "表を作る前に入れられるのは、日付の決まった休みや勤務の頼みと、日付を決めた人数（「12日は早番を2人」）です。ほかの頼みは{m}月の表を開いてから言ってください。何も入れていません"
 
 
 def _wish_span(y: int, m: int) -> tuple[str, str]:
@@ -161,6 +162,22 @@ def parse_wish_paste(text: str, roster: list[str], days: int,
         out[name] = sorted(set(out[name]) | set(marks))
     return out, unknown
 
+
+
+def base_failed_text(message: str, has_choke: bool) -> str:
+    """翌月の表（返さない案）そのものが作れなかった時の文。表を作る仕組みの問い（「もう少し考えますか、どれを譲るかを
+    決めますか」「このルールを入れると…外しますか」）は、この画面に答えるボタンが無いので、次にすることを言う。
+    希望休を外す相談は最後（作者 2026-11-07）なので、先に詰まり所やその日の人数を一言で空けるよう言う"""
+    if has_choke:
+        return ("全部のルールと希望休を同時に守る表が見つかりませんでした。下のいちばんの詰まり所を、［見直しへ戻る］の"
+                "希望休の欄に「12日は早番を2人」「12日、〇〇さんは早番に」のような一言を入れて空けてから、もう一度作ってください")
+    if message == TIMEOUT_MESSAGE:
+        return ("全部のルールと希望休を同時に守る表が、この時間では見つかりませんでした。行事の日の人数など、その日だけ"
+                "ゆるめられる所を、［見直しへ戻る］の希望休の欄に「12日は早番を2人」のような一言で入れてから、もう一度作ってください")
+    if message == C3_MESSAGE:
+        return ("動かせないルール（毎日の人数・公休の数など）どうしがぶつかって、表が作れませんでした。［見直しへ戻る］で、"
+                "今月足したルールと希望休を見直してください")
+    return message
 
 
 def _choke_out(chokes: list[dict], month) -> list[dict]:
@@ -278,6 +295,9 @@ class NextFlow:
             # 詰まり所の箱は「先に空けられないか試し、どうしても空かない時に相談」と言うので、すぐ上の知らせで先に相談を
             # すすめない（同じ画面で食い違った。作者の方針は対処をしつくしてから相談）
             out["note"] = out["note"].replace("本人と相談してください", "相談の前に、下のいちばんの詰まり所で空けられないか試してください")
+        if gb.status == "base_failed":
+            out["title"] = f"{self.nm}月の表が作れませんでした"   # 返す・返さないの前に、元の表ができていない
+            out["message"] = base_failed_text(gb.message, bool(out["choke"]))
         if gb.status == "cannot" and not any(v > 0 for v in counts.values()):
             # 引き受けた人がいない月（取り込んで作ったばかりの施設など）。返す物が無いので、返さない案だけで採れるようにする
             dec_days = dec.days
@@ -385,8 +405,10 @@ class NextFlow:
         n = _next_id(led)
         added = []
         for rd in rules:
-            if any(r.kind == rd["kind"] and r.params == rd["params"] and (r.who or None) == (rd.get("who") or None)
-                   and r.when == rd.get("when") for r in cur):
+            dated = dated_same_as_latest(rd, cur)
+            if dated or (dated is None and any(
+                    r.kind == rd["kind"] and r.params == rd["params"] and (r.who or None) == (rd.get("who") or None)
+                    and r.when == rd.get("when") for r in cur)):
                 continue
             rd = {**rd, "id": f"r{n}", "scope": "once",
                   "meta": {**rd.get("meta", {}), "said": said, "at": at, "source": source, "until": end}}
@@ -440,7 +462,12 @@ class NextFlow:
               and all(r["kind"] == "cell" and r.get("when") and r.get("who")
                       and not (r.get("meta") or {}).get("moved_to") and not (r.get("meta") or {}).get("moved_from")
                       for r in p.rules))
-        if not ok:
+        # 日付を決めた人数（「12日は早番を2人」）も、その月だけの頼みとして入れる。全部の希望休を入れると組めない時に
+        # 詰まり所の日の人数を減らして空ける一言を、表を作る前に言えるように（作者 2026-11-07「日勤専属の人に早出を
+        # 頼む・その日の人数を減らす、などの対処をしつくしてから相談」。前は「表を開いてから」と断り、表の無い時は言えなかった）
+        dated = (p.kind == "rule" and p.rules and not p.staff_changes and not p.removes and not p.covers
+                 and all(r["kind"] == "coverage" and r.get("when") for r in p.rules))
+        if not (ok or dated):
             return {**out, "wish_error": WISH_ONLY.format(m=self.nm)}
         start, _ = _wish_span(self.ny, self.nm)
         led = self.store.ledger()

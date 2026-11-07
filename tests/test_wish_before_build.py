@@ -125,3 +125,66 @@ def test_no_wish_changes_nothing(sess):
     fl.wishes()
     assert (json.dumps(sess.store.ledger().to_list(), sort_keys=True),
             json.dumps(sess.store.month(2026, 12).layers, sort_keys=True)) == before
+
+
+def test_日付を決めた人数も表を作る前に入れられる(sess):
+    """全部の希望休を入れると組めない時、詰まり所の日の人数を変える一言（「12日は早番を3人」）を、表を作る前に言える。
+    前は「12月の表を開いてから言ってください」と断られ、表が作れない時は空ける手が無かった（作者 2026-11-07
+    「その日の人数を減らすなどの対処をしつくしてから、どうしても空かない時だけ相談」）。名前は作り話。"""
+    import json as _j
+
+    from shiftvoice.reader import RecordedReader
+    fl = _ready(sess)
+    text = "12日は早番を3人"
+    reader = RecordedReader({text: _j.dumps({"items": [{"type": "coverage", "shift": "早", "min": 3, "max": None}]})})
+    w = fl.wish(text, reader)
+    assert "wish_error" not in w, w
+    assert w["wish_note"].startswith("入れました") and "12日" in w["wish_note"]
+    assert any(x["said"] == text for x in w["wishes"])
+    assert sess.store.month(2026, 12).table is None            # 表はまだ作らない
+    b = fl.build()
+    assert b["status"] == "ok", b
+    assert sum(row[11] == "早" for row in b["tables"]["base"].values()) == 3
+    # 日付の無い人数（毎月のルール）は、今までどおり表を開いてから
+    reader2 = RecordedReader({"早番は毎日3人": _j.dumps({"items": [{"type": "coverage", "shift": "早", "min": 3, "max": None}]})})
+    e = fl.wish("早番は毎日3人", reader2)
+    assert "表を作る前に入れられるのは" in e["wish_error"]
+
+
+def test_翌月の表そのものが作れない時は_次にすることを言う(sess, monkeypatch):
+    """返さない案が作れない時、見出しは「この条件では返せません」ではなく「12月の表が作れませんでした」。文は、答える
+    ボタンの無い「もう少し考えますか、どれを譲るかを決めますか」ではなく、詰まり所や日付の人数を一言で空けることを言う。"""
+    from shiftvoice import nextflow
+    from shiftvoice.build import C3_MESSAGE, TIMEOUT_MESSAGE
+    from shiftvoice.giveback import GiveBack
+    from shiftvoice.solver import SolveResult
+    fl = _ready(sess)
+    for msg, choke, want in ((TIMEOUT_MESSAGE, [{"day": 12, "text": "いちばんの詰まり所は12日です", "cells": []}], "詰まり所"),
+                             (TIMEOUT_MESSAGE, [], "この時間では見つかりませんでした"),
+                             (C3_MESSAGE, [], "動かせないルール")):
+        monkeypatch.setattr(nextflow, "build_pair", lambda *a, _m=msg, _c=choke, **k: GiveBack(
+            "base_failed", SolveResult("timeout", None), None, message=_m, base_choke=_c))
+        monkeypatch.setattr(nextflow, "_choke_out", lambda c, m: c)
+        b = fl.build()
+        assert b["status"] == "base_failed" and b["title"] == "12月の表が作れませんでした"
+        assert want in b["message"] and "もう少し考えますか" not in b["message"] and "外しますか" not in b["message"]
+        assert "見直しへ戻る" in b["message"]
+
+
+def test_日付の人数を言い直して前の数に戻せる(sess):
+    """「12日は早番を3人」→「4人」→「3人」と言い直すと、最後の3人が「もう入っています」で入らず、4人のままだった
+    （日付の人数は新しい方が勝つのに、古い3人と同じ中身だと見た。Astra 2026-11-07）。名前は作り話。"""
+    import json as _j
+
+    from shiftvoice.reader import RecordedReader
+    fl = _ready(sess)
+    said = {f"12日は早番を{n}人": _j.dumps({"items": [{"type": "coverage", "shift": "早", "min": n, "max": None}]})
+            for n in (3, 4)}
+    reader = RecordedReader(said)
+    for n in (3, 4, 3):
+        w = fl.wish(f"12日は早番を{n}人", reader)
+        assert w.get("wish_note", "").startswith("入れました"), (n, w)
+    assert fl.wish("12日は早番を3人", reader)["wish_note"] == "12月はもう入っています"   # 同じ数を続けて言った時は二重に入れない
+    b = fl.build()
+    assert b["status"] == "ok", b
+    assert sum(row[11] == "早" for row in b["tables"]["base"].values()) == 3

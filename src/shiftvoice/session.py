@@ -28,7 +28,7 @@ from .redo import BACK_WORDS, as_redo, bare_redo, fill_answer, narrowed, same_ce
 from .giveback import accepted_counts
 from .model import Acceptance
 from .resolve import changed_cells, resolve
-from .rules import check_table, same_slot
+from .rules import check_table, dated_same_as_latest, same_slot
 from .review import history as _history
 from .standby import ASK_WIDER, NO_MOVE, assign, duty_days, fix_absence, oncall_layer, use_move
 from .store import Store
@@ -625,6 +625,9 @@ class Session:
         # 言われた変更が全部もう入っている時だけ「もう入っています」（10章。変更を飛ばす作りは希望が消える道になったのでしない）
         cur = led.rules_at(between=self._span()).values()
         def same(rd):
+            dated = dated_same_as_latest(rd, list(cur))   # 日付の人数は、いちばん後に言ったものと比べる
+            if dated is not None:
+                return dated
             return any(r.kind == rd["kind"] and r.params == rd["params"] and (r.who or None) == (rd.get("who") or None)
                        and r.when == rd.get("when") and r.scope == scope and r.flex == rd["flex"] for r in cur)
         if p.rules and not p.staff_changes and all(same(rd) for rd in p.rules) \
