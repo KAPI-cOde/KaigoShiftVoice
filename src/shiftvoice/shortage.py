@@ -29,7 +29,8 @@ def _cap(facility: Facility, eff: list[Rule], s: Staff, sym: str, month: Month) 
         if q.kind == "count" and q.flex in HARD and not q.when and sym in _syms(q.params.get("shifts"), facility):
             for ins in expand(q, facility, [s], month):
                 if ins.hi is not None:
-                    c = min(c, ins.hi)
+                    # その日だけ外したマス（except_cells）は数える項から抜けているので、上限はその日数だけ月全体で広がる
+                    c = min(c, ins.hi + max(0, month.days - sum(1 for t in ins.terms if t.day >= 1)))
     return c
 
 

@@ -203,3 +203,18 @@ def test_組める月では_研修の日があっても足りないと言わな�
     fac, staff, m, rules = nov
     assert shortages(fac, staff, _ochiai_ken(rules, staff, OCHIAI_KEN[:7]), m) == []
     assert shortages(fac, staff, _ochiai_ken(rules, staff, OCHIAI_KEN, flex="negotiable"), m) == []
+
+
+def test_その日だけ外した日は回数の上限に足して数える(nov):
+    """穴埋めの提案で「早番は月3回まで」をある日だけ外した人は、その日を入れて月4回まで入れる。前は上限3のまま数え、
+    作れる月を足りないと言って作り直しを止めた（Astra 2026-11-08）"""
+    from shiftvoice.rules import with_overrides
+    from shiftvoice.shortage import _cap
+    fac, staff, m, rules = nov
+    s = next(x for x in staff if "早" in x.can)
+    cap = Rule(id="t-cap", ver=1, name=f"{s.name}さん 早番は月3回まで", kind="count", flex="operational",
+               params={"shifts": ["早"], "max": 3}, who=[s.name], scope="rule")
+    assert _cap(fac, with_overrides(copy.deepcopy(rules) + [cap]), s, "早", m) == 3
+    ex = copy.deepcopy(cap)
+    ex.meta = {"except_cells": [f"{s.name}/{m.year:04d}-{m.month:02d}-01/早"]}
+    assert _cap(fac, with_overrides(copy.deepcopy(rules) + [ex]), s, "早", m) == 4
