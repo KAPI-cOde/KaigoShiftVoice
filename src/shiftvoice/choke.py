@@ -143,7 +143,7 @@ def _describe(core: list, facility: Facility, center: int) -> dict:
     """芯を、詰まり所の日・重なった希望休・ぶつかったルールにする。日は、人数のルールの日があればそれ（足りないのはその日の
     勤務。希望休の前の日の夜勤が足りない時に、希望休の日を指していた。Astra）、無ければほかのルールの場面の日、それも無ければ
     希望休の日。どれも無ければ小さなモデルの真ん中の日。"""
-    wishes, rules, cells = [], [], []
+    wishes, rules, cells, ids = [], [], [], []
     cov, other, wish_days = Counter(), Counter(), Counter()
     for r, inst in core:
         d = _day_of(inst.key)
@@ -168,11 +168,14 @@ def _describe(core: list, facility: Facility, center: int) -> dict:
             name += f"（{d}日は{_amount(inst.lo, inst.hi)}）"
         if name not in rules:
             rules.append(name)
+        if r.id not in ids:
+            ids.append(r.id)
         if d is not None:
             (cov if r.kind == "coverage" else other)[d] += 1
     pick = cov or other or wish_days
     day = pick.most_common(1)[0][0] if pick else center
-    return {"day": day, "wishes": wishes, "rules": rules, "cells": cells}
+    # rule_ids は希望休を除いたルールの id（ルールの整理が、ぶつかっている組として使う。tidy.py）
+    return {"day": day, "wishes": wishes, "rules": rules, "cells": cells, "rule_ids": ids}
 
 
 def _orig(p: dict) -> tuple:

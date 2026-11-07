@@ -347,9 +347,10 @@ def top_conflict(targets: list[Rule], broken: list[dict], rules: dict[str, Rule]
 
 class Session:
     def __init__(self, store: Store, year: int, month: int, reader, *, now=None, who: str = "作成者",
-                 builder=None, base_date: str | None = None):
+                 builder=None, base_date: str | None = None, tidier=None):
         self.store, self.year, self.month, self.reader = store, year, month, reader
         self.builder = builder
+        self.tidier = tidier   # ルールの整理で Claude に見立てを頼む役（tidy.py）。無ければ計算で言える物だけ
         self.now = now or (lambda: dt.datetime.now(JST))
         self.who = who
         self.base_date = base_date  # 引き受けを数える基準日（デモ設定。None は今日）

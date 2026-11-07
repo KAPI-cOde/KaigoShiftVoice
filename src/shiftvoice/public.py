@@ -459,7 +459,7 @@ class Workspaces:
 
 # ---- 公開版の入れ物
 
-GET_OK = {"/", "/index.html", "/api/state", "/api/table.tsv", "/api/cleanup", "/api/next/review",
+GET_OK = {"/", "/index.html", "/api/state", "/api/table.tsv", "/api/cleanup", "/api/tidy", "/api/next/review",
           "/api/next/review?split=1"}
 GET_PREFIX_OK = ("/api/rule?", "/api/why?")
 POST_OK = {"/api/say", "/api/answer", "/api/retry", "/api/choose_name", "/api/accept", "/api/move", "/api/refuse",

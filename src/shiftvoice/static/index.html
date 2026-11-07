@@ -158,6 +158,26 @@
   .cl-done { font-size: 13px; margin: 6px 0; }
   .cl-who { font-size: 13px; font-weight: 700; margin: 10px 0 2px; }
   .cl-who + .cl-row, .cl-row { padding-left: 2px; }
+  /* ルールの整理の3つの山（tidy.py）。見出しを押すと、たたむ・開く */
+  .tidyrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 2px; }
+  .tidyrow .grpnote { margin: 0 2px; }
+  .tidyrow button { font-size: 12px; padding: 2px 10px; white-space: nowrap; }
+  .td-note { font-size: 12px; color: #444; margin: -8px 0 10px; }
+  .td-fold { display: flex; justify-content: space-between; align-items: baseline; width: 100%; border: none; background: none; padding: 0; text-align: left; }
+  .td-fold:hover { background: none; text-decoration: underline; }
+  .td-fold .td-title { font-size: 16px; font-weight: 700; }
+  .td-fold .tog { font-size: 12px; color: #555; }
+  .cl-grp > .why { margin-top: 4px; }
+  .td-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; border-top: 1px solid #ddd; padding: 8px 0 6px; font-size: 13px; }
+  .td-row .td-name { font-weight: 700; }
+  .td-row.done .td-name, .td-row.done .td-sub, .td-row.done .td-why { color: #777; }
+  .td-sub { font-size: 12px; color: #444; margin-top: 1px; }
+  .td-why { font-size: 12px; margin-top: 2px; }
+  .td-tag { font-size: 11px; border: 1px solid #777; border-radius: 3px; padding: 0 5px; margin-left: 8px; white-space: nowrap; display: inline-block; }
+  .td-stale { font-size: 12px; margin: 10px 0; }
+  .td-stale summary { cursor: pointer; }
+  .td-stale .td-sub { margin: 3px 0 0 14px; }
+  h2.cl-sub { font-size: 15px; margin: 22px 0 4px; }
   .navrow { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
   .navrow button { font-size: 12px; padding: 2px 10px; }
   #v12 h1 { font-size: 22px; margin: 6px 0 4px; }
@@ -924,7 +944,7 @@ function renderCards() {
   if (picked) { setFold("ppl", false); setFold("p_" + person, false); }
   personShown = person;
   var rs = S.rule_stats;
-  if (rs && g.total > GROUP_AT) box.appendChild(el("div", "grpnote", "ルール " + rs.total + "件" + (rs.added ? "（今月 +" + rs.added + "件）" : "")));
+  tidyEntry(box, rs && g.total > GROUP_AT ? "ルール " + rs.total + "件" + (rs.added ? "（今月 +" + rs.added + "件）" : "") : "");
   // 今月だけのルールはいちばん上に出す（前は一覧に出ず、入ったことが見えなかった。2026-11-06 作者の答え）
   var only = g.only;
   if (only.length) {
@@ -986,8 +1006,11 @@ function showClean(on) {
 }
 function openClean() {
   showClean(true); CL = null; clMsg = ""; clPick = {}; clOpen = {};
+  TD = null; tdOpen = {}; tdDone = {}; tdMsg = "";
   renderClean();
   fetch("/api/cleanup").then(function (r) { return r.json(); }).then(function (v) { CL = v; renderClean(); });
+  fetch("/api/tidy").then(function (r) { return r.json(); }).then(function (v) { TD = v; renderClean(); })
+    .catch(function () { TD = { error: "うまくつながりませんでした。表へ戻って、もう一度開いてください" }; renderClean(); });
 }
 document.getElementById("cleanback").addEventListener("click", function () {
   showClean(false);
@@ -999,14 +1022,113 @@ function cleanSend(archive, keep, done) {
   post("cleanup", { archive: archive, keep: keep }).then(function (v) {
     setBusy(false);
     if (v.error) { clMsg = v.error; renderClean(); return; }
+    archive.forEach(function (i) { tdDone[i] = true; });
     CL = v; clMsg = done; clPick = {}; renderClean();
   }).catch(fail);
 }
+
+// ルールの整理の3つの山（tidy.py）。山は件数と1行の理由だけをたたんで出し、開くと1件ずつ［片付ける］。
+// ぶつかっている山は押す物を出さず、どちらを緩めるかの相談の1行だけ。片付けは上の整理と同じ道（POST cleanup）で、
+// その場の［戻す］か、一覧の「片付けたルール」から戻せる
+var TD = null, tdOpen = {}, tdDone = {}, tdMsg = "";
+function quoted(names) { return names.map(function (n) { return "「" + n + "」"; }).join("・"); }
+function tidyArchive(ids, label) {
+  if (busy) return;
+  setBusy(true);
+  post("cleanup", { archive: ids, keep: [] }).then(function (v) {
+    setBusy(false);
+    if (v.error) { tdMsg = v.error; renderClean(); return; }
+    ids.forEach(function (i) { tdDone[i] = true; });
+    CL = v; tdMsg = label + "を片付けました"; renderClean();
+  }).catch(fail);
+}
+function tidyRestore(ids) {
+  if (busy) return;
+  setBusy(true);
+  var left = ids.slice(), said = "";
+  (function next() {
+    if (!left.length) {
+      setBusy(false); tdMsg = said;
+      fetch("/api/cleanup").then(function (r) { return r.json(); }).then(function (v) { CL = v; renderClean(); });
+      return;
+    }
+    var id = left.shift();
+    post("restore", { rule_id: id }).then(function (res) {
+      if (res.state) S = res.state;
+      var r = res.reply || {};
+      said = r.message || said;
+      if (r.kind === "applied") { delete tdDone[id]; next(); return; }
+      setBusy(false); tdMsg = said || "戻せませんでした"; renderClean();
+    }).catch(fail);
+  })();
+}
+function tidyRow(pile, x) {
+  var row = el("div", "td-row");
+  var main = el("div", "td-main");
+  var ids = pile === "merge" ? x.drop : x.ids;
+  var done = pile !== "conflict" && ids.every(function (i) { return tdDone[i]; });
+  if (pile === "merge") {
+    main.appendChild(el("div", "td-name", "片付ける" + quoted(x.drop_names) + (done ? "（片付けました）" : "")));
+    main.appendChild(el("div", "td-sub", "残す" + quoted(x.keep_names)));
+  } else {
+    var shown = x.names.slice(0, 3).map(function (n) { return "「" + n + "」"; }).join(pile === "conflict" ? "と" : "・");
+    if (x.names.length > 3) shown += "ほか" + (x.names.length - 3) + "件";
+    main.appendChild(el("div", "td-name", shown + (done ? "（片付けました）" : "")));
+  }
+  var why = el("div", "td-why", x.why);
+  why.appendChild(el("span", "td-tag", x.basis === "ai" ? "AI の見立て" : "確か"));
+  main.appendChild(why);
+  row.appendChild(main);
+  if (pile !== "conflict") {
+    var label = quoted(pile === "merge" ? x.drop_names : x.names);
+    var b = el("button", "rvbtn", done ? "戻す" : "片付ける");
+    b.type = "button";
+    b.addEventListener("click", function () { if (done) tidyRestore(ids); else tidyArchive(ids, label); });
+    row.appendChild(b);
+  }
+  if (done) row.className += " done";
+  return row;
+}
+function renderTidy(box) {
+  if (!TD) { box.appendChild(el("div", "small", "ルールを読んでいます。AI に読んでもらう時は、1分ほどかかることがあります")); return 0; }
+  if (TD.error) { box.appendChild(el("div", "small", TD.error)); return 0; }
+  box.appendChild(el("div", "cl-head", TD.head));
+  if (TD.ai_note) box.appendChild(el("div", "td-note", TD.ai_note));
+  if (tdMsg) box.appendChild(el("div", "cl-done", tdMsg));
+  var n = 0;
+  TD.piles.forEach(function (p) {
+    if (!p.items.length) return;
+    n++;
+    var d = el("div", "cl-grp");
+    var h = el("button", "td-fold");
+    h.type = "button";
+    h.appendChild(el("span", "td-title", p.title + "　" + p.count + "件"));
+    h.appendChild(el("span", "tog", tdOpen[p.pile] ? "たたむ" : "開く"));
+    h.addEventListener("click", function () { tdOpen[p.pile] = !tdOpen[p.pile]; renderClean(); });
+    d.appendChild(h);
+    d.appendChild(el("div", "why", p.line));
+    if (tdOpen[p.pile]) p.items.forEach(function (x) { d.appendChild(tidyRow(p.pile, x)); });
+    box.appendChild(d);
+  });
+  var st = TD.stale || [];
+  if (st.length) {   // 名前の文だけが古いルール。今の名簿の人には当たっているので、片付けの候補にはしない
+    var dt = el("details", "td-stale");
+    dt.appendChild(el("summary", "", "名簿にいない人の名前が残っているルール " + st.length + "件"));
+    dt.appendChild(el("div", "td-sub", "今の名簿の人には当たっているので、片付けの候補には入れていません"));
+    st.forEach(function (s) { dt.appendChild(el("div", "td-sub", "「" + s.name + "」　" + s.who.join("・") + "さんは名簿にいません")); });
+    box.appendChild(dt);
+  }
+  return n + st.length;
+}
+
 function renderClean() {
   var box = document.getElementById("cleanbody");
   box.textContent = "";
   box.appendChild(el("h1", "", "ルールの整理"));
-  if (!CL) { box.appendChild(el("div", "small", "読み込んでいます")); return; }
+  var tn = renderTidy(box);
+  if (!CL) return;
+  if (!CL.count) return;   // 何か月も測った片付けの候補が無い時は、上の山だけ
+  if (tn) box.appendChild(el("h2", "cl-sub", "何か月も表に効いていなかったルール"));
   box.appendChild(el("div", "cl-head", CL.head));
   if (clMsg) box.appendChild(el("div", "cl-done", clMsg));
   var g = CL.groups, n = 0;
@@ -1156,6 +1278,17 @@ function showWhy(name, day) {
 // ルールが多い時（この数より多い時）は、一覧の上に全部の件数と今月増えた数を出す（docs/rule-cleanup.md の3）
 var GROUP_AT = 15;
 var person = null;      // 表で押した人の名前（右の一覧で、その人の見出しを開く）
+// 一覧のいちばん上。ルールの件数（多い時だけ）と［ルールを整理する］
+function tidyEntry(box, stats) {
+  if (!S.cards || !S.cards.length) return;
+  var row = el("div", "tidyrow");
+  row.appendChild(el("span", "grpnote", stats));
+  var b = el("button", "", "ルールを整理する");
+  b.type = "button";
+  b.addEventListener("click", openClean);
+  row.appendChild(b);
+  box.appendChild(row);
+}
 // 片付けの候補があれば、何件あって、なぜ見るかを一言添えて［整理する］
 function cleanEntry(box) {
   var rsc = S.rule_stats;

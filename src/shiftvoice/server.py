@@ -12,6 +12,7 @@ API（すべて JSON）
 - POST /api/undo    {}                ひとつ戻す
 - POST /api/restore {"rule_id"}       片付けたルールを戻す（次に表を作る時から効く）
 - GET  /api/cleanup · POST /api/cleanup {"archive", "keep"}  ルールの整理（片付けの候補を種類ごとにまとめて決める）
+- GET  /api/tidy                      ルールの整理の3つの山（片付けてよい・まとめられる・ぶつかっている。tidy.py）。片付けは POST /api/cleanup
 - POST /api/distribute {}             表を配った（ここから休みの電話は待機の人に頼む直し）
 - POST /api/accept|refuse|cancel {"uid"}  ［了承をもらって直す］［断られた］［やめる］（accept は pick で休みを移す日の候補を選べる。残業などの穴埋めの［記録する］も accept）
 - POST /api/move    {"uid", "pick"}   ［休みを移す日を変える］で候補を選ぶ（表は了承まで変えない）
@@ -427,7 +428,8 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
         def _swap(self, root: Path, year: int, month: int) -> dict:
             """lock の中で session を差し替える。声の入口はそのまま使う（名前は文字にするたびに、新しい施設の名簿から渡す）。"""
             old = self.box.session
-            new = Session(Store(root), year, month, old.reader, now=old.now, who=old.who, builder=old.builder)
+            new = Session(Store(root), year, month, old.reader, now=old.now, who=old.who, builder=old.builder,
+                          tidier=old.tidier)
             new.open()
             self.box.session = new
             return self._state_out()
@@ -629,6 +631,16 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
             elif self.path == "/api/cleanup":
                 with self.lock:
                     self._json(200, self.box.session.cleanup())
+            elif self.path == "/api/tidy":
+                from .tidy import collect, finish
+                sess = self.box.session
+                try:
+                    with self.lock:
+                        base = collect(sess.store, sess.year, sess.month)
+                except Exception:   # 数えられない時も画面は開く
+                    return self._json(200, {"error": "ルールを読めませんでした。表へ戻って、もう一度開いてください"})
+                # Claude の見立ては置き場を読まないので、待つ間はほかの操作を止めない。公開版では呼ばない
+                self._json(200, finish(base, None if public is not None else getattr(sess, "tidier", None)))
             elif self.path.startswith("/api/why?"):
                 from urllib.parse import parse_qs, urlparse
                 q = parse_qs(urlparse(self.path).query)
@@ -869,7 +881,8 @@ def _take_lock(root: Path, url: str) -> Path | None:
     return lock
 
 
-def demo_session(data_dir: Path, *, reset: bool = False, reader=None, builder=None) -> tuple[Session, bool]:
+def demo_session(data_dir: Path, *, reset: bool = False, reader=None, builder=None,
+                 tidier=None) -> tuple[Session, bool]:
     from .store import Store
     seed = Path(__file__).resolve().parents[2] / "data" / "hidamari"
     store = Store.from_seed(seed, data_dir, reset=reset)
@@ -879,4 +892,7 @@ def demo_session(data_dir: Path, *, reset: bool = False, reader=None, builder=No
         reader = HaikuReader() if has_key else NoKeyReader()
     if builder is None:
         builder = SonnetBuilder() if has_key else None
-    return Session(store, 2026, 11, reader, builder=builder), has_key
+    if tidier is None and has_key:
+        from .tidy import SonnetTidier
+        tidier = SonnetTidier()
+    return Session(store, 2026, 11, reader, builder=builder, tidier=tidier), has_key

@@ -12,12 +12,14 @@ sys.path.insert(0, str(ROOT / "tests"))
 from conftest import FIXED_NOW, REPLIES  # noqa: E402
 from shiftvoice.reader import RecordedBuilder, RecordedReader  # noqa: E402
 from shiftvoice.server import demo_session, serve  # noqa: E402
+from shiftvoice.tidy import RecordedTidier  # noqa: E402
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 data = Path(args[0])
 port = int(args[1]) if len(args) > 1 else 8766
 session, _ = demo_session(data, reader=RecordedReader.from_file(REPLIES),
-                          builder=RecordedBuilder.from_file(REPLIES.parent / "builds.json"))
+                          builder=RecordedBuilder.from_file(REPLIES.parent / "builds.json"),
+                          tidier=RecordedTidier.from_file(REPLIES.parent / "tidy.json"))
 session.now = lambda: FIXED_NOW
 session.base_date = "2026-11-01"
 if "--act3" in sys.argv and not session.store.acceptances() or (
