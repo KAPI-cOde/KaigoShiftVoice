@@ -347,3 +347,21 @@ def test_later_count_request_moves_to_others_when_it_can():
     assert t["赤坂"].count("早") <= 5, t["赤坂"]
     assert t["赤坂"].count("早") + t["井上"].count("早") == 12, t
     assert check_table(rs, fac, staff, month, t) == []
+
+
+def test_later_count_request_raises_someone_from_zero():
+    """ならすルールがある月に、早番0回の赤坂さんへ「できれば早番6回以上」と言うと、赤坂さんは6回になり、ほかの人の3回は
+    減らない。直す前は、軽くする幅を前の回数で数えていたので0回の人は幅が0で、ほかの人から2回ずつしか移せず
+    [2,3,3,2,2] で頼みが外れた（Astra 2026-11-08）。"""
+    fac, _, _, _ = _small()
+    staff = [Staff(n, "東", ["早", "日", "遅"]) for n in NAMES]
+    month = Month(2026, 11, [], {n: ["日"] * 5 for n in NAMES})
+    base = {n: (["日"] * 30 if n == "赤坂" else ["早"] * 3 + ["日"] * 27) for n in NAMES}
+    ask = Rule("a6", 1, "赤坂さん 早番はできれば月6回以上", "count", "negotiable", {"shifts": ["早"], "min": 6}, who=["赤坂"])
+    rs = [_even_rule(), ask]
+    rr = resolve(fac, staff, rs, month, base, [ask])
+    assert rr.ok
+    t = rr.table
+    assert t["赤坂"].count("早") >= 6, [t[n].count("早") for n in NAMES]
+    assert [t[n].count("早") for n in NAMES[1:]] == [3] * 4, [t[n].count("早") for n in NAMES]
+    assert check_table(rs, fac, staff, month, t) == []

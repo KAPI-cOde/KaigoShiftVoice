@@ -250,6 +250,14 @@ def _moved_by_count(rules: list[Rule], facility: Facility, staff: list[Staff], m
     return out
 
 
+def even_free_helps(rules: list[Rule], facility: Facility, staff: list[Staff], month: Month,
+                    hint: dict[str, list[str]]) -> bool:
+    """even_free で軽くする人（前の表で回数のルールを破っていて、ならす勤務を数える人）がいるか。いなければ重いまま解くのと同じ。"""
+    moved = _moved_by_count(rules, facility, staff, month, hint)
+    return any(s.name in moved.get(sym, ()) and sym in s.can and (not r.who or s.name in r.who)
+               for r in rules if r.kind == "even" for sym in _syms_of(r.params.get("shifts")) for s in staff)
+
+
 def _even(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[Staff], days, weights: dict,
           month: Month, hint: dict[str, list[str]] | None = None, free: bool = False) -> None:
     """言われた勤務の人ごとの回数をならす目的（rule の even）。勤務ごとに、数える人の平均の切り捨て t を帯の下にして、
@@ -258,9 +266,10 @@ def _even(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[St
     ので、ほかの人をならすためにその人へ寄せもしない。本人の希望は外せない強さで先に効く。
     前の表（hint）があれば、数える人のその勤務の合計が前の表から離れた分も罰する。ならすのは人の間で移すことで、
     帯から外れた人を、勤務を消したり足したりして帯に入れると、移すより動かすマスが少なくて済むため。
-    free の時は、前の表でその勤務を数える回数のルールを破っている人たちの前の回数の合計までの増減を軽く（1回
-    EVEN_FREE_WEIGHT）罰し、それを超える分だけを重く罰する。ほかの人へ移せない時に、回数の頼みで減る分まで重く罰すると、
-    何回分も重なって相談できるルール1件より重くなり、頼みが外れるため。ただ軽くすると、移せる時も、2マス動く「移す」より
+    free の時は、前の表でその勤務を数える回数のルールを破っている人たちが、その勤務に入れる日数の合計までの増減を軽く
+    （1回 EVEN_FREE_WEIGHT）罰し、それを超える分だけを重く罰する。ほかの人へ移せない時に、回数の頼みで減る・増える分まで
+    重く罰すると、何回分も重なって相談できるルール1件より重くなり、頼みが外れるため。幅を前の回数にすると、0回の人に
+    下限の頼みを足した時に幅が0で増やせない。ただ軽くすると、移せる時も、2マス動く「移す」より
     1マスの「消す」が安くなる（1マス動かす罰は500）。そこで一言の直し（resolve）は、まず重いまま解き、頼みが外れた時だけ
     free で解き直す。"""
     w = weights.get("even", EVEN_WEIGHT)
@@ -288,7 +297,7 @@ def _even(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[St
             if hint:
                 was = {nm: sum(1 for d in ds if (hint.get(nm) or [])[d - 1:d] == [sym]) for nm in names}
                 old = sum(was.values())
-                slack = sum(was[nm] for nm in names if nm in moved.get(sym, ()))
+                slack = sum(n for (_, n, _, _), nm in zip(people, names) if nm in moved.get(sym, ()))
                 gap = m.new_int_var(0, len(people) * top, "")
                 m.add(gap >= total - old - slack)
                 m.add(gap >= old - slack - total)

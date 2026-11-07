@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from .build import StagedResult, solve_staged
 from .model import Facility, Month, Rule, Staff
 from .rules import _syms_of, broken, check_table, expand
-from .solver import requested_cells, solve_month
+from .solver import even_free_helps, requested_cells, solve_month
 
 WINDOWS = (3, 7, 14, None)
 
@@ -142,7 +142,7 @@ def resolve(facility: Facility, staff: list[Staff], rules: list[Rule], month: Mo
     was = {(b["rule"], b["key"]): b for b in off if b["flex"] == "operational" and b["rule"] in counts}
     hold = {k: b["value"] for k, b in was.items()}
     tries = []
-    has_even = any(r.kind == "even" for r in all_rules)
+    lighten = any(r.kind == "even" for r in all_rules) and even_free_helps(all_rules, facility, staff, month, base)
     for w in WINDOWS:
         if focus is None and w is not None:
             continue
@@ -158,13 +158,15 @@ def resolve(facility: Facility, staff: list[Staff], rules: list[Rule], month: Mo
                         fixed[(s.name, d)] = base[s.name][d - 1]
         r = solve_month(facility, staff, all_rules, month, hint=base, fixed_cells=fixed, max_dtime=dtime,
                         skip=skip, hold=hold)
-        if r.status == "ok" and has_even and any(b["rule"] in new_ids for b in r.broken):
-            # 回数をならすルールの総数の罰が重く、回数の頼みで減らす分をほかの人へ移せない時は頼みが外れる。その時だけ軽くして解き直す
+        secs = r.seconds
+        if r.status == "ok" and lighten and any(b["rule"] in new_ids for b in r.broken):
+            # 回数をならすルールの総数の罰が重く、回数の頼みで減らす・増やす分をほかの人へ移せない時は頼みが外れる。その時だけ軽くして解き直す
             r2 = solve_month(facility, staff, all_rules, month, hint=base, fixed_cells=fixed, max_dtime=dtime,
                              skip=skip, hold=hold, even_free=True)
+            secs += r2.seconds
             if r2.status == "ok" and sum(b["rule"] in new_ids for b in r2.broken) < sum(b["rule"] in new_ids for b in r.broken):
                 r = r2
-        tries.append({"window": w, "status": r.status, "seconds": round(r.seconds, 3)})
+        tries.append({"window": w, "status": r.status, "seconds": round(secs, 3)})
         if r.status != "ok":
             continue
         hard = [b for b in r.broken if b["flex"] in ("fixed", "wish", "operational") and (b["rule"], b["key"]) not in skip]
@@ -172,7 +174,7 @@ def resolve(facility: Facility, staff: list[Staff], rules: list[Rule], month: Mo
         worse = worse_note(was, r.broken)
         if (hard or new_broken or worse) and w is not None:
             continue  # 範囲の中では守れない。広げる
-        staged = StagedResult(r, [{"stage": 1, "status": "ok", "seconds": round(r.seconds, 3)}], note=worse or None)
+        staged = StagedResult(r, [{"stage": 1, "status": "ok", "seconds": round(secs, 3)}], note=worse or None)
         return ResolveResult(staged, w, changed_cells(base, r.table), tries)
     staged = solve_staged(facility, staff, all_rules, month, hint=base)
     if staged.ok:
