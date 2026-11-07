@@ -168,3 +168,38 @@ def test_夜勤に入れる人だけの上限も数える(nov):
             r.params = {**r.params, "min": None, "max": 3}
     x = shortages(fac, staff, rules, m)
     assert sorted((i["unit"], i["cap"]) for i in x) == [("東", 24), ("西", 22)], x
+
+
+# 落合さん（東）の研修の日。遅番は東で毎日1人（30回）、東のほかの7人は遅番を月3回まで（21回）にして、残り9回を落合さんに頼る。
+# 落合さんは、30日から研修の日・公休9日・夜勤3回（夜勤に入れる人の下限）・明け2日（末日の夜勤の明けは翌月）を引いた日だけ遅番に入れる
+OCHIAI_KEN = [2, 5, 9, 12, 16, 19, 23, 26]
+
+
+def _ochiai_ken(rules, staff, days, flex="fixed"):
+    caps = [Rule(id=f"t-late-{s.name}", ver=1, name=f"{s.name}さん 遅番は月3回まで", kind="count", flex="operational",
+                 params={"shifts": ["遅"], "max": 3}, who=[s.name], scope="rule")
+            for s in staff if s.unit == "東" and s.name != "落合"]
+    ken = Rule(id="t-ken", ver=1, name="落合さん 研修", kind="cell", flex=flex, params={"in": ["研"]}, who=["落合"],
+               when=days, scope="once")
+    return copy.deepcopy(rules) + caps + [ken]
+
+
+def test_研修の日がある人の遅番は_入れる日の数までしか数えない(nov):
+    """研修8日なら落合さんの遅番は8回までで、東の遅番が1回足りない。遅番の回数のルールが無い人も、入れる日の数で止まる。
+    段1は実際に作れない"""
+    from shiftvoice.solver import solve_month
+    fac, staff, m, rules = nov
+    rs = _ochiai_ken(rules, staff, OCHIAI_KEN)
+    x = shortages(fac, staff, rs, m)
+    assert [(i["unit"], i["symbol"], i["need"], i["cap"]) for i in x] == [("東", "遅", 30, 29)], x
+    assert "落合" not in [n for n, _ in x[0]["people"]]   # 上限を上げても足りないので、上げられそうな人に入れない
+    assert "東の遅番が1回足りません" in shortage_text(x)
+    assert solve_month(fac, staff, rs, m, stage=1).status == "infeasible"
+
+
+def test_組める月では_研修の日があっても足りないと言わない(nov):
+    """研修7日なら落合さんは遅番に9回入れて足りる（夜勤の1回を30日にすれば、段1で表が作れる。44秒かかるのでここでは解かない）。
+    相談できる研修の日は外せるので引かない"""
+    fac, staff, m, rules = nov
+    assert shortages(fac, staff, _ochiai_ken(rules, staff, OCHIAI_KEN[:7]), m) == []
+    assert shortages(fac, staff, _ochiai_ken(rules, staff, OCHIAI_KEN, flex="negotiable"), m) == []
