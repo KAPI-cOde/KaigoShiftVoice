@@ -2158,10 +2158,12 @@ function stopTalk() {
   var pcm = to16k(r.chunks, r.ctx.sampleRate);
   r.ctx.close();
   setBusy(true);
+  voiceWait(true);
   var headers = { "Content-Type": "application/octet-stream" };
   if (ask) headers["X-Answer-Uid"] = ask.uid;
   fetch("/api/voice", { method: "POST", headers: headers, body: pcm.buffer })
     .then(function (x) { return x.json(); }).then(function (res) {
+      voiceWait(false);
       setBusy(false);
       pttNote("");
       if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
@@ -2172,7 +2174,21 @@ function stopTalk() {
         chatTurn(res.text);
       }
       handle(res);
-    }).catch(fail);
+    }).catch(function (e) { voiceWait(false); fail(e); });
+}
+// 話し終えてから返事が来るまで（文字にして Claude が読む数秒）の吹き出し。文字ができるまで一言の吹き出しは作れないので、
+// 待つ間だけ別に出し、返事が来たら消す
+function voiceWait(on) {
+  var w = document.getElementById("vwait");
+  if (w) w.parentNode.removeChild(w);
+  if (!on) return;
+  w = el("div", "msg ai");
+  w.id = "vwait";
+  var q = el("div", "q2", "聞き取って、読んでいます");
+  q.setAttribute("role", "status");
+  w.appendChild(q);
+  document.getElementById("chatlog").appendChild(w);
+  chatScroll();
 }
 document.getElementById("talk").addEventListener("click", function () {
   if (busy) return;

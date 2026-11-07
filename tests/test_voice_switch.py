@@ -140,3 +140,17 @@ def test_一言をEnterや伝えるで送ったら入力欄の選択を外し_�
     body = html.split('document.getElementById("form").addEventListener("submit"', 1)[1].split("});", 1)[0]
     assert "document.activeElement.blur()" in body
     assert body.index("activeElement.blur()") < body.index("sendAnswer(text, inp)") < body.index('post("say"')
+
+
+def test_話し終えてから返事が来るまでチャットに待つ吹き出しを出し_返事か失敗で消す():
+    """［話す］で話すと、文字にして Claude が読む間（見本で約5秒）、チャットに何も出ず止まったように見えた（2026-11-08 の動画の撮影）。"""
+    html = (Path(__file__).resolve().parents[1] / "src" / "shiftvoice" / "static" / "index.html").read_text(encoding="utf-8")
+    body = html.split("function stopTalk()", 1)[1].split('document.getElementById("talk").addEventListener', 1)[0]
+    talk = body.split("function voiceWait(", 1)[0]
+    assert talk.index("voiceWait(true)") < talk.index('fetch("/api/voice"')
+    after = talk.split('fetch("/api/voice"', 1)[1]
+    ok, ng = after.split(".catch(", 1)
+    assert ok.index("voiceWait(false)") < ok.index("chatTurn(res.text)") < ok.index("handle(res)")
+    assert "voiceWait(false)" in ng.split("}", 1)[0]
+    wait = body.split("function voiceWait(", 1)[1]
+    assert 'getElementById("chatlog").appendChild' in wait and '"vwait"' in wait and "removeChild" in wait
