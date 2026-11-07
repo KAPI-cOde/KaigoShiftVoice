@@ -119,8 +119,11 @@ def test_rebuild_after_readme_phrases_counts_like_the_band_and_keeps_the_table(s
     assert _late_then_early(m.table) == 0
     r = sess.rebuild()   # 画面の黒いボタンと同じ回し方（種を変えて3回）
     assert r.kind == "applied", r.message
-    mm = re.search(r"外れていたルールは(\d+)件", r.message)
-    assert mm and int(mm.group(1)) == band, (band, r.message)
+    if band:
+        mm = re.search(r"外れていたルールは(\d+)件", r.message)
+        assert mm and int(mm.group(1)) == band, (band, r.message)
+    else:   # 押す前に外れが無い時は「0件から0件になりました」「なくなり」と言わない
+        assert "0件のまま" in r.message and "外れていた" not in r.message and "なくなり" not in r.message, r.message
     m = sess.store.month(2026, 11)
     assert _late_then_early(m.table) == 0
     for sym in ("早", "遅"):

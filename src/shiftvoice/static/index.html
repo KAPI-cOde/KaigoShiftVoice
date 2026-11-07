@@ -2187,8 +2187,9 @@ function voiceWait(on) {
   var q = el("div", "q2", "聞き取って、読んでいます");
   q.setAttribute("role", "status");
   w.appendChild(q);
-  document.getElementById("chatlog").appendChild(w);
-  chatScroll();
+  var log = document.getElementById("chatlog");
+  log.appendChild(w);
+  log.scrollTop = log.scrollHeight;   // chatScroll は長い返事の頭へ戻すので、待つ吹き出しが下に隠れる
 }
 document.getElementById("talk").addEventListener("click", function () {
   if (busy) return;

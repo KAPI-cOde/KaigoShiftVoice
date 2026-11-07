@@ -1503,8 +1503,11 @@ class Session:
             second = f"残った外れでいちばん大きいのは「{top}」で、［ひとつ戻す］で前の表に戻せます。"
         else:
             second = "外れているルールはなくなり、［ひとつ戻す］で前の表に戻せます。"
-        head = (f"一から作り直しました（外れていたルールは{len(was)}件から{now_n}件になりました）。" if before
-                else f"一から作り直しました（外れているルールは{now_n}件です）。")
+        head = (f"一から作り直しました（外れていたルールは{len(was)}件から{now_n}件になりました）。" if before and (was or left)
+                else f"一から作り直しました（外れているルールは{now_n}件です）。" if not before
+                else "一から作り直しました（外れているルールは0件のままです）。")
+        if before and not was and not left:
+            second = "［ひとつ戻す］で前の表に戻せます。"
         hole = (self._hole_offer(fac, staff, rules, m, st.choke[0])
                 if left and st.result.stage != 1 and st.choke else None)
         if hole:

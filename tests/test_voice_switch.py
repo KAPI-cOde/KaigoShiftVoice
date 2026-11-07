@@ -153,4 +153,5 @@ def test_話し終えてから返事が来るまでチャットに待つ吹き�
     assert ok.index("voiceWait(false)") < ok.index("chatTurn(res.text)") < ok.index("handle(res)")
     assert "voiceWait(false)" in ng.split("}", 1)[0]
     wait = body.split("function voiceWait(", 1)[1]
-    assert 'getElementById("chatlog").appendChild' in wait and '"vwait"' in wait and "removeChild" in wait
+    assert "log.appendChild(w)" in wait and '"vwait"' in wait and "removeChild" in wait
+    assert "log.scrollTop = log.scrollHeight" in wait   # 直前の返事が長くても、待つ吹き出しを見える所へ送る（Astra 3×3）
