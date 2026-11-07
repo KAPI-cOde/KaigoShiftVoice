@@ -496,6 +496,20 @@ def _thin_even(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: 
             "glow": None, "cells": []}
 
 
+def _even(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: Month, table) -> dict:
+    """人ごとの回数をならすルール（場面を持たない目的。solver._even）。数えるのはその勤務に入れる人だけ。"""
+    syms = _syms(orig.params["shifts"], fac)
+    days = _days(orig, month)
+    now = []
+    for sym in syms:
+        vs = [sum(1 for d in days if cell_value(table, month, s.name, d) == sym)
+              for s in _who(orig, staff) if sym in s.can]
+        if vs:
+            now.append(f"今の表では、{_names(fac, [sym])}は1人{min(vs)}〜{max(vs)}回（入れる{len(vs)}人）")
+    return {"line": f"{_who_no(orig.who)}{_names(fac, syms)}の回数を、ほかのルールを守れる範囲で、人ごとにできるだけそろえます"
+                    "（何回とは決めません）", "now": now, "glow": None, "cells": []}
+
+
 def _unknown(orig: Rule, fac: Facility) -> dict | None:
     """知らない種類。読める所（勤務と数）だけを ① にし、② ③ は出さない。"""
     p = orig.params or {}
@@ -516,7 +530,7 @@ def _unknown(orig: Rule, fac: Facility) -> dict | None:
 
 KINDS = {"coverage": _coverage, "count": _count, "max_run": _max_run, "sequence": _sequence,
          "weekday": _weekday, "cell": _cell, "unit_after": _unit_after, "unit_apart": _unit_apart,
-         "thin_even": _thin_even}
+         "thin_even": _thin_even, "even": _even}
 
 
 def rule_detail(rule_id: str, rules: list[Rule], fac: Facility, staff: list[Staff], month: Month,

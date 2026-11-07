@@ -33,6 +33,13 @@ LEAVE_STEP_WEIGHT = 2000
 THIN_EVEN_WEIGHT = 1000   # 300では回数が2〜8回のまま、3000では配慮の外れが増えた（17人の12月）
 THIN_EVEN_STEPS = 12
 HOLD_CELLS = 10   # 外れている回数を悪くしないために動かしてよいマスの目安（hold）
+# 言われた勤務の人ごとの回数をならす（rule の even。「早番も遅番も、可能な範囲で平均化して」）罰。k 回を超えた分ごとに
+# EVEN_WEIGHT。回数が増えるほど1回が重いので、多い人から少ない人へ移す方を選ぶ。相談できるルールの1件（5000）より軽く、
+# 前に足したルールを崩してまではならさない。一言の直しでは1マス動かすごとに keep_weight（500）がかかるので、1000 だと
+# 1回の差を移す（2マス）と得が無く、見本の11月で「遅番が偏らないように」が3〜5回で止まった。1500 で3〜4回、3000 まで
+# 上げても遅番の次の日の早番・ルールの外れは0のままだった（2026-11-08 に測った）
+EVEN_WEIGHT = 1500
+EVEN_STEPS = 20
 
 
 @dataclass
@@ -211,6 +218,29 @@ def _thin_even(m, x, penalties, rules: list[Rule], facility: Facility, staff: li
                     penalties.append(w * over)
 
 
+def _even(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[Staff], days, weights: dict) -> None:
+    """言われた勤務の人ごとの回数をならす目的（rule の even）。数えるのは、その勤務に入れる人だけ（入れない人を0回として
+    数えない）。勤務ごとに別にならす。名指しの回数のルールや本人の希望は、外せない強さか、この罰より重い罰で先に効く。
+    名指しのルールがある人も数えるのは、外すと計算がその人へ寄せて（上限まで入れて）ほかの人をならすため。"""
+    w = weights.get("even", EVEN_WEIGHT)
+    for r in rules:
+        if r.kind != "even":
+            continue
+        ds = list(r.when) if r.when else list(days)
+        for sym in sorted(_syms_of(r.params.get("shifts"))):
+            for s in staff:
+                if (r.who and s.name not in r.who) or sym not in s.can:
+                    continue
+                vs = [x[(s.name, d, sym)] for d in ds if (s.name, d, sym) in x]
+                if not vs:
+                    continue
+                c = sum(vs)
+                for k in range(1, min(len(vs), EVEN_STEPS)):
+                    over = m.new_int_var(0, len(vs), "")
+                    m.add(over >= c - k)
+                    penalties.append(w * over)
+
+
 def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month, *,
                 hint: dict[str, list[str]] | None = None, stage: int = 1,
                 fixed_cells: dict[tuple[str, int], str] | None = None,
@@ -313,6 +343,7 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
 
     _fair_leave(m, x, penalties, rules, facility, staff, days, weights)
     _thin_even(m, x, penalties, rules, facility, staff, days, weights)
+    _even(m, x, penalties, rules, facility, staff, days, weights)
 
     # 質の物差し（施設の設定。既定は控えめ）
     work = set(facility.workday_symbols())

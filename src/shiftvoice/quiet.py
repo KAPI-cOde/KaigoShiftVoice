@@ -33,13 +33,13 @@ def _path(store: Store, year: int, month: int):
 
 
 def candidates(store: Store, year: int, month: int) -> list[str]:
-    """静かかどうかを数える札の id。毎月のルールで、当番と今月だけの頼みを除く。なるべく平等に入れる有給と手薄なユニットの平均化は場面を持たないので
+    """静かかどうかを数える札の id。毎月のルールで、当番と今月だけの頼みを除く。なるべく平等に入れる有給・手薄なユニットの平均化・回数をならすルールは場面を持たないので
     数えない（数えると、3か月後に「今の名簿にいない人のルール」と言われ、片付けをすすめられた）。"""
     last = calendar.monthrange(year, month)[1]
     span = (f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last:02d}")
     return [rid for rid, r in store.ledger().rules_at(between=span).items()
             if r.scope == "rule" and r.kind != "layer" and not r.meta.get("premise") and not r.params.get("fair")
-            and r.kind != "thin_even"]
+            and r.kind not in ("thin_even", "even")]
 
 
 QUIET_DTIME = 5.0   # 作り直し1件の計算の量（表を作る時の20より小さく。静かかどうかを見るだけなので）

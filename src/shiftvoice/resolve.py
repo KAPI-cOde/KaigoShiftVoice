@@ -71,8 +71,8 @@ def focus_days(new_rules: list[Rule], facility: Facility, staff: list[Staff], mo
         if r.kind == "cell" and r.when:
             days.update(r.when)
             continue
-        if r.kind in ("count", "max_run", "coverage"):
-            return None
+        if r.kind in ("count", "max_run", "coverage", "even"):
+            return None   # 回数をならす（even）は場面を持たないので、破れた日からは決まらない。ひと月を動かす
         for inst in expand(r, facility, staff, month):
             if broken(inst, base, month):
                 days.update(t.day for t in inst.terms if t.day >= 1)

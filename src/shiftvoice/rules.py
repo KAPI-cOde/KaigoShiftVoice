@@ -175,7 +175,7 @@ def thin_counts(rule: Rule, staff: list[Staff], month: Month, table: dict[str, l
 
 def _params_overlap(k: str, p: dict, q: dict) -> bool:
     """同じ種類の2つのルールの中身が、同じ勤務・曜日・並びに重なるか（人は見ない）。"""
-    if k in ("count", "max_run"):
+    if k in ("count", "max_run", "even"):
         return bool(_syms_of(p.get("shifts")) & _syms_of(q.get("shifts")))
     if k == "weekday":
         return (bool(set(p.get("weekdays") or []) & set(q.get("weekdays") or []))
@@ -777,6 +777,8 @@ def _expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) ->
                     out.append(Instance(rule, f"{s.name}/0", terms, None, 1))
     elif k == "thin_even":
         pass   # 場面を持たない。一から作る時の目的だけ（solver._thin_even）
+    elif k == "even":
+        pass   # 場面を持たない（外れが無い）。人ごとの回数をならす目的だけ（solver._even）
     elif k == "unit_apart":
         # その勤務の人を1つのユニットに固めない。どのユニットの外にも1人はいる（2人以上なら2つ以上のユニットに分かれる）
         syms = _syms(p["shifts"], facility)

@@ -39,15 +39,15 @@ HARD_AT = {"fixed": {1, 2, 3, 4}, "operational": {1, 2}, "wish": {1, 3}, "negoti
 STRENGTH = {"fixed": "動かせない", "operational": "運用の都合", "wish": "本人の希望", "negotiable": "相談できる"}
 KIND = {"coverage": "1日の人数", "count": "月の回数", "sequence": "勤務の並び", "max_run": "続けて働く日数",
         "weekday": "曜日の頼み", "cell": "日付のマス", "unit_after": "明け番とユニット", "unit_apart": "ユニットに分ける",
-        "thin_even": "手薄なユニットの平均化", "layer": "表に無い当番"}
+        "thin_even": "手薄なユニットの平均化", "even": "回数をならす", "layer": "表に無い当番"}
 AI_LIMIT = 10      # 山ごとに出す AI の見立ての数の上限
 LINE_MAX = 90
 
 
 def _candidate(r: Rule) -> bool:
     """片付けの候補にできるルール。毎月のルールだけ（今月だけのルールは月が終われば効かない）。
-    なるべく平等に入れる有給と手薄なユニットの平均化は場面を持たないので、当てはまる場面の有無で言えない。"""
-    return (r.scope == "rule" and r.kind not in ("layer", "thin_even") and not r.meta.get("premise")
+    なるべく平等に入れる有給・手薄なユニットの平均化・回数をならすルールは場面を持たないので、当てはまる場面の有無で言えない。"""
+    return (r.scope == "rule" and r.kind not in ("layer", "thin_even", "even") and not r.meta.get("premise")
             and not r.params.get("fair"))
 
 
@@ -528,6 +528,8 @@ def _text(r: Rule, mk: Masker) -> str:
         return f"{_syms_text(p.get('shifts'))}の人を1つのユニットに固めない"
     if k == "thin_even":
         return "手薄なユニットで働く回数を、できる範囲で平均化する"
+    if k == "even":
+        return f"{who}の{_syms_text(p.get('shifts'))}の回数を、それぞれできるだけそろえる（数は決めない）"
     return KIND.get(k, "ルール")
 
 
