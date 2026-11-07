@@ -206,3 +206,49 @@ def test_everyone_mark_does_not_override_a_name_said_without_roster_match(store)
     with pytest.raises(Clarify):   # 名簿に無い呼び名を言った一言は、全員の印があっても全員にしない
         to_proposal([{"type": "count_limit", "shift": "夜", "max": 4, "everyone": True}], "たくくん、夜勤は月4回まで",
                     store.facility(), store.staff(), store.month(2026, 11))
+
+
+def _rename_chiba_to_full_name(sess):
+    """名簿の千葉を、姓と下の名前の千葉花子にする（実際の施設の名簿のように下の名前まで書いた形）。"""
+    for f in sess.store.root.rglob("*.json"):
+        f.write_text(f.read_text(encoding="utf-8").replace("千葉", "千葉花子"), encoding="utf-8")
+
+
+def test_rule_names_are_not_sent_only_their_contents(sess):
+    _rename_chiba_to_full_name(sess)
+    led = sess.store.ledger()
+    led.append("add", rule={"id": "r900", "name": "花子は夜勤なし（森田の希望）", "kind": "count", "flex": "wish",
+                            "params": {"shifts": ["夜"], "max": 0}, "who": ["千葉花子"], "when": None, "scope": "rule"})
+    sess.store.save_ledger(led)
+    sess.say(LATE4)
+    assert len(sess.reader.reread_sent) == 1
+    text = _sent_text(sess.reader)
+    assert "花子" not in text and "森田" not in text
+    ctx = json.loads(sess.reader.reread_sent[-1].messages[0]["content"].split("\n")[0].removeprefix("施設の文脈 "))
+    r900 = next(r for r in ctx["rules"] if r["id"] == "r900")
+    assert r900["who"] == ["職員16"] and r900["params"] == {"shifts": ["夜"], "max": 0}   # 中身は番号と記号で渡す
+
+
+def test_part_of_a_roster_name_left_in_what_is_sent_stops_the_reread(sess, monkeypatch):
+    _rename_chiba_to_full_name(sess)
+    real = Session._reread_context
+
+    def leaky(self, masker, tokens):
+        ctx = real(self, masker, tokens)
+        ctx["rules"].append({"id": "x", "kind": "count", "note": "花子の夜勤"})
+        return ctx
+    monkeypatch.setattr(Session, "_reread_context", leaky)
+    sess.say(LATE4)
+    assert sess.reader.reread_sent == []
+
+
+def test_given_name_without_honorific_is_not_read_as_everyone(sess):
+    _rename_chiba_to_full_name(sess)
+    t = "花子は日勤を月1回まで"
+    rule = {"type": "count_limit", "staff": None, "shift": "日", "min": None, "max": 1, "until_day": None,
+            "strength": "operational", "reason": None}
+    sess.reader = RecordedReader({t: json.dumps({"items": [rule]})},
+                                 {t: json.dumps({"items": [{**rule, "everyone": True}]})})
+    r = sess.say(t)   # 名簿の名前の一部（下の名前）がある一言は、全員のルールにしない
+    assert sess.reader.reread_sent == []
+    assert r.kind == "ask" and r.message.startswith("誰の頼みか読み取れませんでした")

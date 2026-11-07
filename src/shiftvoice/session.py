@@ -554,29 +554,72 @@ class Session:
             asked = next((it.get("question") for it in items if it.get("type") == "unclear"), None)
             if e.need is None and (any(w in str(e) for w in self.STUCK_WORDS) or (asked is not None and str(e) == asked)):
                 return str(e)
-            if str(e) == WHO_UNKNOWN + EVERYONE_HINT and not re.search(r"職員\d{2}", masked):
-                return str(e)
+            if str(e) == WHO_UNKNOWN + EVERYONE_HINT and not re.search(r"職員\d{2}", masked) \
+                    and not self._names_left(masked):
+                return str(e)   # 人を指す語が1つも無い一言だけ、全員と読めるかを読み直す
             return None
         except Exception:  # noqa: BLE001 想定外の例外は今までどおり _safe_propose に任せる
             return None
         return None
 
     def _reread_context(self, masker: Masker, tokens: dict[str, str]) -> dict:
-        """読み直しへ添える施設の文脈。人は職員NN、ユニットはユニットN。名前を伏せきれないルールは名前を出さない。"""
+        """読み直しへ添える施設の文脈。人は職員NN、ユニットはユニットN。
+        ルールは名前の文を送らず、中身（種類・強さ・期間・人・日・params）から組み立てる。名前の文には、伏せきれない
+        下の名前だけの呼び方や名簿にいない人の名前が入りうるため。params の文字は、勤務の記号・英字の決まった値だけを残す。"""
         fac = self.store.facility()
+        spoken = {st.symbol for st in fac.shift_types if getattr(st, "spoken", False)}
+        to_token = {sym: tok for tok, sym in tokens.items()}
+
+        def safe(v):
+            if v is None or isinstance(v, (bool, int, float)):
+                return v
+            if isinstance(v, str):
+                if v in masker.to_code:
+                    return masker.to_code[v]
+                if v in masker.unit_code:
+                    return masker.unit_code[v]
+                if v in spoken:
+                    return to_token.get(v)
+                return v if v in fac.symbols or re.fullmatch(r"[A-Za-z_=<>!]+", v) else None
+            if isinstance(v, list):
+                return [safe(x) for x in v]
+            if isinstance(v, dict):
+                return {k: safe(x) for k, x in v.items() if re.fullmatch(r"[A-Za-z_]+", str(k))}
+            return None
+
         rules = []
         for r in self.store.ledger().rules_at(between=self._span()).values():
-            name, unknown = masker.mask(r.name)
-            rules.append({"id": r.id, "name": None if unknown else name, "kind": r.kind, "strength": r.flex,
-                          "period": "毎月" if r.scope == "rule" and not r.meta.get("until") else "今月だけ",
-                          "who": [masker.to_code.get(w, "職員??") for w in r.who] if r.who else "全員"})
-        spoken = {st.symbol for st in fac.shift_types if getattr(st, "spoken", False)}
+            one = {"id": r.id, "kind": r.kind, "strength": r.flex,
+                   "period": "毎月" if r.scope == "rule" and not r.meta.get("until") else "今月だけ",
+                   "who": [masker.to_code.get(w, "職員??") for w in r.who] if r.who else "全員",
+                   "days": r.when, "params": safe(r.params)}
+            if r.meta.get("except_who"):
+                one["except"] = [masker.to_code.get(w, "職員??") for w in r.meta["except_who"]]
+            rules.append(one)
         shifts = [{"symbol": st.symbol, "name": st.name, "kind": st.kind} for st in fac.shift_types if st.symbol not in spoken]
         shifts += [{"symbol": tok, "name": tok, "kind": "work"} for tok in tokens]
         days = calendar.monthrange(self.year, self.month)[1]
         return {"month": {"year": self.year, "month": self.month, "days": days},
                 "units": list(masker.unit_code.values()),
                 "staff": masker.roster_codes(), "shifts": shifts, "rules": rules}
+
+    def _people_words(self) -> set[str]:
+        """人を指すかもしれない語。名簿・ほかの月の表・ルールの人の名前と呼び名の、2字以上の部分の全部
+        （姓だけ・下の名前だけ・名簿から外れた人の名前も拾う）。"""
+        names = set()
+        for s in self.store.staff():
+            names.update(x for x in (s.name, s.call) if x)
+        for o in self.store.months():
+            names.update((o.table or {}).keys())
+        for r in self.store.ledger().rules_at().values():
+            names.update(r.who or [])
+            names.update(r.meta.get("except_who") or [])
+        return {n[i:j] for n in names for i in range(len(n)) for j in range(i + 2, len(n) + 1)}
+
+    def _names_left(self, text: str, words: set[str] | None = None) -> bool:
+        """伏せた後の文に、人を指すかもしれない語か、名簿にない「〇〇さん」などが残っているか。"""
+        words = self._people_words() if words is None else words
+        return any(w in text for w in words) or bool(Masker(self.store.staff(), self.store.facility()).mask(text)[1])
 
     def _reread_if_stuck(self, u: dict, items: list[dict], raw: list[dict], masked: str, tokens: dict[str, str],
                          masker: Masker) -> tuple[list[dict], dict]:
@@ -590,9 +633,8 @@ class Session:
             return items, {}
         ctx = self._reread_context(masker, tokens)
         payload = json.dumps([ctx, raw, masker.mask(why)[0], masked], ensure_ascii=False)
-        staff = self.store.staff()
-        if any(s.name in payload or (s.call and s.call in payload) for s in staff):
-            return items, {}   # 名前が1つでも残る文は送らない（伏せ方の穴。最初の読みの聞き返しのまま）
+        if self._names_left(payload):
+            return items, {}   # 名前の一部でも残る文は送らない（伏せ方の穴。最初の読みの聞き返しのまま）
         try:
             got = reread(masked, ctx, first=raw, why=masker.mask(why)[0])
         except ReadError:
