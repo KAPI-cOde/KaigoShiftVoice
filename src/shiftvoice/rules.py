@@ -136,9 +136,9 @@ def thin_counts(rule: Rule, staff: list[Staff], month: Month, table: dict[str, l
     out = {s.name: 0 for s in staff}
     for names in units.values():
         for d in range(month.days):
-            if not any(table[n][d] in none for n in names):
+            if not any(n in table and table[n][d] in none for n in names):
                 for n in names:
-                    out[n] += table[n][d] in work
+                    out[n] += n in table and table[n][d] in work
     return out
 
 
@@ -834,7 +834,8 @@ def is_day_off_wish(rule: Rule, facility: Facility) -> bool:
 
 def cell_value(table: dict[str, list[str]], month: Month, staff: str, day: int) -> str | None:
     if day >= 1:
-        return table[staff][day - 1]
+        row = table.get(staff)   # 名簿にいて表に行が無い人（先の月から加わる職員）は、どの勤務にも数えない
+        return row[day - 1] if row is not None else None
     tail = month.prev_tail.get(staff, [])
     idx = len(tail) - 1 + day  # day=0 → 末日
     return tail[idx] if 0 <= idx < len(tail) else None
