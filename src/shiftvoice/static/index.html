@@ -411,6 +411,7 @@
       <button type="button" id="talk" style="display:none">話す</button>
       <button type="submit" id="send">伝える</button>
     </form>
+    <div class="hint" id="webvoicenote" style="display:none"></div>
     <div class="hint" id="pubnote" style="display:none"></div>
     <div class="hint" id="hint">例「岡田さん、15と16は法事で休み」「遅番の次の日に早番はきついから、やめてあげて」「外れているルールは？」。名簿の名前は番号に伏せてから Claude へ送ります。直した後も［ひとつ戻す］で戻せます。</div>
   </section>
@@ -2088,9 +2089,12 @@ function doUndo() {
 }
 document.getElementById("undo").addEventListener("click", doUndo);
 
-// 声の入口。マイクの音を16kHz・モノラルに直してこのパソコンのサーバーへ送る（外へは送らない）
+// 声の入口。マイクの音を16kHz・モノラルに直してこのパソコンのサーバーへ送る（外へは送らない）。
+// 公開版だけは、ブラウザの音声認識（Web Speech API）で文字にし、打った一言と同じ道で送る（webVoice）
 var rec = null;
+var webVoice = false;
 function startTalk() {
+  if (webVoice) { startWebTalk(); return; }
   navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
     var ctx = new (window.AudioContext || window.webkitAudioContext)();
     var src = ctx.createMediaStreamSource(stream);
@@ -2122,6 +2126,7 @@ function to16k(chunks, rate) {
   return out;
 }
 function stopTalk() {
+  if (rec && rec.web) { stopWebTalk(); return; }
   var r = rec; rec = null;
   var b = document.getElementById("talk");
   b.textContent = "話す"; b.classList.remove("on");
@@ -2153,6 +2158,52 @@ document.getElementById("talk").addEventListener("click", function () {
   if (rec) stopTalk(); else startTalk();
 });
 
+// 公開版の声（作者 2026-11-08「声が体験できないと意味がない」）。文字はブラウザが作り（Chrome は Google へ送る）、
+// できた文字は入力欄に入れて［伝える］と同じ道で送る。聞き違いの直し・名前を伏せる・回数の上限は、打った一言と同じくサーバーが行う
+function webSR() { return window.SpeechRecognition || window.webkitSpeechRecognition || null; }
+function startWebTalk() {
+  var SR = webSR();
+  var sr = new SR();
+  sr.lang = "ja-JP"; sr.continuous = true; sr.interimResults = true;
+  var r = { web: sr, finals: [], interim: "", failed: "", done: false };
+  sr.onresult = function (e) {
+    r.interim = "";
+    for (var i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) r.finals.push(e.results[i][0].transcript); else r.interim += e.results[i][0].transcript;
+    }
+    if (rec === r) pttNote("聞いています　" + r.finals.join("") + r.interim);
+  };
+  sr.onerror = function (e) {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture")
+      r.failed = "マイクが使えません。ブラウザのマイクの許可を確かめるか、打って伝えてください";
+    else if (e.error === "network") r.failed = "ブラウザの音声認識につながりませんでした。打って伝えてください";
+  };
+  sr.onend = function () { webDone(r); };
+  rec = r;
+  var b = document.getElementById("talk");
+  b.textContent = pttKey ? "聞いています" : "話し終えた"; b.classList.add("on");
+  if (pttKey) pttNote("聞いています。離すと直します");
+  try { sr.start(); } catch (ex) { r.failed = "声を聞き始められませんでした。打って伝えてください"; webDone(r); return; }
+  if (pttKey && !pttHeld) stopTalk();   // 聞き始める前にスペースを離した
+}
+function stopWebTalk() {
+  var r = rec;
+  pttNote("文字にしています");
+  try { r.web.stop(); } catch (ex) { webDone(r); }
+}
+function webDone(r) {
+  if (r.done) return;
+  r.done = true;
+  if (rec === r) rec = null;
+  pttKey = false;
+  var b = document.getElementById("talk"); b.textContent = "話す"; b.classList.remove("on");
+  var text = (r.finals.join("") + r.interim).trim();
+  if (!text) { pttNote(r.failed || "聞き取れませんでした。もう一度話すか、打って伝えてください"); return; }   // チャットの問いは消さない
+  pttNote("");
+  document.getElementById("input").value = text;
+  document.getElementById("form").requestSubmit();
+}
+
 // スペースキーを押している間だけ聞き、離すと文字にして直す（作者「指摘は声でサクサク」2026-11-06）。
 // 文字を打っている欄の中では効かない。押したまま別の窓へ移った時も止める
 var pttHeld = false, pttKey = false;
@@ -2166,7 +2217,7 @@ function pttOff(ev) {
   var a = document.activeElement;
   var tag = a && a.tagName;
   return ev.key !== " " || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (a && a.isContentEditable) ||
-    !S || !S.has_voice || document.getElementById("v11").style.display === "none";
+    !S || !(S.has_voice || webVoice) || document.getElementById("v11").style.display === "none";
 }
 window.addEventListener("keydown", function (ev) {
   if (pttOff(ev)) return;
@@ -3008,6 +3059,18 @@ function setupPublic(pub) {
   note.style.display = "block";
   var kb = document.getElementById("keybar");
   kb.textContent = "この公開版には Claude の鍵が入っていないので、一言で直すことはできません。表と翌月の案は見られます";
+  var vn = document.getElementById("webvoicenote");
+  if (!pub.closed && S && S.has_key !== false) {
+    if (webSR()) {
+      webVoice = true;
+      document.getElementById("talk").style.display = "";
+      document.getElementById("ptt").style.display = "";
+      vn.textContent = "公開版の声は、お使いのブラウザの音声認識で文字にします。文字にした後は、打った一言と同じく名前を番号に伏せてから Claude へ送ります";
+    } else {
+      vn.textContent = "このブラウザでは声が使えません。打って伝えてください（Chrome か Edge なら、スペースを押している間に話せます）";
+    }
+    vn.style.display = "block";
+  }
   if (pub.closed) {
     note.textContent = pub.closed_message;
     document.getElementById("input").disabled = true;
