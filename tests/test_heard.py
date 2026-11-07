@@ -296,3 +296,31 @@ def test_live_reader_does_not_read_these_as_report_or_cancel(masked, types):
     from shiftvoice.reader import HaikuReader
     items = HaikuReader().read(masked)
     assert {it["type"] for it in items} <= types, items
+
+
+@pytest.mark.parametrize("heard, want", [
+    ("連勤は錬金4日まで", "連勤は連勤4日まで"),
+    ("年金は4日までにして", "連勤は4日までにして"),
+    ("日輪は月10回まで", "日勤は月10回まで"),
+    ("小川さん12日悠久", "小川さん12日有給"),
+    ("絶大に遅番の次の日に早番はダメ", "絶対に遅番の次の日に早番はダメ"),
+    ("石田さん9日希望給", "石田さん9日希望休"),
+    ("石田さん9日希望求", "石田さん9日希望休"),
+    ("はや版は2日まで", "早番は2日まで"),
+    ("遅版の次の日", "遅番の次の日"),
+    ("菊池さん9日休み？", "菊池さん9日休み"),
+    ("遅番が3日も続くの早めて", "遅番が3日も続くのやめて"),
+])
+def test_声の測りで集まった聞き違いをそろえる(heard, want):
+    """AI の声（作者の声の複製・Mac の読み上げ）を音声認識に通した時の聞き違い（2026-11-08 の声の測り）"""
+    assert fix_heard(heard, HIDAMARI) == want
+
+
+@pytest.mark.parametrize("text", ["年金の話は来月", "小川さんの年金の手続きで12日休み", "日勤は月10回まで", "本当に続くの？の件は別"])
+def test_聞き違いでない言葉は変えない(text):
+    want = text[:-1] if text.endswith("？") else text
+    assert fix_heard(text, HIDAMARI) == want
+
+
+def test_施設に無い勤務の聞き違いは直さない():
+    assert fix_heard("日輪は月10回まで", _fac("早番", "遅番", "夜勤")) == "日輪は月10回まで"
