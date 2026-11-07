@@ -70,3 +70,18 @@ def test_希望休の日に動かせない有給があっても_守れなかっ�
     assert any("20日" in n for n in notes)
     kept = next(x for x in out if x.id == "w1")
     assert kept.when == [25]   # 16日と20日は希望休のマスの頼みからは外す（有給・日勤と1マスでぶつかるため）
+
+
+def test_明けを公と書く施設で_有給の希望休の日の前が夜勤なら明けになると知らせる():
+    """希望休の日に動かせない有給、その前の日に動かせない夜勤。有給の知らせを止めた時に、明けになる知らせまで消えた
+    （Astra 2026-11-07。2×8）"""
+    from shiftvoice.build import impossible_wishes
+    f = Facility("x", "x", ["東"], [ShiftType("日", "日勤", "work", start="09:00", hours=9),
+                                     ShiftType("夜", "夜勤", "work", start="16:30", hours=16),
+                                     ShiftType("公", "公休", "rest"),
+                                     ShiftType("有", "有給", "leave", on_request_only=True)], {})
+    wish = Rule("w1", 1, "職員01さん 10・20日 休み", "cell", "wish", {"in": ["公"]}, who=["職員01"], when=[10, 20])
+    leave = Rule("l1", 1, "職員01さん 10日 有給", "cell", "fixed", {"in": ["有"]}, who=["職員01"], when=[10])
+    night = Rule("n1", 1, "職員01さん 9日 夜勤", "cell", "fixed", {"in": ["夜"]}, who=["職員01"], when=[9])
+    _, notes = impossible_wishes(f, [wish, leave, night], NOV)
+    assert any("10日は前の日が夜勤" in n for n in notes)

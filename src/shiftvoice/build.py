@@ -120,12 +120,17 @@ def impossible_wishes(facility: Facility, rules: list[Rule], month: Month) -> tu
         elif 1 in r.when and tail and nights and tail[-1] in nights and want and want <= rest:
             bad.add(1)
             notes.append(f"{who}さんの1日は前の月の夜勤の明けなので、希望休を入れられません")
+        night_pins = {d for o in rules if nights and o.kind == "cell" and o.flex == "fixed" and o.who == [who]
+                      and set(o.params.get("in") or []) and set(o.params["in"]) <= nights for d in (o.when or [])}
         for o in rules:   # 後から動かせない形で頼んだマス（希望休の日の「10日の〇〇さん、日8に」）。頼んだ方を残す
             if o.kind == "cell" and o.flex == "fixed" and o.who == [who] and o.params.get("in") and not want & set(o.params["in"]):
                 for d in set(o.when or []) & set(r.when) - bad:
                     bad.add(d)
-                    if not (want <= off_syms and set(o.params["in"]) <= off_syms):   # 希望休の日の有給は、その日も休みなので言わない
+                    if not (want <= off_syms and set(o.params["in"]) <= off_syms):
                         notes.append(f"{who}さんの{d}日は「{o.name}」があるので、希望休を守れませんでした")
+                    elif d - 1 in night_pins:   # 有給でも、前の日が動かせない夜勤なら明けになる（明けを公と書く施設。Astra）
+                        notes.append(f"{who}さんの{d}日は前の日が夜勤なので、希望休が明けになります")
+                    # 希望休の日の有給は、その日も休みなので「守れませんでした」とは言わない
         if set(r.when) - bad:
             r = replace(r, when=[d for d in r.when if d not in bad]) if bad else r
             out.append(r)
