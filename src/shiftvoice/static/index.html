@@ -1744,6 +1744,7 @@ document.getElementById("form").addEventListener("submit", function (ev) {
   var inp = document.getElementById("input");
   var text = inp.value.trim();
   if (!text || busy) return;
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();   // 送った後に欄が選ばれたままだと、スペースが欄に入って話せない
   if (ask) { sendAnswer(text, inp); return; }   // 聞き返しの間は、答えとして使われた時だけ入力欄を消す
   inp.value = "";
   saidList.push(text);

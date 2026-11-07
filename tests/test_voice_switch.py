@@ -132,3 +132,11 @@ def test_一言や答えや戻すの後の返事にも声の印が入り_スペ�
     assert answered["state"]["has_voice"] is True
     undone = call(base, "/api/undo", {})                                             # ［ひとつ戻す］
     assert undone["state"]["has_voice"] is True
+
+
+def test_一言をEnterや伝えるで送ったら入力欄の選択を外し_スペースですぐ話せる():
+    """欄が選ばれたままだと pttOff が止め、スペースが欄に空白として入る（作者 2026-11-07）。送る処理の中で blur する。"""
+    html = (Path(__file__).resolve().parents[1] / "src" / "shiftvoice" / "static" / "index.html").read_text(encoding="utf-8")
+    body = html.split('document.getElementById("form").addEventListener("submit"', 1)[1].split("});", 1)[0]
+    assert "document.activeElement.blur()" in body
+    assert body.index("activeElement.blur()") < body.index("sendAnswer(text, inp)") < body.index('post("say"')
