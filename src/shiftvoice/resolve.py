@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 from .build import StagedResult, solve_staged
 from .model import Facility, Month, Rule, Staff
-from .rules import broken, check_table, expand
+from .rules import _syms_of, broken, check_table, expand
 from .solver import requested_cells, solve_month
 
 WINDOWS = (3, 7, 14, None)
@@ -44,6 +44,10 @@ def carry_rules(facility: Facility, base: dict[str, list[str]], rules: list[Rule
             if sym in leave and any(r.kind == "cell" and "in" in r.params and sym not in r.params["in"] and
                                     (not r.who or name in r.who) and (not r.when or d in r.when) for r in rules):
                 continue   # 有給のマスを別の勤務にする頼み（有給の日の言い直し・元の勤務に戻す）
+            if sym in leave and any(r.kind == "count" and r.who and name in r.who and r.params.get("max") is not None
+                                    and sym in _syms_of(r.params.get("shifts")) and r.params["max"] < row.count(sym)
+                                    for r in rules):
+                continue   # 「〇〇さんは有給なしで」。残すと回数の上限とぶつかり、段を下げても有給が残った
             out.append(Rule(id=f"c-{name}-{d}", ver=1, name=f"表にある{sym}（{name}さん {d}日）",
                             kind="cell", flex="fixed", params={"in": [sym]}, who=[name], when=[d],
                             scope="once", meta={"carry": True}))

@@ -83,7 +83,7 @@ def _wish_broken(r: SolveResult) -> int:
 
 
 def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month,
-               counts: dict[str, int]) -> GiveBack:
+               counts: dict[str, int], last_leave: dict[str, int] | None = None) -> GiveBack:
     gs = settings(facility)
     work = set(facility.workday_symbols())
     yu = gs["leave"]
@@ -91,7 +91,8 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
     # 敵対レビュー 2026-11-03）。段1で作れる時は、これまでと同じ表になる
     from .build import patience_of
     patience = patience_of(facility)   # 一から作るので、段1が時間切れなら長く探す（build.PATIENCE_DTIME）
-    staged = solve_staged(facility, staff, rules, month, patience=patience, explain=True)
+    staged = solve_staged(facility, staff, rules, month, patience=patience, explain=True, even_leave=True,
+                          last_leave=last_leave)
     base = staged.result
     # 返さない案を長く探して作った時は、返す案も同じ量で探す（A21。同じ計算の量で作る。少ないと返す案が作れない）
     give_dtime = patience if any(s.get("patience") and s["status"] == "ok" for s in staged.stages) else None
@@ -130,6 +131,14 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
                                 kind="max_run", flex="fixed",
                                 params={"shifts": "work", "max": run0[n] - gs["shorten_run"]},
                                 who=[n], when=None, scope="once"))
+        if any(r.kind == "count" and r.params.get("fair") for r in rules):
+            # なるべく平等に入れた有給は返す案の計算では開かないので、人ごとの日数のまま残す（返す人だけ増やす）
+            aimed = {r.who[0] for r in out if r.id.startswith("g-leave-")}
+            for n in names:
+                if leave0[n] and n not in aimed:
+                    out.append(Rule(id=f"g-keep-{n}", ver=1, name=f"{n}さん 有給{leave0[n]}日のまま", kind="count",
+                                    flex="fixed", params={"shifts": [yu], "min": leave0[n], "max": leave0[n]},
+                                    who=[n], when=None, scope="once"))
         return out
 
     def extra(m, x, penalties):

@@ -17,13 +17,21 @@ from ortools.sat.python import cp_model
 
 from .interval import short_pairs
 from .model import Facility, Month, Rule, Staff
-from .rules import Instance, _syms_of, cell_value, check_table, expand, is_day_off_wish, with_overrides
+from .rules import Instance, _syms_of, cell_value, check_table, expand, is_day_off_wish, is_fair_on, with_overrides
 
 DEFAULT_WEIGHTS = {"wish": 100000, "operational": 20000, "negotiable": 5000}
 # 希望休（rules.is_day_off_wish）の重み。本人の希望を外す段（段2・段4）でも、ほかの本人の希望（曜日の勤務の希望など）と
 # 運用の都合より後に外す（作者 2026-11-07「希望休は原則ハードルール。どうしても組めない時のみ相談する」）。前は本人の希望と
 # 同じ重みで、曜日の希望を残して希望休を外すことがあった
 DAY_OFF_WISH_WEIGHT = 1000000
+# なるべく平等に入れる有給（count の fair）の罰。1人の有給の k 日目に LEAVE_EACH + (k−1)×LEAVE_STEP（1日目1000・
+# 2日目3000・3日目5000…）。1人に寄せるほど重いので、全員に1日ずつ配る方を選ぶ。1日目の罰で、人が余らない日には入れない。
+# 最多と最少の差を罰する形では、計算が時間内に良い表を見つけられず、12月（17人）で有給41日・1人0〜7日になった（2026-11-07）
+LEAVE_EACH_WEIGHT = 1000
+LEAVE_STEP_WEIGHT = 2000
+# 手薄なユニットで働く回数の平均化（rule の thin_even）の罰。相談できるルール（5000）より軽く、可能な範囲で
+THIN_EVEN_WEIGHT = 1000   # 300では回数が2〜8回のまま、3000では配慮の外れが増えた（17人の12月）
+THIN_EVEN_STEPS = 12
 HOLD_CELLS = 10   # 外れている回数を悪くしないために動かしてよいマスの目安（hold）
 
 
@@ -55,12 +63,20 @@ def _allowed(s: Staff, facility: Facility, requested: set[str]) -> list[str]:
     return syms
 
 
-def _requested_leaves(rules: list[Rule], facility: Facility, days: int) -> dict[tuple[str, int], set[str]]:
+def _requested_leaves(rules: list[Rule], facility: Facility, days: int,
+                      staff: list[Staff] | None = None) -> dict[tuple[str, int], set[str]]:
     """頼まれた時だけ置く記号（有給・研修）を、決まり（cell の in）が指す人・日に限って開ける。
-    日付を任せる頼み（回数の下限がある決まり。日数のない有給）は、その人の全日（when があればその日）に開ける。"""
+    日付を任せる頼み（回数の下限がある決まり。日数のない有給）は、その人の全日（when があればその日）に開ける。
+    働かせた、なるべく平等に入れる有給（rules.fair_on）は、ルールが数える人（誰と言わなければ全員）の全日に開ける。"""
     req_syms = {st.symbol for st in facility.shift_types if st.on_request_only}
     out: dict[tuple[str, int], set[str]] = {}
     for r in rules:
+        if is_fair_on(r):
+            syms = set(r.params.get("shifts") or []) & req_syms
+            for w in (r.who or [s.name for s in staff or []]):
+                for d in (r.when or range(1, days + 1)):
+                    out.setdefault((w, d), set()).update(syms)
+            continue
         if r.kind == "count" and r.params.get("min") and r.who:
             syms = set(r.params.get("shifts") or []) & req_syms
             if syms:
@@ -80,7 +96,7 @@ def _requested_leaves(rules: list[Rule], facility: Facility, days: int) -> dict[
 def requested_cells(rules: list[Rule], facility: Facility, staff: list[Staff], month: Month) -> dict[tuple[str, int], set[str]]:
     """頼まれた時だけ置く記号を開ける（人, 日）。話して足した勤務は、人数・回数・曜日のルールの下限でも開ける
     （「平日は日8を1人」は誰と言っていないので、そのルールが数える人と日の全部）。下限の無いルールでは開けない。"""
-    out = _requested_leaves(rules, facility, month.days)
+    out = _requested_leaves(rules, facility, month.days, staff)
     spoken = {st.symbol for st in facility.shift_types if st.spoken}
     if not spoken:
         return out
@@ -138,6 +154,61 @@ def forced_dev(inst: Instance, pins: dict[tuple[str, int], set[str]]) -> int:
         most += t.coef if p is None or p & set(t.symbols) else 0
         least += t.coef if p and p <= set(t.symbols) else 0
     return max(0, least - inst.hi if inst.hi is not None else 0, inst.lo - most if inst.lo is not None else 0)
+
+
+def _fair_leave(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[Staff], days, weights: dict) -> None:
+    """なるべく平等に入れる有給（count の fair）の目的。数える人ごとに、有給の k 日目を LEAVE_EACH + (k−1)×LEAVE_STEP で
+    罰する（日数が増えるほど1日あたりが重い。施設の設定 weights の leave_each・leave_step で変えられる）。"""
+    fair = [r for r in rules if is_fair_on(r)]
+    if not fair:
+        return
+    w_each = weights.get("leave_each", LEAVE_EACH_WEIGHT)
+    w_step = weights.get("leave_step", LEAVE_STEP_WEIGHT)
+    names = {s.name for s in staff}
+    for r in fair:
+        syms = set(_syms_of(r.params.get("shifts")))
+        ds = list(r.when) if r.when else list(days)
+        for name in (r.who or [s.name for s in staff]):
+            if name not in names:
+                continue
+            vs = [x[(name, d, sym)] for d in ds for sym in syms if (name, d, sym) in x]
+            if not vs:
+                continue
+            c = sum(vs)
+            penalties.append(w_each * c)
+            for k in range(1, min(len(vs), 8)):   # k 日を超えた分（2日目からの重さ。9日目からは同じ重さ）
+                over = m.new_int_var(0, len(vs), "")
+                m.add(over >= c - k)
+                penalties.append(w_step * over)
+
+
+def _thin_even(m, x, penalties, rules: list[Rule], facility: Facility, staff: list[Staff], days, weights: dict) -> None:
+    """手薄なユニット（その日に none の勤務の人がいないユニット）で work の勤務に入る回数を、人ごとに平均化する目的（rule の
+    thin_even）。回数が増えるほど1回が重くなる罰（k 回を超えた分ごとに weights の thin_even）。"""
+    w = weights.get("thin_even", THIN_EVEN_WEIGHT)
+    for r in rules:
+        if r.kind != "thin_even" or not r.meta.get("thin_on"):
+            continue
+        none, work = _syms_of(r.params["none"]), _syms_of(r.params["work"])
+        units: dict[str, list[str]] = {}
+        for s in staff:
+            units.setdefault(s.unit, []).append(s.name)
+        for names in units.values():
+            ys: dict[str, list] = {n: [] for n in names}
+            for d in days:
+                thin = m.new_bool_var("")
+                m.add(thin + sum(x[(n, d, sym)] for n in names for sym in none if (n, d, sym) in x) >= 1)
+                for n in names:
+                    vs = [x[(n, d, sym)] for sym in work if (n, d, sym) in x]
+                    if vs:
+                        y = m.new_bool_var("")
+                        m.add(y >= thin + sum(vs) - 1)
+                        ys[n].append(y)
+            for n, vs in ys.items():
+                for k in range(1, min(len(vs), THIN_EVEN_STEPS)):
+                    over = m.new_int_var(0, len(vs), "")
+                    m.add(over >= sum(vs) - k)
+                    penalties.append(w * over)
 
 
 def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month, *,
@@ -239,6 +310,9 @@ def solve_month(facility: Facility, staff: list[Staff], rules: list[Rule], month
                     if inst.hi is not None:
                         m.add(dev >= e - inst.hi)
                     penalties.append(w // 4 * dev)
+
+    _fair_leave(m, x, penalties, rules, facility, staff, days, weights)
+    _thin_even(m, x, penalties, rules, facility, staff, days, weights)
 
     # 質の物差し（施設の設定。既定は控えめ）
     work = set(facility.workday_symbols())

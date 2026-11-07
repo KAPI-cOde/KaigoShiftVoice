@@ -78,7 +78,7 @@ def test_cover_counts_in_giveback(s, monkeypatch):
     s.accept(r.uid)
     seen = {}
 
-    def fake(fac, staff, rules, month, counts):
+    def fake(fac, staff, rules, month, counts, **kw):
         seen.update(counts)
         return GiveBack("cannot", None, None)
     monkeypatch.setattr(nextflow, "build_pair", fake)

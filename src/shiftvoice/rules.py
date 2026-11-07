@@ -87,6 +87,52 @@ def _syms_of(v) -> set[str]:
     return {v} if isinstance(v, str) else set(v or [])
 
 
+def fair_on(rules: list[Rule]) -> list[Rule]:
+    """なるべく平等に入れる有給（回数のルールの fair）を働かせた並び。一から表を作る時だけ通す。ふだんは何もしないルールで、
+    一言の直し・急な休みの案・返す案・静かなルールの確かめでは、有給は開かず、表にある有給は carry_rules が残す
+    （どの計算でも働いていた時は、一言で公休が有給に変わる・電話の案で勤務の日が有給に変わる・返す案が作れない、が起きた）"""
+    import copy
+    out = []
+    for r in rules:
+        if r.kind == "count" and r.params.get("fair"):
+            r = copy.copy(r)
+            r.meta = {**r.meta, "fair_on": True}
+        out.append(r)
+    return out
+
+
+def thin_on(rules: list[Rule]) -> list[Rule]:
+    """手薄なユニットの平均化（thin_even）を働かせた並び。平等にそろえる2回目の計算だけで通す（1回目にも入れると、1回目は
+    作れなかった時の控えなのに計算が長く探す所まで進み、待ちが4分半になった。17人の12月）。"""
+    import copy
+    out = []
+    for r in rules:
+        if r.kind == "thin_even":
+            r = copy.copy(r)
+            r.meta = {**r.meta, "thin_on": True}
+        out.append(r)
+    return out
+
+
+def is_fair_on(r: Rule) -> bool:
+    return r.kind == "count" and bool(r.params.get("fair")) and bool(r.meta.get("fair_on"))
+
+
+def thin_counts(rule: Rule, staff: list[Staff], month: Month, table: dict[str, list[str]]) -> dict[str, int]:
+    """手薄なユニット（その日に none の勤務の人がいないユニット）で work の勤務に入った、人ごとの回数。数える人は全員（0回も）。"""
+    none, work = _syms_of(rule.params["none"]), _syms_of(rule.params["work"])
+    units: dict[str, list[str]] = {}
+    for s in staff:
+        units.setdefault(s.unit, []).append(s.name)
+    out = {s.name: 0 for s in staff}
+    for names in units.values():
+        for d in range(month.days):
+            if not any(table[n][d] in none for n in names):
+                for n in names:
+                    out[n] += table[n][d] in work
+    return out
+
+
 def _params_overlap(k: str, p: dict, q: dict) -> bool:
     """同じ種類の2つのルールの中身が、同じ勤務・曜日・並びに重なるか（人は見ない）。"""
     if k in ("count", "max_run"):
@@ -656,6 +702,8 @@ def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> 
                 if "next_not_in" in p:
                     terms = [Term(s.name, 0, a), Term(s.name, 1, _syms(p["next_not_in"], facility))]
                     out.append(Instance(rule, f"{s.name}/0", terms, None, 1))
+    elif k == "thin_even":
+        pass   # 場面を持たない。一から作る時の目的だけ（solver._thin_even）
     elif k == "unit_apart":
         # その勤務の人を1つのユニットに固めない。どのユニットの外にも1人はいる（2人以上なら2つ以上のユニットに分かれる）
         syms = _syms(p["shifts"], facility)

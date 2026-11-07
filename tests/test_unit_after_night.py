@@ -6,7 +6,7 @@ from dataclasses import replace
 from shiftvoice.choke import chokepoints
 from shiftvoice.model import Month, Rule, ShiftType, Staff
 from shiftvoice.ruledetail import rule_detail
-from shiftvoice.rules import check_table, expand
+from shiftvoice.rules import check_table, expand, thin_counts, thin_on
 from shiftvoice.solver import solve_month
 
 UNITS = ["東", "西", "南"]
@@ -146,3 +146,44 @@ def test_table_with_one_unit_is_reported(store):
     assert "2つ以上のユニット" in d["line"] and "固まった日" in d["now"][0], d
     t[next(s.name for s in staff if s.unit == "西")][2] = "日"
     assert "3" not in {b["key"].rsplit("/", 1)[1] for b in check_table([APART], fac, staff, m, t)}
+
+
+THIN = Rule(id="t-thin", ver=1, name="手薄なユニットで働く回数を平均化", kind="thin_even", flex="negotiable",
+            params={"none": ["日"], "work": ["早", "8", "遅"]}, scope="rule")
+
+
+def test_thin_counts_only_units_without_nine_oclock(store):
+    fac, staff = _shape(store)
+    m = _month(staff)
+    t = {s.name: ["公"] * 30 for s in staff}
+    higashi = [s.name for s in staff if s.unit == "東"]
+    nishi = [s.name for s in staff if s.unit == "西"]
+    t[higashi[0]][0] = "早"                  # 東は1日に9時の人がいない
+    t[nishi[0]][0] = "早"
+    t[nishi[1]][0] = "日"                    # 西は1日に9時の人がいる
+    c = thin_counts(THIN, staff, m, t)
+    assert c[higashi[0]] == 1 and c[nishi[0]] == 0
+
+
+def test_thin_rule_does_nothing_unless_fresh_build(store):
+    """ふだんは場面も目的も持たない。平等にそろえる2回目の計算（thin_on）だけ回数が平均に寄る。"""
+    fac, staff = _shape(store)
+    m = _month(staff)
+    assert expand(THIN, fac, staff, m) == []
+    two = Rule(id="t-2", ver=1, name="9時は2人以上", kind="coverage", flex="fixed",
+               params={"shifts": ["日"], "scope": "all", "op": ">=", "n": 2}, scope="rule")
+    rs = _base() + [two, APART, THIN]
+    spread = []
+    for rules in (rs, thin_on(rs)):
+        t = solve_month(fac, staff, rules, m, max_dtime=30.0).table
+        v = thin_counts(THIN, staff, m, t).values()
+        spread.append(max(v) - min(v))
+    assert spread[1] < spread[0], spread
+
+
+def test_detail_says_the_range(store):
+    fac, staff = _shape(store)
+    m = _month(staff)
+    t = {s.name: ["公"] * 30 for s in staff}
+    d = rule_detail("t-thin", [THIN], fac, staff, m, t)
+    assert "手薄なユニット" in d["line"] and "平均化" in d["line"], d

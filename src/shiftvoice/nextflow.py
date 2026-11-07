@@ -287,7 +287,10 @@ class NextFlow:
         items = [replace(x, returned_in=None) if x.returned_in == target else x for x in self.store.acceptances()]
         counts = accepted_counts(items, ym, base_date, window)
         dec = self.store.month(self.ny, self.nm)
-        gb = build_pair(fac, staff, month_rules(self.store, self.ny, self.nm, with_premise=False), dec, counts)
+        leave = {st.symbol for st in fac.shift_types if st.kind == "leave"}
+        this = self.store.month(self.year, self.month).table or {}
+        gb = build_pair(fac, staff, month_rules(self.store, self.ny, self.nm, with_premise=False), dec, counts,
+                        last_leave={n: sum(v in leave for v in row) for n, row in this.items()})
         # note は返さない案で段を下げた時の知らせ（赤で出す）
         out = {"status": gb.status, "message": gb.message, "counts": counts, "checks": gb.checks, "note": gb.base_note,
                "choke": _choke_out(gb.base_choke, dec)}
@@ -326,7 +329,8 @@ class NextFlow:
             "main": f"{who['name']}さん　{self.month}月に{who['accepted']}回引き受け → {self.nm}月は" + "・".join(parts),
             "who": who["name"],
             "sub": "ほかの人の有給と、連勤の合計は増やさない。人数とルールはそのまま",
-            "line2": f"引き受けた{len(gb.people)}人に、" + {("leave", "run"): "有給を1日と短い連勤", ("leave",): "有給を1日",
+            "line2": f"引き受けた{sum(p['leave_after'] > p['leave_before'] or p['run_after'] < p['run_before'] for p in gb.people)}人に、"
+                     + {("leave", "run"): "有給を1日と短い連勤", ("leave",): "有給を1日",
                                                           ("run",): "短い連勤"}[tuple(gb.stage)]
                      + f"。返さない案から変わるのは{changed}マス",
             "people": gb.people,
@@ -342,8 +346,10 @@ class NextFlow:
         self._pair = gb
         m = self.store.month(self.ny, self.nm)
         months = set(_months_back(ym, window))
+        # 返した印は、実際に有給か連勤が良くなった人にだけ付ける。何も返らなかった人の引き受けは次の月へ持ち越す
+        got = {p["name"] for p in gb.people if p["leave_after"] > p["leave_before"] or p["run_after"] < p["run_before"]}
         acc = [x for x in items if x.date[:7] in months and x.date <= base_date
-               and not x.returned_in and x.staff in counts]
+               and not x.returned_in and x.staff in got]
         m.layers["_plans"] = {"base": gb.base.table, "give": gb.give.table, "rev": self.store.ledger().rev,
                               "tail": m.prev_tail,
                               "acc_ids": [x.id for x in acc],

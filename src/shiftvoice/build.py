@@ -14,6 +14,7 @@ import os
 from dataclasses import dataclass, field, replace
 
 from .model import Facility, Month, Rule, Staff
+from .rules import fair_on
 from .solver import SolveResult, solve_month
 from .store import Store
 
@@ -174,8 +175,21 @@ def _ake_as_rest_nights(facility: Facility) -> set[str]:
 def solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month,
                  **kw) -> StagedResult:
     """段の順で解く。叶わない希望休の知らせは、どの段で作れても添える。"""
+    even = kw.pop("even_leave", False)
+    last = kw.pop("last_leave", None)
+    if even:
+        rules = fair_on(rules)
     rules, notes = impossible_wishes(facility, rules, month)
     out = _solve_staged(facility, staff, rules, month, **kw)
+    if even and out.ok and out.result.stage == 1 and out.note in (None, SHORT_REST_NOTE):
+        # 一から作る時だけ、なるべく平等に入れる有給の日数をそろえる。段を下げた表は、知らせの文が今の表を言っているので触らない。
+        # 間の目安を外して作れた月は、2回目も外す（同じ知らせのまま言える）
+        from .fairleave import even_out
+        quality = facility.settings.get("quality", {})
+        fac2 = replace(facility, settings={**facility.settings, "quality": {**quality, "short_rest": 0}}) if out.note else facility
+        out.result, line = even_out(fac2, staff, rules, month, out.result, max_dtime=kw.get("patience"), last=last)
+        if line:
+            out.stages.append(line)
     if notes:
         out.note = "。".join(notes + ([out.note] if out.note else []))
     return out
@@ -325,4 +339,4 @@ def build_original(store: Store, year: int, month: int, *, with_premise: bool = 
     m = store.month(year, month)
     rules = month_rules(store, year, month, with_premise=with_premise)
     # 一から作るので、段1を長く探してよく、組めなければ詰まり所も探す
-    return solve_staged(fac, staff, rules, m, patience=patience_of(fac), explain=True)
+    return solve_staged(fac, staff, rules, m, patience=patience_of(fac), explain=True, even_leave=True)

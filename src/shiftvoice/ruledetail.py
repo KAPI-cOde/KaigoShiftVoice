@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections import Counter
 
 from .model import Facility, Month, Rule, Staff
-from .rules import (_days, _syms, _who, broken, cell_value, evaluate, expand, fit_count, month_days_off,
+from .rules import (_days, _syms, _who, broken, cell_value, evaluate, expand, fit_count, month_days_off, thin_counts,
                     with_overrides)
 
 WD_JP = {"mon": "月", "tue": "火", "wed": "水", "thu": "木", "fri": "金", "sat": "土", "sun": "日"}
@@ -164,8 +164,25 @@ def _coverage(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: M
 
 # ------------------------------------------------------------------ 回数（count）
 
+def _fair(orig: Rule, fac: Facility, staff: list[Staff], month: Month, table) -> dict:
+    """有給をなるべく平等に入れるルール（count の fair。日数は組んでみて決まる）。"""
+    p = orig.params
+    syms = _syms(p["shifts"], fac)
+    what, u = _names(fac, syms), _unit(fac, syms)
+    line = f"{_who_no(orig.who)}{what}は、組んで人が余った日に、1人あたりの日数がなるべく同じになるように入れます"
+    days = _days(orig, month)
+    vs = [sum(1 for d in days if cell_value(table, month, s.name, d) in syms) for s in _who(orig, staff)]
+    if not vs or not sum(vs):
+        now = [f"今の表では、{what}は入っていません（人が余った日がありません）"]
+    else:
+        now = [f"今の表では、{len(vs)}人で合わせて{sum(vs)}{u}（1人{min(vs)}〜{max(vs)}{u}）"]
+    return {"line": line, "now": now, "glow": None, "cells": []}
+
+
 def _count(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: Month, table) -> dict:
     p = orig.params
+    if p.get("fair"):
+        return _fair(orig, fac, staff, month, table)
     syms = _syms(p["shifts"], fac)
     what, u = _names(fac, syms), _unit(fac, syms)
     people = _who(orig, staff)
@@ -470,6 +487,15 @@ def _unit_apart(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month:
     return {"line": f"{what}は1つのユニットに固めず、2つ以上のユニットに分ける", "now": now, "glow": None, "cells": []}
 
 
+def _thin_even(orig: Rule, eff: Rule, fac: Facility, staff: list[Staff], month: Month, table) -> dict:
+    """手薄なユニットで働く回数の平均化（一から作る時の目的）。"""
+    none = _names(fac, _syms(orig.params["none"], fac))
+    vs = [v for v in thin_counts(orig, [s for s in staff if set(orig.params["work"]) & set(s.can)], month, table).values()]
+    now = [f"今の表では、1人{min(vs)}〜{max(vs)}回"] if vs else []
+    return {"line": f"その日に{none}がいないユニット（手薄なユニット）で働く回数を、できる範囲で平均化します", "now": now,
+            "glow": None, "cells": []}
+
+
 def _unknown(orig: Rule, fac: Facility) -> dict | None:
     """知らない種類。読める所（勤務と数）だけを ① にし、② ③ は出さない。"""
     p = orig.params or {}
@@ -489,7 +515,8 @@ def _unknown(orig: Rule, fac: Facility) -> dict | None:
 
 
 KINDS = {"coverage": _coverage, "count": _count, "max_run": _max_run, "sequence": _sequence,
-         "weekday": _weekday, "cell": _cell, "unit_after": _unit_after, "unit_apart": _unit_apart}
+         "weekday": _weekday, "cell": _cell, "unit_after": _unit_after, "unit_apart": _unit_apart,
+         "thin_even": _thin_even}
 
 
 def rule_detail(rule_id: str, rules: list[Rule], fac: Facility, staff: list[Staff], month: Month,
