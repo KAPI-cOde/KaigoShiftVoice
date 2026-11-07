@@ -114,15 +114,22 @@ def _core(facility, staff, month, req, items, a, b, dtime, S) -> list:
 
 
 def _describe(core: list, facility: Facility, center: int) -> dict:
-    wishes, rules, cells, days = [], [], [], Counter()
+    """芯を、詰まり所の日・重なった希望休・ぶつかったルールにする。日は、人数のルールの日があればそれ（足りないのはその日の
+    勤務。希望休の前の日の夜勤が足りない時に、希望休の日を指していた。Astra）、無ければほかのルールの場面の日、それも無ければ
+    希望休の日。どれも無ければ小さなモデルの真ん中の日。"""
+    wishes, rules, cells = [], [], []
+    cov, other, wish_days = Counter(), Counter(), Counter()
     for r, inst in core:
         d = _day_of(inst.key)
         if is_day_off_wish(r, facility):
             who = inst.key.rsplit("/", 1)[0]
-            day = d + 1 if r.meta.get("derived") == "rest_not_ake" else d   # 前の日の夜勤を止める頼みは、次の日が希望休
+            derived = r.meta.get("derived") == "rest_not_ake"
+            day = d + 1 if derived and d is not None else d   # 前の日の夜勤を止める頼みは、次の日が希望休
             if day is not None and [who, day] not in wishes:
                 wishes.append([who, day])
                 cells.append([who, day])
+            if d is not None:
+                (other if derived else wish_days)[d] += 1    # 前の日の夜勤を止める頼みは、その前の日の勤務の詰まり
             continue
         name = r.name
         unit = inst.key.rsplit("/", 1)[0] if r.kind == "coverage" else None
@@ -130,11 +137,10 @@ def _describe(core: list, facility: Facility, center: int) -> dict:
             name += f"（{unit}）"
         if name not in rules:
             rules.append(name)
-        if r.kind == "coverage" and d is not None:
-            days[d] += 2
-    for _, d in wishes:
-        days[d] += 1
-    day = days.most_common(1)[0][0] if days else center
+        if d is not None:
+            (cov if r.kind == "coverage" else other)[d] += 1
+    pick = cov or other or wish_days
+    day = pick.most_common(1)[0][0] if pick else center
     return {"day": day, "wishes": wishes, "rules": rules, "cells": cells}
 
 
@@ -154,12 +160,14 @@ def explain(chokes: list[dict], month: Month) -> list[str]:
         d = c["day"]
         when = f"{d}日（{_wd(month, d)}）"
         rules = "".join(f"「{n}」" for n in c["rules"][:3]) + ("など" if len(c["rules"]) > 3 else "")
-        if i == 0:
+        if i == 0 and c["wishes"]:
             head = f"全部の希望休を入れると組めない日があります。いちばんの詰まり所は{when}です。"
-            body = (f"{_names(c['wishes'], d)}の希望休が重なり、" if c["wishes"] else "") + \
-                   (f"{rules}を同時には守れません。" if rules else "")
+            body = f"{_names(c['wishes'], d)}の希望休が重なり、" + (f"{rules}を同時には守れません。" if rules else "")
             out.append(head + body + "日勤専属の人に早出を頼む、その日の人数を一言で減らす、応援を頼む、などで空けられないか"
                        "試してください。どうしても空かない時は、希望休を本人と相談します")
+        elif i == 0:   # 希望休の無い、ルールどうしのぶつかり（Astra）。希望休の相談はすすめない
+            out.append(f"ルールどうしがぶつかって組めない日があります。いちばんの詰まり所は{when}です。"
+                       f"{rules}を同時には守れません。どちらかを一言で直せないか試してください")
         else:
             out.append(f"ほかに{when}も詰まっています" + (f"（{_names(c['wishes'], d)}の希望休）" if c["wishes"] else ""))
     return out
