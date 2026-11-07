@@ -51,6 +51,10 @@
   .reply details.brokenlist ul { margin: 4px 0; padding-left: 18px; }
   .reply .holeother { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin: 6px 0; }
   .reply .q { margin: 4px 0 6px; font-weight: 700; }
+  .reply ul.infolist { margin: 4px 0 2px; padding-left: 18px; }
+  .msg.ai.local::before { content: "アプリ"; }
+  .reply ul.infolist li { margin: 2px 0; }
+  .reply .infobtns { margin-top: 8px; flex-wrap: wrap; }
   button { font: inherit; background: #fff; color: #000; border: 1px solid #000; border-radius: 3px; padding: 4px 14px; cursor: pointer; }
   button:hover { background: #f4f4f4; }
   #undo { font-size: 12px; padding: 4px 10px; }
@@ -407,7 +411,7 @@
       <button type="submit" id="send">伝える</button>
     </form>
     <div class="hint" id="pubnote" style="display:none"></div>
-    <div class="hint" id="hint">例「岡田さん、15と16は法事で休み」「遅番の次の日に早番はきついから、やめてあげて」。名簿の名前は番号に伏せてから Claude へ送ります。直した後も［ひとつ戻す］で戻せます。</div>
+    <div class="hint" id="hint">例「岡田さん、15と16は法事で休み」「遅番の次の日に早番はきついから、やめてあげて」「外れているルールは？」。名簿の名前は番号に伏せてから Claude へ送ります。直した後も［ひとつ戻す］で戻せます。</div>
   </section>
 </main>
 <section id="vrules">
@@ -1593,6 +1597,7 @@ function renderReply(r) {
 function renderReplyBody(r) {
   var box = document.getElementById("reply");
   box.textContent = "";
+  box.classList.toggle("local", !!(r && r.kind === "info"));   // 手元で答えた返事は、吹き出しの札を Claude にしない
   if (!r) return;
   if (r.kind === "standby_offer") {
     var ex = r.extra || {};
@@ -1796,6 +1801,28 @@ function renderReplyBody(r) {
     sel.addEventListener("change", function () { if (sel.value && an.roster.indexOf(sel.value) >= 0) chooseName(r.uid, an.wrong, sel.value); });
     nb.appendChild(sel);
     box.appendChild(nb);
+    return;
+  }
+  if (r.kind === "info") {   // ルールを見る・確かめる・整理する問いの答え（手元で作り、Claude へは送らない。ruleask.py）
+    var ls = (r.message || "").split("\n");
+    box.appendChild(el("div", "summary", ls[0] || ""));
+    var items = ls.slice(1).filter(function (t) { return t.indexOf("・") === 0; });
+    if (items.length) {
+      var ul = el("ul", "infolist");
+      items.forEach(function (t) { ul.appendChild(el("li", "", t.slice(1))); });
+      box.appendChild(ul);
+    }
+    ls.slice(1).filter(function (t) { return t && t.indexOf("・") !== 0; }).forEach(function (t) { box.appendChild(el("div", "q2", t)); });
+    var ib = el("div", "btns infobtns");
+    ((r.extra && r.extra.actions) || []).forEach(function (a) {
+      var go = a.open === "tidy" ? openClean : a.open === "rules" ? function () { showRules(true); } : null;
+      if (!go) return;
+      var b = el("button", "", a.label);
+      b.type = "button";
+      b.addEventListener("click", go);
+      ib.appendChild(b);
+    });
+    if (ib.childNodes.length) box.appendChild(ib);
     return;
   }
   box.appendChild(el("div", "", r.message || ""));
