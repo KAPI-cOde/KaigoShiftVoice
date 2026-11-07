@@ -73,3 +73,42 @@ def test_段を下げていない時の知らせは今までどおり(sess):
     r = sess.say("加藤さん、21日は休み")
     assert r.warning == "加藤さんの21日は「表にある研（加藤さん 21日）」があるので、希望休を守れませんでした", r.warning
     assert "broken" not in r.extra
+
+
+def test_直す前からの外れは理由に選ばない(store):
+    """直す前の表でもう外れていたルールを、新しいルールとぶつかった相手として言わない（Astra 2026-11-07。同じ夜勤を数える
+    ルールが前から外れていると、無関係でも「〇〇を守ると、夜勤の回数が守れません」と言っていた）。"""
+    from shiftvoice.model import Rule
+    from shiftvoice.session import conflict_warning
+    fac = store.facility()
+    new = Rule(id="t-new", ver=1, name="斉藤さん 夜勤は月2回まで", kind="count", flex="operational",
+               params={"shifts": ["夜"], "max": 2}, who=["斉藤"], scope="rule")
+    old = Rule(id="t-old", ver=1, name="夜勤の回数", kind="count", flex="operational",
+               params={"shifts": ["夜"], "max": 5}, scope="rule")
+    other = Rule(id="t-oth", ver=1, name="早番は月4回まで", kind="count", flex="operational",
+                 params={"shifts": ["早"], "max": 4}, scope="rule")
+    broken = [{"rule": "t-old", "key": "小島", "flex": "operational", "name": "夜勤の回数"},
+              {"rule": "t-oth", "key": "青木", "flex": "operational", "name": "早番は月4回まで"}]
+    w = conflict_warning([new], broken, {r.id: r for r in (new, old, other)}, fac, {("t-old", "小島")}, "作り直しますか")
+    assert w == "「斉藤さん 夜勤は月2回まで」を守ると、「早番は月4回まで」が守れません。作り直しますか", w
+    w = conflict_warning([new], broken[:1], {r.id: r for r in (new, old)}, fac, {("t-old", "小島")}, "作り直しますか")
+    assert "夜勤の回数" not in w, w
+
+
+def test_期限つきのルールは効く日だけで外れを数える(sess):
+    """右の一覧の外れの数は、期限の中の日だけで数える（Astra 2026-11-07。「15日まで日勤に入れない」を守っていても、16日以降の
+    日勤で赤い外れが出ていた）。"""
+    sess.open()
+    led = sess.store.ledger()
+    led.append("add", rule={"id": "t-until", "ver": 1, "name": "小島さん 15日まで日勤に入れない", "kind": "cell",
+                            "flex": "operational", "params": {"not_in": ["日"]}, "who": ["小島"], "when": None,
+                            "scope": "once", "meta": {}},
+               op_id="t-until", frm="2026-11-01", until="2026-11-15")
+    sess.store.save_ledger(led)
+    m = sess.store.month(2026, 11)
+    t = {n: list(r) for n, r in m.table.items()}
+    t["小島"] = ["公"] * 15 + ["日"] * 15
+    m.table = t
+    sess.store.save_month(m)
+    cards = {c["id"]: c for c in sess.state()["cards"]}
+    assert cards["t-until"]["broken"] == 0

@@ -294,7 +294,8 @@ def conflict_warning(targets: list[Rule], broken: list[dict], rules: dict[str, R
     want = set().union(*(_rule_syms(r, facility) for r in targets)) if targets else set()
     seen: dict[str, list[dict]] = {}
     for b in broken:
-        if b["flex"] in ("operational", "wish") and b["rule"] not in ids:
+        # 直す前の表でもう外れていた場面は、新しいルールのせいではないので理由に選ばない
+        if b["flex"] in ("operational", "wish") and b["rule"] not in ids and (b["rule"], b["key"]) not in before:
             seen.setdefault(b["rule"], []).append(b)
     order = list(seen)
 
@@ -1660,7 +1661,9 @@ class Session:
         broken_n: dict[str, int] = {}
         if m.table:
             try:
-                for b in check_table(list(rules.values()), fac, self.store.staff_on(self.year, self.month), m, m.table):
+                # 期限つきのルールは、その月の効く日だけで数える（月に切らないと、守れている「15日まで」が16日以降で外れに見える）
+                for b in check_table(month_rules(self.store, self.year, self.month, with_premise=False), fac,
+                                     self.store.staff_on(self.year, self.month), m, m.table):
                     broken_n[b["rule"]] = broken_n.get(b["rule"], 0) + 1
             except Exception:   # 数えられない時も画面は開く（印が出ないだけ）
                 broken_n = {}
