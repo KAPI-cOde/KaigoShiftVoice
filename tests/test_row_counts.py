@@ -71,5 +71,15 @@ def test_copy_text_has_no_count_columns(sess):
 def test_screen_draws_the_counts_in_every_table():
     h = HTML.read_text(encoding="utf-8")
     assert h.count("cntCells(") >= 3                          # 定義と、11月・12月の表と返す案の表
-    assert "cntBlank(" in h and "countRows(cols)" in h        # 見出しの行・人数の行は罫線だけそろえる
+    assert "cntBlank(" in h and "countRows(cols" in h         # 見出しの行・人数の行は罫線だけそろえる
     assert "tr.unithead" in h and "th.cnt" in h
+
+
+def test_screen_can_show_previous_month_tail_and_hides_unit_counts_by_default():
+    """前の月の末5日をボタンで出し入れでき、人数の行はふだん施設全体だけ（作者 2026-11-07「つながりを自分で確認したい」
+    「施設全体で何人いるかの数字でいい。ユニットごとは出さなくても良い」）。"""
+    h = HTML.read_text(encoding="utf-8")
+    assert 'id="toggleprev"' in h and 'id="toggleunits"' in h
+    assert "S.prev_tail" in h and "prevDays()" in h
+    assert 'viewPref("sv_show_unit_counts", false)' in h          # ユニットごとの人数は、ふだんは隠す
+    assert "return !r.unit || showUnitCounts" in h

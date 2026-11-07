@@ -34,6 +34,9 @@
   .grid th.cnt.cfirst, .grid td.cnt.cfirst { border-left: 1px solid #000; }
   .grid thead tr.wdrow th.cnt { font-size: 10px; }
   .grid td.cell { white-space: nowrap; transition: background-color 1.2s ease; }
+  .grid th.prev, .grid td.prev { color: #777; background: #f6f6f6; }
+  .grid td.cell.prev { opacity: .65; cursor: default; }
+  .grid .prevlast { border-right: 2px solid #000; }
   .grid td.glow { background: #fff3a0; font-weight: 700; box-shadow: inset 0 0 0 2px #d4a800; }
 
   .said { margin-top: 10px; min-height: 22px; }
@@ -280,7 +283,7 @@
     <div id="printnote" class="printonly"></div>
     <div id="returnednote" class="small" style="display:none"></div>
     <div id="tablewrap"></div>
-    <div class="legendrow"><div class="legend" id="legend"></div><div class="exportlinks" id="exportlinks"><button type="button" class="linkish" id="copytsv">表をコピー（Excel に貼る）</button><button type="button" class="linkish" id="printtable">印刷</button></div></div>
+    <div class="legendrow"><div class="legend" id="legend"></div><div class="exportlinks" id="exportlinks"><button type="button" class="linkish" id="toggleprev"></button><button type="button" class="linkish" id="toggleunits"></button><button type="button" class="linkish" id="copytsv">表をコピー（Excel に貼る）</button><button type="button" class="linkish" id="printtable">印刷</button></div></div>
     <div id="copynote" class="exportnote"></div>
     <div class="accrows" id="accrows"></div>
     <div id="why"></div>
@@ -469,6 +472,40 @@ function renderLegend() {
   lg.appendChild(el("span", "glowkey", "　／　黄色＝いま直ったマス"));   // 印刷では隠す（紙に黄色は出ない）
 }
 
+// 表の見え方の切り替え（作者 2026-11-07）。前の月の末5日（つながりを自分で確かめるため）と、ユニットごとの人数の行。
+// 見る人の手元の好みなので、ブラウザに覚えておく（覚えられない時は毎回の既定のまま）
+function viewPref(k, dflt) {
+  try { var v = localStorage.getItem(k); return v === null ? dflt : v === "1"; } catch (e) { return dflt; }
+}
+function setViewPref(k, v) {
+  try { localStorage.setItem(k, v ? "1" : "0"); } catch (e) { /* 覚えられなくても画面は切り替わる */ }
+}
+var showPrev = viewPref("sv_show_prev", false), showUnitCounts = viewPref("sv_show_unit_counts", false);
+function prevTailLen() {
+  var n = 0;
+  Object.keys(S.prev_tail || {}).forEach(function (k) { n = Math.max(n, (S.prev_tail[k] || []).length); });
+  return n;
+}
+// 表の左に出す前の月の末の日（[{day, wd}]）。前の月の末が無い月と、隠している時は空
+function prevDays() {
+  var n = prevTailLen();
+  if (!showPrev || !n) return [];
+  var last = new Date(S.year, S.month - 1, 0).getDate(), out = [];
+  var keys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  for (var d = last - n + 1; d <= last; d++) out.push({ day: d, wd: keys[new Date(S.year, S.month - 2, d).getDay()] });
+  return out;
+}
+function prevBlank(tr, pd) {
+  pd.forEach(function (x, i) { tr.appendChild(el("td", "prev" + (i === pd.length - 1 ? " prevlast" : ""), "")); });
+}
+function renderViewToggles() {
+  var bp = document.getElementById("toggleprev"), bu = document.getElementById("toggleunits");
+  bp.style.display = prevTailLen() ? "" : "none";
+  bp.textContent = showPrev ? "前の月の末を隠す" : "前の月の末" + prevTailLen() + "日を見る";
+  bu.style.display = multiUnit() && (S.day_counts || []).some(function (r) { return r.unit; }) ? "" : "none";
+  bu.textContent = showUnitCounts ? "ユニットごとの人数を隠す" : "ユニットごとの人数も見る";
+}
+
 function renderTable() {
   var wrap = document.getElementById("tablewrap");
   wrap.textContent = "";
@@ -495,6 +532,15 @@ function renderTable() {
   var corner = el("th", "name", "");
   corner.rowSpan = 2;
   wr.appendChild(corner);
+  var pd = prevDays();
+  pd.forEach(function (x, i) {
+    var last = i === pd.length - 1 ? " prevlast" : "";
+    var po = x.wd === "sat" || x.wd === "sun" ? " off" : "";
+    wr.appendChild(el("th", "prev" + po + last, WD[x.wd] || ""));
+    var h = el("th", "prev" + po + last, String(x.day));
+    h.title = (S.month === 1 ? 12 : S.month - 1) + "月" + x.day + "日（前の月）";
+    hr.appendChild(h);
+  });
   for (var d = 1; d <= S.days; d++) {
     var wd = S.weekdays[d - 1];
     var off = wd === "sat" || wd === "sun" || S.holidays.indexOf(d) >= 0;
@@ -517,7 +563,7 @@ function renderTable() {
   });
   var prevUnit = null;
   ordered.forEach(function (st) {
-    if (multiUnit() && prevUnit !== st.unit) tb.appendChild(unitHead(st.unit, supOut[st.unit] || {}, cols));
+    if (multiUnit() && prevUnit !== st.unit) tb.appendChild(unitHead(st.unit, supOut[st.unit] || {}, cols, pd));
     prevUnit = st.unit;
     var tr = el("tr");
     var nm = el("td", "name");
@@ -537,6 +583,11 @@ function renderTable() {
     var back = (S.returned_people || {})[st.name];   // 返す案を採った月。誰に何を返したか（印刷には出ない）
     if (back) nm.appendChild(el("span", "acc", back));
     tr.appendChild(nm);
+    var tail = (S.prev_tail || {})[st.name] || [];
+    pd.forEach(function (x, i) {   // 前の月の末。見るだけ（押しても何も起きない）
+      var v = tail[tail.length - pd.length + i] || "";
+      tr.appendChild(el("td", "cell prev" + toneCls(v) + (i === pd.length - 1 ? " prevlast" : ""), v));
+    });
     var row = S.table[st.name] || [];
     for (var d2 = 1; d2 <= S.days; d2++) {
       var key = st.name + "|" + d2;
@@ -567,6 +618,7 @@ function renderTable() {
     var snm = el("td", "name");
     snm.appendChild(document.createTextNode(L.name || "待機"));
     sr.appendChild(snm);
+    prevBlank(sr, pd);
     for (var d3 = 1; d3 <= S.days; d3++) {
       var who = (L.assign || {})[String(d3)] || [];
       var td3 = el("td", "cell", who.map(function (n) { return n.replace(/さん$/, ""); }).join("・"));
@@ -578,14 +630,16 @@ function renderTable() {
     tb.appendChild(sr);
   });
   t.appendChild(tb);
-  t.appendChild(countRows(cols));
+  t.appendChild(countRows(cols, pd));
   wrap.appendChild(t);
+  renderViewToggles();
 }
 
 // ユニットの見出しの行。応援が出る日の欄に矢印（行き先のユニットが下なら↓、上なら↑）
-function unitHead(unit, out, cols) {
+function unitHead(unit, out, cols, pd) {
   var tr = el("tr", "unithead");
   tr.appendChild(el("td", "name", unit.indexOf("ユニット") >= 0 ? unit : unit + "ユニット"));
+  prevBlank(tr, pd || []);
   for (var d = 1; d <= S.days; d++) {
     var xs = out[d] || [];
     var arrows = [];
@@ -598,10 +652,10 @@ function unitHead(unit, out, cols) {
   return tr;
 }
 
-// 日ごとの勤務の人数の行（ユニットごとと施設全体）。人数のルールに足りない日は太字と下線
-function countRows(cols) {
+// 日ごとの勤務の人数の行（施設全体。［ユニットごとの人数も見る］でユニットごとも）。人数のルールに足りない日は太字と下線
+function countRows(cols, pd) {
   var tf = el("tfoot");
-  var rows = S.day_counts || [];
+  var rows = (S.day_counts || []).filter(function (r) { return !r.unit || showUnitCounts; });
   var prev;
   rows.forEach(function (r, i) {
     var tr = el("tr");
@@ -609,6 +663,7 @@ function countRows(cols) {
     prev = r.unit;
     var who = r.unit ? r.unit : (multiUnit() ? "施設全体" : "");
     tr.appendChild(el("td", "name", (who ? who + "　" : "") + r.name + "の人数"));
+    prevBlank(tr, pd || []);
     for (var d = 1; d <= S.days; d++) {
       var td = el("td", "", String(r.counts[d - 1]));
       var wd = S.weekdays[d - 1];
@@ -2463,6 +2518,12 @@ function copyExtra(restored, merged, leftOut, blankRows, topRows) {
   if (blankRows) out += "。人の行の間にあった集計の" + blankRows + "行は、行がずれないよう空で入ります。Excel の式を残す時は、ユニットごとに分けて貼ってください";
   return out;
 }
+document.getElementById("toggleprev").addEventListener("click", function () {
+  showPrev = !showPrev; setViewPref("sv_show_prev", showPrev); renderTable();
+});
+document.getElementById("toggleunits").addEventListener("click", function () {
+  showUnitCounts = !showUnitCounts; setViewPref("sv_show_unit_counts", showUnitCounts); renderTable();
+});
 document.getElementById("copytsv").addEventListener("click", function () {
   fetch("/api/table.tsv").then(function (r) {
     var h = r.headers.get("X-Restored-Symbols"), hm = r.headers.get("X-Merged-Symbols"), ho = r.headers.get("X-Support-Left-Out"), hb = r.headers.get("X-Blank-Rows"), ht = r.headers.get("X-Top-Rows");
