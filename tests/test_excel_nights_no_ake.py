@@ -191,3 +191,25 @@ def test_希望休の前の日に動かせない夜勤があれば足さず知�
     assert r.ok and r.result.table["石田"][14] == "公"
     out, _ = impossible_wishes(fac(timed=False), [rules[2]], m)
     assert [x.params for x in out if x.meta.get("derived")] == [{"not_in": ["夜"]}]
+
+
+def test_見出しの行に応援の人の名前がある表():
+    """「1丁目」のようなユニットの見出しの行に、その日に入る応援の人の名前（姓だけ）が何日かある表。直す前は、名前のある
+    見出しの行を職員と読み、ユニットが1つにまとまって、名前が知らない勤務の記号に出た（実際の施設の11月の表、2026-11-07）。
+    名前の書いてある見出しでも、ほかの行に無い名前（人の行に1日だけ勤務がある人）は、今までどおり人の行"""
+    head = "氏名\t" + "\t".join(str(d) for d in range(1, 31))
+    plain = lambda k: "\t".join(["日", "公", "早", "遅"][(d + k) % 4] for d in range(30))
+    help_u2 = "\t".join("青木" if d in (1, 5, 8) else "" for d in range(30))
+    help_u3 = "\t".join("石田" if d == 24 else "" for d in range(30))
+    rows = ["1丁目\t" + "\t".join("" for _ in range(30)), "青木 太郎\t" + plain(0), "石田\t" + plain(1),
+            "2丁目\t" + help_u2, "上野\t" + plain(2), "江口\t" + plain(3),
+            "3丁目\t" + help_u3, "小川\t" + plain(0), "加藤\t" + plain(1)]
+    p = parse_paste("\n".join([head] + rows) + "\n")
+    assert list(p.table) == ["青木太郎", "石田", "上野", "江口", "小川", "加藤"]
+    assert p.unit_list == ["1丁目", "2丁目", "3丁目"]
+    assert p.unit_of["上野"] == "2丁目" and p.unit_of["小川"] == "3丁目"
+    assert p.unknown_symbols == [] and p.blank_as_rest == 0
+    # 名簿に無い名前が見出しの行にある時は、見出しにしない（人を黙って消さない）
+    odd = "\n".join([head, "2丁目\t" + "\t".join("岡田" if d in (1, 5) else "" for d in range(30)),
+                     "上野\t" + plain(2)]) + "\n"
+    assert "2丁目" in parse_paste(odd).table

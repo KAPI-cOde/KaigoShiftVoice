@@ -105,7 +105,7 @@ SCHEDULE_ROW = re.compile(r"[^（(\s]{0,4}(?:予定|行事)(?:表|欄|等)?|イ�
 UNIT_MARKS = {"欠", "欠員"}
 # 「U1」「A棟」「2F」のような、ユニットの見出しらしい名前。見出しの行に欠員の印（欠）などがあっても見出しと読む
 # 名前の全体がユニットの形か（括弧の中は外して見る。「青木 2階」のような所属を添えた人の名前は当てない）
-UNIT_CODE = re.compile(r"[A-Za-z]{1,2}\d{1,2}|\d{1,2}[FＦ]|\d{1,2}階|第?[一二三四五六七八九十\d]{1,2}(?:ユニット|棟|フロア|階)"
+UNIT_CODE = re.compile(r"[A-Za-z]{1,2}\d{1,2}|\d{1,2}[FＦ]|\d{1,2}階|第?[一二三四五六七八九十\d]{1,2}(?:ユニット|棟|フロア|階|丁目|番館|号館)"
                        r"|(?:ユニット|棟|フロア)\s?\S{1,3}|\S{1,6}(?:ユニット|棟|フロア)")
 
 _WEEKDAY = re.compile(r"^[(（]?[月火水木金土日](?:曜日?)?[)）]?$")
@@ -336,13 +336,20 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
                 or name.isdigit() or bool(SCHEDULE_ROW.fullmatch(name)))
 
     def marked_unit_row(name: str, days: list[str]) -> bool:
-        """ユニットの見出しの行に、日ごとの印（欠員の「欠」など）がある形。勤務の記号が1つも無く、印は半分の日より少なく、
-        名前がユニットらしい（「A」「B」の1文字は人の名前にも使うので見ない。休みを空欄・勤務を施設独自の記号で書く
-        表で、人が見出しになって黙って消えないように）。"""
+        """ユニットの見出しの行に、日ごとの印（欠員の「欠」や、その日に入る応援の人の名前）がある形。勤務の記号が1つも
+        無く、印は半分の日より少なく、名前がユニットらしい（「A」「B」の1文字は人の名前にも使うので見ない。休みを空欄・
+        勤務を施設独自の記号で書く表で、人が見出しになって黙って消えないように）。応援の人の名前は、表のほかの行の名前
+        （姓だけでも）に限る（実際の施設の11月の表で、見出しの行に名前が6マスあり、見出しを職員と読んでユニットが1つに
+        まとまった。2026-11-07）"""
         filled = [c for c in days if c]
         core = re.sub(r"[（(][^）)]*[）)]", "", name).strip()
         return (bool(UNIT_CODE.fullmatch(core)) and bool(filled) and len(filled) * 2 < len(days)
-                and all(c in UNIT_MARKS for c in filled))
+                and all(c in UNIT_MARKS or _is_row_name(_clean_name(c)) for c in filled))
+
+    row_names: set[str] = set()   # 表の行の名前の欄（見出しの行の応援の人の名前を見分ける。下で日の列が決まってから入れる）
+
+    def _is_row_name(v: str) -> bool:
+        return len(v) >= 2 and any(n == v or n.startswith(v) for n in row_names)   # 1文字は勤務の記号と取り違える
 
     def is_total_row(cells: list[str], name_idx: int) -> bool:
         """名前以外のセルが空でなく、全部が数字の行は集計の行（出勤者数・公休数 など）。"""
@@ -397,6 +404,7 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
 
         marks: list[dict] = []   # 読んだ行の種類（貼った時の並べ方で持ち出すため）
         repeated = False         # ユニットごとに日付の行が繰り返す表か
+        row_names.update(n for n in (_clean_name(c[nc]) for _, c in body if nc < len(c)) if n)
         for lineno, cells in body:
             name = _clean_name(cells[nc]) if nc < len(cells) else ""
             left_cells = cells[:cols[0]]
