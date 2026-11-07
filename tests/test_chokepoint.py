@@ -150,3 +150,32 @@ def test_日付でゆるめた人数は_ゆるめた後の数で言う():
     assert c and c[0]["day"] == 12
     t = explain(c, m)[0]
     assert "「早番は毎日2人」を" not in t and "12日は1〜2人" in t
+
+
+def test_月の回数で入れない勤務も日ごとの詰まりに数える(made):
+    """「早番と遅番と夜勤は入れない（月0回まで）」は月全体のルールだが、毎日の禁止と同じ。前は日ごとの小さな計算に入らず、
+    有給消化の人を早番に入れられる人として数えて、組めない日を見落とした（2026-11-08、実際の施設の写しの12月で
+    1日と31日の早番に入れる人がいないのに、詰まり所が0件だった）。希望休2人では組める日に、もう1人がこのルールで抜けると組めない"""
+    st = Store(made)
+    fac, staff, m = st.facility(), st.staff_on(2026, 12), st.month(2026, 12)
+    add, who = _wishes(staff, n=2)
+    third = [s.name for s in staff if s.unit == "U1"][2]
+    ban = Rule("b1", 1, f"{third}さん 早番と遅番と夜勤は入れない", "count", "operational",
+               {"shifts": ["早", "遅", "夜"], "max": 0}, who=[third], scope="once")
+    rules, _ = impossible_wishes(fac, month_rules(st, 2026, 12, with_premise=False) + add + [ban], m)
+    c = chokepoints(fac, staff, rules, m)
+    assert c and c[0]["day"] == 12
+    assert any("入れない" in r for r in c[0]["rules"])
+
+
+def test_月の回数の上限が1回以上なら日ごとの詰まりにしない(made):
+    """上限が1回以上の回数のルール（夜勤は月7回までなど）は、その日に入れるかどうかを決めない。日ごとの計算に入れても
+    言い過ぎにならないことを、希望休2人の組める月で確かめる"""
+    st = Store(made)
+    fac, staff, m = st.facility(), st.staff_on(2026, 12), st.month(2026, 12)
+    add, _ = _wishes(staff, n=2)
+    third = [s.name for s in staff if s.unit == "U1"][2]
+    cap = Rule("b2", 1, f"{third}さん 早番は月1回まで", "count", "operational",
+               {"shifts": ["早"], "max": 1}, who=[third], scope="once")
+    rules, _ = impossible_wishes(fac, month_rules(st, 2026, 12, with_premise=False) + add + [cap], m)
+    assert chokepoints(fac, staff, rules, m) == []

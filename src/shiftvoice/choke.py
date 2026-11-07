@@ -17,7 +17,7 @@ from collections import Counter
 from ortools.sat.python import cp_model
 
 from .model import WEEKDAYS, Facility, Month, Rule, Staff
-from .rules import cell_value, expand, is_day_off_wish, with_overrides
+from .rules import Instance, cell_value, expand, is_day_off_wish, with_overrides
 
 WINDOW = 1          # 前後何日まで入れるか（夜勤の明けと次の日の休みが入る幅）
 DTIME = 0.5         # 1日の小さなモデルの計算の量
@@ -51,8 +51,8 @@ def chokepoints(facility: Facility, staff: list[Staff], rules: list[Rule], month
     found: list[dict] = []
     for d in range(1, D + 1):
         a, b = max(1, d - window), min(D, d + window)
-        core = _core(facility, staff, month, req, [(r, i) for r, i, lo, hi in items if a <= lo and hi <= b], a, b,
-                     dtime, S)
+        inside = [(r, i) for r, i, lo, hi in items if a <= lo and hi <= b]
+        core = _core(facility, staff, month, req, inside + _caps_in(items, a, b), a, b, dtime, S)
         if not core:
             continue
         key = frozenset((r.id, i.key) for r, i in core)
@@ -67,6 +67,22 @@ def chokepoints(facility: Facility, staff: list[Staff], rules: list[Rule], month
             by_day[c["day"]] = c
     out = sorted(by_day.values(), key=lambda c: (-len(c["wishes"]), c["day"]))
     return out[:limit]
+
+
+def _caps_in(items, a: int, b: int) -> list:
+    """a〜b 日からはみ出す上限の場面（「早番と8時の日勤は入れない（月0回まで）」など）を、a〜b 日の分だけにした場面。
+    係数がどれも0以上なら、窓の外の分を落とした和も同じ上限を超えないので、言い過ぎにならない。窓の日数より小さい上限だけが
+    日の勤務を縛るので、それだけを入れる（月7回までの夜勤は3日の窓では縛らない）"""
+    out = []
+    for r, inst, lo, hi in items:
+        if a <= lo and hi <= b:
+            continue
+        if inst.hi is None or inst.hi >= b - a + 1 or any(t.coef < 0 for t in inst.terms):
+            continue
+        terms = [t for t in inst.terms if t.day < 1 or a <= t.day <= b]
+        if any(t.day >= 1 for t in terms):
+            out.append((r, Instance(rule=inst.rule, key=inst.key, terms=terms, lo=None, hi=inst.hi)))
+    return out
 
 
 def _core(facility, staff, month, req, items, a, b, dtime, S) -> list:
