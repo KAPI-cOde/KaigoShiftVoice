@@ -37,6 +37,7 @@
   .grid th.prev, .grid td.prev { color: #777; background: #f6f6f6; }
   .grid td.cell.prev { opacity: .65; cursor: default; }
   .grid .prevlast { border-right: 2px solid #000; }
+  .card .broken { margin-left: 6px; font-size: 11px; font-weight: 700; color: #b00; border: 1px solid #b00; border-radius: 3px; padding: 0 4px; }
   .grid td.glow { background: #fff3a0; font-weight: 700; box-shadow: inset 0 0 0 2px #d4a800; }
 
   .said { margin-top: 10px; min-height: 22px; }
@@ -283,7 +284,7 @@
     <div id="printnote" class="printonly"></div>
     <div id="returnednote" class="small" style="display:none"></div>
     <div id="tablewrap"></div>
-    <div class="legendrow"><div class="legend" id="legend"></div><div class="exportlinks" id="exportlinks"><button type="button" class="linkish" id="toggleprev"></button><button type="button" class="linkish" id="toggleunits"></button><button type="button" class="linkish" id="copytsv">表をコピー（Excel に貼る）</button><button type="button" class="linkish" id="printtable">印刷</button></div></div>
+    <div class="legendrow"><div class="legend" id="legend"></div><div class="exportlinks" id="exportlinks"><button type="button" class="linkish" id="rebuild">全部のルールで一から作り直す</button><button type="button" class="linkish" id="toggleprev"></button><button type="button" class="linkish" id="toggleunits"></button><button type="button" class="linkish" id="copytsv">表をコピー（Excel に貼る）</button><button type="button" class="linkish" id="printtable">印刷</button></div></div>
     <div id="copynote" class="exportnote"></div>
     <div class="accrows" id="accrows"></div>
     <div id="why"></div>
@@ -498,12 +499,22 @@ function prevDays() {
 function prevBlank(tr, pd) {
   pd.forEach(function (x, i) { tr.appendChild(el("td", "prev" + (i === pd.length - 1 ? " prevlast" : ""), "")); });
 }
+function shiftStarts() {
+  var start = {};
+  (S.symbols || []).forEach(function (x) {
+    var m = /^(\d{1,2}):(\d{2})/.exec(x.start || "");
+    start[x.symbol] = x.kind === "work" || x.kind === "ake" ? (m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : 5000) : 9000;
+  });
+  return start;
+}
 function renderViewToggles() {
   var bp = document.getElementById("toggleprev"), bu = document.getElementById("toggleunits");
+  document.getElementById("rebuild").style.display = S.public || S.distributed ? "none" : "";
   bp.style.display = prevTailLen() ? "" : "none";
   bp.textContent = showPrev ? "前の月の末を隠す" : "前の月の末" + prevTailLen() + "日を見る";
-  bu.style.display = multiUnit() && (S.day_counts || []).some(function (r) { return r.unit; }) ? "" : "none";
-  bu.textContent = showUnitCounts ? "ユニットごとの人数を隠す" : "ユニットごとの人数も見る";
+  var st = shiftStarts();
+  bu.style.display = (S.day_counts || []).some(function (r) { return r.unit || !(st[r.symbol] < 9000); }) ? "" : "none";
+  bu.textContent = showUnitCounts ? "ユニットごとと公休の人数を隠す" : (multiUnit() ? "ユニットごとと公休の人数も見る" : "公休の人数も見る");
 }
 
 function renderTable() {
@@ -655,14 +666,23 @@ function unitHead(unit, out, cols, pd) {
 // 日ごとの勤務の人数の行（施設全体。［ユニットごとの人数も見る］でユニットごとも）。人数のルールに足りない日は太字と下線
 function countRows(cols, pd) {
   var tf = el("tfoot");
-  var rows = (S.day_counts || []).filter(function (r) { return !r.unit || showUnitCounts; });
+  // 勤務の始まりの早い順に並べる（作者 2026-11-07「早番、8時、日勤、遅番、夜勤の順が見やすい」）。時刻の無い休みは後ろ
+  var start = shiftStarts();
+  // ふだんは施設全体の勤務の行だけ。ユニットごとの行と公休の行は［ユニットごとと公休の人数も見る］の時だけ（作者 2026-11-07）
+  var rows = (S.day_counts || []).filter(function (r) { return showUnitCounts || (!r.unit && start[r.symbol] < 9000); });
+  var units = [];
+  rows.forEach(function (r) { if (units.indexOf(r.unit) < 0) units.push(r.unit); });
+  rows = rows.map(function (r, i) { return { r: r, i: i }; }).sort(function (a, b) {
+    return units.indexOf(a.r.unit) - units.indexOf(b.r.unit) || (start[a.r.symbol] || 5000) - (start[b.r.symbol] || 5000) || a.i - b.i;
+  }).map(function (x) { return x.r; });
   var prev;
   rows.forEach(function (r, i) {
     var tr = el("tr");
     if (i === 0 || r.unit !== prev) tr.className = "cfirst";
     prev = r.unit;
-    var who = r.unit ? r.unit : (multiUnit() ? "施設全体" : "");
-    tr.appendChild(el("td", "name", (who ? who + "　" : "") + r.name + "の人数"));
+    // ユニットごとの行も出す時だけ「施設全体」「〇〇の人数」と書き分ける。施設全体だけの時は勤務の名前だけ（作者 2026-11-07）
+    var who = r.unit ? r.unit : (multiUnit() && showUnitCounts ? "施設全体" : "");
+    tr.appendChild(el("td", "name", (who ? who + "　" : "") + r.name + (showUnitCounts ? "の人数" : "")));
     prevBlank(tr, pd || []);
     for (var d = 1; d <= S.days; d++) {
       var td = el("td", "", String(r.counts[d - 1]));
@@ -986,6 +1006,7 @@ function makeCard(c) {
     var nm = el("span", "nm", c.name);
     if (monthOnly(c)) nm.appendChild(el("span", "new", "今月だけ"));
     if (newIds[c.id]) nm.appendChild(el("span", "new", "新しいルール"));
+    if (c.broken && c.flex !== "negotiable") nm.appendChild(el("span", "broken", "外れ " + c.broken + "か所"));   // 今の表で守れていない
     top.appendChild(nm);
     var per = el("span", "per", m.until ? fmtUntil(m.until) : "毎月");
     if (STRENGTH[c.flex]) per.insertBefore(el("span", "str", STRENGTH[c.flex]), per.firstChild);   // 強さを1語（強い順に守る）
@@ -1420,6 +1441,12 @@ function fail(e) {
 function sendAnswer(text, inp) {
   if (busy || !ask) return;
   setBusy(true);
+  // 答えた後の作り直しは数十秒かかることがある。押した手応えが無いと、押せていないように見えた（作者 2026-11-07）
+  var rb = document.getElementById("reply");
+  rb.querySelectorAll(".btns button").forEach(function (b) { b.disabled = true; });
+  var wait = el("div", "q2", "答えを受け取りました。表を作り直しています（30秒ほどかかることがあります）");
+  wait.setAttribute("role", "status");
+  rb.appendChild(wait);
   post("answer", { uid: ask.uid, text: text }).then(function (res) {
     setBusy(false);
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
@@ -2518,6 +2545,21 @@ function copyExtra(restored, merged, leftOut, blankRows, topRows) {
   if (blankRows) out += "。人の行の間にあった集計の" + blankRows + "行は、行がずれないよう空で入ります。Excel の式を残す時は、ユニットごとに分けて貼ってください";
   return out;
 }
+document.getElementById("rebuild").addEventListener("click", function () {
+  // 根本のルールを足した後は、一言の狭い直しではなく、全部のルールで白紙から作り直す（作者 2026-11-07）
+  if (busy || !S) return;
+  setBusy(true);
+  var rb = document.getElementById("reply");
+  rb.textContent = "";
+  var w = el("div", "q", "全部のルールで一から作り直しています。何回か作って、いちばん良い表を出します（1〜3分ほどかかります）");
+  w.setAttribute("role", "status");
+  rb.appendChild(w);
+  post("rebuild", {}).then(function (res) {
+    setBusy(false);
+    if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
+    handle(res);
+  }).catch(fail);
+});
 document.getElementById("toggleprev").addEventListener("click", function () {
   showPrev = !showPrev; setViewPref("sv_show_prev", showPrev); renderTable();
 });

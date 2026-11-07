@@ -184,3 +184,14 @@ def test_鍵なしの一言は鍵が要ると言い送り直しを出さない(b
     r = s.say("遅番の次の日に早番はきついから、やめてあげて")
     assert r.kind == "error" and r.message == NO_KEY and r.extra.get("no_key") is True
     assert s.state()["table"] == before
+
+
+def test_spoken_answers_with_next_month_words():
+    """表を開いた月を「来月」と呼ぶ答え（12月の表を11月に作る時。作者 2026-11-07「来月だけ」「来月も」と返したい）。
+    文の中の「来月」は答えにしない。"""
+    from shiftvoice.session import period_answer
+    for t, want in (("来月だけ", "once"), ("来月だけで", "once"), ("来月も", "rule"), ("来月からも", "rule"),
+                    ("ずっと", "rule"), ("これからも", "rule"), ("今後も", "rule")):
+        assert period_answer(t) == want, t
+    for t in ("来月の5日は休み", "来月も夜勤は3回まで"):
+        assert period_answer(t) is None, t

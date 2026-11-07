@@ -941,6 +941,12 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 p.rules.append({"name": f"{_who(who)} {nm}を2日続けない" if mx == 1 else f"{_who(who)} {nm}は続けて{mx}日まで",
                                 "kind": "max_run", "flex": fl,
                                 "params": {"shifts": [run], "max": mx}, "who": who, "when": None})
+                ex = [n for n in (_names(it.get("except_staff"), names) or []) if n not in (who or [])]
+                if ex and not who:
+                    # 「ただし〇〇さんは当たらない」。全員の上限から、その人を外す（rules.expand の max_run の except_who）。
+                    # 前は除く人を受ける所が無く、「この形の頼みは、まだ扱えません」で止まった（作者 2026-11-07）
+                    p.rules[-1]["name"] += f"（{_who(ex)}を除く）"
+                    p.rules[-1]["meta"] = {**p.rules[-1].get("meta", {}), "except_who": ex}
             else:
                 p.rules.append({"name": f"{_who(who)} 連勤は{mx}日まで", "kind": "max_run",
                                 "flex": _count_strength(it.get("strength"), text, len(real) == 1),
@@ -1087,8 +1093,12 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         not r.get("who") for r in p.rules if r["kind"] not in ("layer", "cell", "count", "max_run")) and not any(
         not any(w.endswith(n) for n in not_name) and not any(w.endswith(n) for n in named)
         for w in re.findall(r"([ぁ-ゖァ-ヺー一-龥々]{1,6}?)(?:さん|くん|ちゃん)", text))
-    if cells_nobody or (per_nobody and (not everyone or (said and not both))) \
-            or (said and not everyone and rules_nobody):
+    # 「ただし〇〇さんは当たらない」で名前が出た全員の上限（except_who）。言った名前が全部、除く人に入っている時は全員のルール
+    excepted = {w for r in p.rules for w in (r.get("meta") or {}).get("except_who", [])}
+    except_ok = bool(named) and named <= excepted and all(
+        (r.get("meta") or {}).get("except_who") for r in p.rules if r["kind"] in ("count", "max_run") and not r.get("who"))
+    if cells_nobody or (not except_ok and ((per_nobody and (not everyone or (said and not both)))
+                                           or (said and not everyone and rules_nobody))):
         raise Clarify(WHO_UNKNOWN + ("" if cells_nobody else "（全員のルールなら「全員」と付けてください）"))
     if kind == "cells":
         p.scope = "once"

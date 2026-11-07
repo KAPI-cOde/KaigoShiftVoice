@@ -55,6 +55,10 @@ def read_answer(text: str) -> str | None:
     said = _not_only(t)
     if said is not None:
         return "rule" if said == "rule" else None
+    if re.search(r"来月(?:だけ|のみ)", t):
+        return "once"   # 表を開いている月を「来月」と呼ぶ言い方（作者 2026-11-07。12月の表を11月に作る時）
+    if re.search(r"来月(?:も|から)|今後", t):
+        return "rule"
     if re.search(NEG_RULE, t) or re.search(r"(今月|今回|一回|1回)", t):
         return "once"
     if re.search(r"(毎月|ずっと|これから|いつも)", t):

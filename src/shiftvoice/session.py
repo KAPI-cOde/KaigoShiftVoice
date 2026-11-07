@@ -16,7 +16,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 
 from .addshift import add_shift_items, fix_spoken, hide_spoken, read_spoken, show_spoken
-from .build import C3_MESSAGE, TIMEOUT_MESSAGE, build_original, clip_to_month, month_rules
+from .build import C3_MESSAGE, TIMEOUT_MESSAGE, build_original, clip_to_month, month_rules, patience_of, solve_staged
 from .daycount import day_counts as _day_counts
 from .intake import WHO_UNKNOWN, Clarify, Proposal, to_proposal
 from .ledger import Ledger
@@ -55,7 +55,7 @@ MOVE_SHOWN = ("day", "kind", "line", "parts", "label", "warn", "changes", "messa
 # 言い方を広く拾わない。迷う言い方は答えにせず、先に上の質問に答えてと言う（ボタンで答えられる）
 _NOISE = re.compile(r"[\s、。，．,.!！?？…・「」]")
 _FILLER = r"(?:はい|うん|ええ|えっと|えーと|えー|あ|じゃあ)?"
-_PERIOD_ONLY = re.compile(_FILLER + r"(?:今月だけ(?:じゃなくて|じゃなく|ではなくて|ではなく|でなく)、?)?(?:毎月|今月だけ|今月のみ|今回だけ|今回のみ|今月|今回)"
+_PERIOD_ONLY = re.compile(_FILLER + r"(?:今月だけ(?:じゃなくて|じゃなく|ではなくて|ではなく|でなく)、?)?(?:毎月|今月だけ|今月のみ|今回だけ|今回のみ|今月|今回|来月だけ|来月のみ|来月も|来月から(?:も)?|ずっと|これからも|これからずっと|今後も|今後ずっと)"
                           r"(?:で|です|でお願いします|でいい|でいいです|でいいよ|にして|ね|よ){0,2}")
 _REPLACE_ONLY = {"replace": re.compile(_FILLER + r"置き換え(?:る|て|ます)(?:ください|ね|よ)?"),
                  "add": re.compile(_FILLER + r"別に足(?:す|して|します)(?:ください|ね|よ)?")}
@@ -977,6 +977,55 @@ class Session:
         self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
         return Reply("fix_offer", u["id"], msg, summary=offer["summary"])
 
+    def rebuild(self, tries: int = 3, budget: float = 180.0) -> Reply:
+        """［全部のルールで一から作り直す］。今の帳面の全部のルールで、表を白紙から何回か作り、いちばん良い表に置き換える。
+        ［ひとつ戻す］で前の表に戻せる。作者の手順は「まずゼロから根本的に回す。だいぶいい感じになったら、少しの変更を
+        加え始める」（2026-11-07）。一言の直しは狭い範囲しか動かさないので、根本のルールを足した後は表に無理が出た
+        （実際の施設の12月で、夜勤の単発を足すと運用の都合を外す段へ下がり102マス動いた）。
+        回すごとに計算の種を変え、外れたルールの強さと数で比べる。合わせて budget 秒を超えたら、そこまでの表で決める"""
+        import time
+        from dataclasses import replace
+        m = self.store.month(self.year, self.month)
+        if m.distributed:
+            return Reply("ask", None, "配った後の表は、一から作り直しません。直したい所を一言で伝えてください")
+        fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
+        rules = month_rules(self.store, self.year, self.month)
+        py, pm = (self.year, self.month - 1) if self.month > 1 else (self.year - 1, 12)
+        try:
+            prev = self.store.month(py, pm).table or {}
+        except FileNotFoundError:
+            prev = {}
+        leave = {st.symbol for st in fac.shift_types if st.kind == "leave"}
+        last = {n: sum(v in leave for v in row) for n, row in prev.items()}
+        solve = fac.settings.get("solve", {})
+        if f"{self.year:04d}-{self.month:02d}" in solve.get("seed_by_month", {}):
+            tries = 1   # 種を決めてある月（撮影用）は、何回回しても同じ表になる
+        best, n, t0, last_try = None, 0, time.perf_counter(), None
+        for i in range(tries):
+            f = replace(fac, settings={**fac.settings, "solve": {**solve, "seed": solve.get("seed", 11) + 7 * i}})
+            last_try = solve_staged(f, staff, rules, m, patience=patience_of(f), explain=True, even_leave=True, last_leave=last)
+            n += 1
+            if last_try.ok:
+                r = last_try.result
+                key = (r.stage, sum(1 for b in r.broken if b["flex"] != "negotiable"), len(r.broken), r.objective or 0)
+                if best is None or key < best[0]:
+                    best = (key, last_try)
+            if time.perf_counter() - t0 > budget:
+                break
+        if best is None:
+            return Reply("failed_solve", None, (last_try.message if last_try else "") + "。全部のルールでは表が作れませんでした。表は変えていません")
+        st = best[1]
+        uid = f"rebuild-{self.now().strftime('%Y%m%d%H%M%S')}"
+        before = m.table
+        m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": "全部のルールで一から作り直す"})
+        m.table, m.built_rev = st.result.table, self.store.ledger().rev
+        self.store.save_month(m)
+        changes = changed_cells(before, m.table)
+        msg = (f"全部のルールで一から作り直しました（{n}回作って、いちばん良い表）。変わったマスは{len(changes)}です。"
+               "前の表に戻す時は［ひとつ戻す］")
+        return Reply("applied", uid, msg, changes=changes, summary="全部のルールで一から作り直す",
+                     seconds=round(time.perf_counter() - t0, 1), warning=st.note or "")
+
     def undo(self) -> Reply:
         """［ひとつ戻す］。最後に採用した一言の札を取り消し（帳面に取り消しの1行）、表を直す前に戻す。"""
         m = self.store.month(self.year, self.month)
@@ -1554,6 +1603,15 @@ class Session:
         from .nextmonth import next_ym
         from .guide import guide as guide_of
         pasted = fac.settings.get("pasted_month")
+        # 今の表で外れているルールと場面の数。右の一覧のカードに赤で出す（作者 2026-11-07「ルールがあるのに、なぜ4回入って
+        # いるのか」。段を下げた直しで外れたルールが、知らせの文の後は見えなかった）
+        broken_n: dict[str, int] = {}
+        if m.table:
+            try:
+                for b in check_table(list(rules.values()), fac, self.store.staff_on(self.year, self.month), m, m.table):
+                    broken_n[b["rule"]] = broken_n.get(b["rule"], 0) + 1
+            except Exception:   # 数えられない時も画面は開く（印が出ないだけ）
+                broken_n = {}
         return {
             # 貼った月の次の月を開いていて、まだ配っていない時だけ、希望休を入れて作り直せる
             "redo_wishes": bool(pasted and next_ym(*pasted) == (self.year, self.month) and not m.distributed),
@@ -1566,7 +1624,7 @@ class Session:
             "support": self._support_rows(m, fac, staff),
             "cards": [{"id": r.id, "name": r.name, "flex": r.flex, "scope": r.scope, "who": r.who,
                        "when": r.when, "kind": r.kind, "params": r.params, "meta": r.meta,
-                       "shadowed_by": _shadowed(r, rules)}
+                       "shadowed_by": _shadowed(r, rules), "broken": broken_n.get(r.id, 0)}
                       for r in rules.values()],
             "pending": self.store.pending(self.year, self.month),
             "archived": [h for h in _history(self.store.ledger())][-30:],

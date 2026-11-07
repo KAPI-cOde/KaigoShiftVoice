@@ -76,10 +76,10 @@ def test_screen_draws_the_counts_in_every_table():
 
 
 def test_screen_can_show_previous_month_tail_and_hides_unit_counts_by_default():
-    """前の月の末5日をボタンで出し入れでき、人数の行はふだん施設全体だけ（作者 2026-11-07「つながりを自分で確認したい」
-    「施設全体で何人いるかの数字でいい。ユニットごとは出さなくても良い」）。"""
+    """前の月の末5日をボタンで出し入れでき、人数の行はふだん施設全体の勤務だけを始まりの早い順に（作者 2026-11-07「つながりを
+    自分で確認したい」「施設全体で何人いるかの数字でいい。ユニットごとは出さなくても良い」「早番、8時、日勤、遅番、夜勤の順」）。"""
     h = HTML.read_text(encoding="utf-8")
     assert 'id="toggleprev"' in h and 'id="toggleunits"' in h
     assert "S.prev_tail" in h and "prevDays()" in h
     assert 'viewPref("sv_show_unit_counts", false)' in h          # ユニットごとの人数は、ふだんは隠す
-    assert "return !r.unit || showUnitCounts" in h
+    assert "return showUnitCounts || (!r.unit && start[r.symbol] < 9000)" in h   # ふだんは施設全体の勤務の行だけ（公休も隠す）

@@ -747,6 +747,8 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
                     r = Reply("ask", None, "表を配った後の扱いにしました")
                 elif self.path == "/api/undo":
                     r = self.box.session.undo()
+                elif self.path == "/api/rebuild" and public is None:   # 重い計算なので公開版では受けない
+                    r = self.box.session.rebuild()
                 elif self.path == "/api/cleanup":
                     return self._json(200, self.box.session.cleanup_apply(data.get("archive") or [], data.get("keep") or []))
                 elif self.path == "/api/restore":

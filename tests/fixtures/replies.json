@@ -43,5 +43,6 @@
  "職員02さんが残って、夜勤の穴を埋めてくれた": "{\"items\":[{\"type\":\"cover\",\"staff\":\"職員02\",\"day\":null,\"how\":\"残業\",\"reason\":\"夜勤の穴を埋めた\"}]}",
  "10日の職員11さん、勤務Aに": "{\"items\": [{\"type\": \"set_cell\", \"staff\": \"職員11\", \"days\": [10], \"shift\": \"勤務A\", \"strength\": \"wish\", \"reason\": null}]}",
  "平日は勤務Aを1人": "{\"items\": [{\"type\": \"coverage\", \"shift\": \"勤務A\", \"min\": 1, \"max\": null, \"weekdays\": [\"mon\", \"tue\", \"wed\", \"thu\", \"fri\"], \"holidays\": false, \"strength\": \"operational\", \"reason\": null}]}",
- "職員11さんの夜勤はできるだけ単発で": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":\"職員11\",\"shift\":\"夜\",\"max\":1,\"strength\":\"operational\",\"reason\":null}]}"
+ "職員11さんの夜勤はできるだけ単発で": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":\"職員11\",\"shift\":\"夜\",\"max\":1,\"strength\":\"operational\",\"reason\":null}]}",
+ "遅番はなるべく連続2回まで。どうしようもない時は3回まで認めます。ただし職員14さんのような日勤と遅番中心の勤務の場合はそれには当たりません": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":\"遅\",\"max\":2,\"except_staff\":[\"職員14\"],\"strength\":\"negotiable\",\"reason\":null},{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":\"遅\",\"max\":3,\"except_staff\":[\"職員14\"],\"strength\":\"operational\",\"reason\":null}]}"
 }

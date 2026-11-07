@@ -48,7 +48,7 @@ SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係で�
 - count_limit 月の回数。staff(並び。全員なら null), shift, min, max(言っていなければ null), until_day(「〇日まで」なら日、なければ null), strength, reason。「夜勤なし」「夜勤0」は max 0。「15日まで夜勤なし」は max 0 と until_day 15（日付の型にしない）
 - weekday_pref 人の曜日の頼み。staff, weekdays(mon〜sun), shift, avoid(避けるなら true), until_month(「12月いっぱい」なら 12。なければ null), reason。その曜日を休みにする頼みは shift 公 と avoid false
 - coverage 1日に入る人数（勤務の記号の人数だけ）。shift, min(「2人に」「2人ほしい」「2人以上」なら 2), max(「3人まで」なら 3。ちょうどなら min と同じ。言っていなければ null), weekdays(曜日を言ったら mon〜sun の並び。毎日なら null), holidays(「祝日も」「土日祝」と言った時だけ true), strength, reason
-- consecutive_limit 続けて働く日数の上限。staff, shift(「夜勤は続けて2日まで」のように勤務を言った時だけ記号。言っていなければ null), max, strength, reason。「夜勤は単発で」「夜勤を続けないで」は shift 夜・max 1。表に無い当番の話ではない
+- consecutive_limit 続けて働く日数の上限。staff, shift(「夜勤は続けて2日まで」のように勤務を言った時だけ記号。言っていなければ null), max, except_staff(「ただし職員07さんは当たらない」「職員07さんは除く」の人の並び。なければ null), strength, reason。「夜勤は単発で」「夜勤を続けないで」は shift 夜・max 1。表に無い当番の話ではない。「なるべく2回まで、どうしようもない時は3回まで」は、max 2 の negotiable と max 3 の operational の2件にする。除く人は別の件にせず、両方の件の except_staff に入れる
 - staff_info 職員の情報の変更（できる勤務など）。staff, from_month, can_add(記号の並び), can_remove
 - leave_count 有給の日数の頼み（日付は任せる）。staff, count(日数。言っていなければ null), reason
 - cancel 前の頼みの取り消し（「やっぱりいらない」）。staff, days(取り消す日だけ。日を言っていなければ null), shift(取り消す勤務の記号。休みなら 公)。「そのままで」「触らないで」の日と人は書かない
@@ -84,6 +84,8 @@ cover は、人が残った・早く来たなど、もう済んだ穴埋めを�
 {"items":[{"type":"day_off","staff":"職員05","days":[9],"reason":null}]}
 一言「職員07さんの夜勤はできるだけ単発で」
 {"items":[{"type":"consecutive_limit","staff":"職員07","shift":"夜","max":1,"strength":"operational","reason":null}]}
+一言「早番はなるべく続けて2回まで、どうしようもない時は3回まで。ただし職員09さんは当たらない」
+{"items":[{"type":"consecutive_limit","staff":null,"shift":"早","max":2,"except_staff":["職員09"],"strength":"negotiable","reason":null},{"type":"consecutive_limit","staff":null,"shift":"早","max":3,"except_staff":["職員09"],"strength":"operational","reason":null}]}
 一言「平日の夜は、休みの人から呼び出し当番を2人決めて。電話はその2人にだけ」
 {"items":[{"type":"custom","summary":"平日の夜の呼び出し当番"}]}
 """

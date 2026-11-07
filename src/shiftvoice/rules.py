@@ -424,7 +424,7 @@ def _run_exceptions(rules: list[Rule]) -> list[Rule]:
             ex = sorted(w for w, mx in loose[key(g.params)].items() if mx > g.params["max"])
             if ex:
                 g = copy.copy(g)
-                g.meta = {**g.meta, "except_who": ex}
+                g.meta = {**g.meta, "except_who": sorted(set(g.meta.get("except_who", ())) | set(ex))}   # 言って除いた人は残す
         out.append(g)
     return out
 
