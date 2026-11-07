@@ -66,6 +66,17 @@
   .card .nm { font-weight: 700; }
   .grp { font-size: 12px; font-weight: 700; margin: 4px 0 2px; }
   .grpnote { font-size: 12px; margin: 6px 2px; }
+  /* 右の一覧の見出し（押すと、たたむ・開く）。上の段は太字と下の線、人ごとの見出しとその中のルールは1段下げる */
+  .cards .fold { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; width: 100%; text-align: left; border: none; border-radius: 0; background: none; padding: 3px 2px; }
+  .cards .fold:hover { background: #f4f4f4; }
+  .cards .fold.sec { font-weight: 700; font-size: 13px; border-bottom: 1px solid #000; margin-top: 4px; }
+  .cards .fold.sub { font-weight: 700; font-size: 12px; }
+  .cards .fold.picked .lab { text-decoration: underline; }
+  .cards .fold .cnt { font-weight: 400; margin-left: 8px; }
+  .cards .fold .tog { font-size: 11px; font-weight: 400; color: #555; white-space: nowrap; }
+  .cards .fold .broken { margin-left: 6px; font-size: 11px; font-weight: 700; color: #b00; border: 1px solid #b00; border-radius: 3px; padding: 0 4px; }
+  .cards .foldbody { display: flex; flex-direction: column; gap: 6px; }
+  .cards .foldbody.sub { padding-left: 10px; }
   td.name { cursor: pointer; }
   td.cell { cursor: pointer; }
   .rvbtn { white-space: nowrap; flex-shrink: 0; align-self: center; }
@@ -793,20 +804,135 @@ function monthOnly(c) {
   return c.kind !== "cell" && (c.scope === "once" || u.slice(0, 7) === ym);
 }
 
+// 右の一覧の分け方（画面に触らない。試験は node で動かす）。今月だけ、施設のルール（守る・できれば）、人ごとのルール。
+// 人ごとは人の名前ごとに、守る・本人の希望・できれば の順。2人以上のルールは「複数の人」に1か所でまとめる。
+// 名簿の半分を超える人のルール（取り込みの「公休の数」のように、ほかと違う人だけ外した全員の形）は施設のルールに入れる
+function groupCards(cards, roster) {
+  var MUST = { fixed: true, operational: true };
+  var only = cards.filter(monthOnly).reverse();
+  var rules = cards.filter(function (c) { return c.scope === "rule" && !monthOnly(c); });
+  var said = rules.filter(function (c) { return c.meta && c.meta.said; }).reverse();
+  var list = said.concat(rules.filter(function (c) { return !(c.meta && c.meta.said); }));
+  var g = { only: only, total: list.length, facMust: [], facSoft: [], people: [], multi: null };
+  var by = {}, later = [];
+  function grp(name) {
+    if (name === null) return (g.multi = g.multi || { name: null, gone: false, must: [], wish: [], soft: [] });
+    if (!by[name]) {
+      by[name] = { name: name, gone: roster.indexOf(name) < 0, must: [], wish: [], soft: [] };
+      if (by[name].gone) later.push(name);
+    }
+    return by[name];
+  }
+  list.forEach(function (c) {
+    var who = c.who || [];
+    if (!who.length || (who.length > 1 && who.length * 2 > roster.length)) { (MUST[c.flex] ? g.facMust : g.facSoft).push(c); return; }
+    var p = grp(who.length === 1 ? who[0] : null);
+    (c.flex === "wish" ? p.wish : MUST[c.flex] ? p.must : p.soft).push(c);
+  });
+  roster.forEach(function (n) { if (by[n]) g.people.push(by[n]); });
+  later.forEach(function (n) { g.people.push(by[n]); });
+  return g;
+}
+
+// 見出しを押した時の、たたむ・開く。ブラウザに覚えておき、覚えられない時もこの画面の間は切り替わる
+var folds = {};
+function folded(key, dflt) { return key in folds ? folds[key] : viewPref("sv_fold_" + key, dflt); }
+function setFold(key, v) { folds[key] = v; setViewPref("sv_fold_" + key, v); }
+// 見出し1つ。開いている時は中身を入れる箱を返し、たたんでいる時は null。たたんでいても、外れているルールの数は赤で出す
+function foldHead(box, key, label, sub, cards, dflt, cls) {
+  var shut = folded(key, dflt);
+  var b = el("button", "fold " + cls + (shut ? "" : " open"));
+  b.type = "button";
+  b.setAttribute("aria-expanded", shut ? "false" : "true");
+  var lab = el("span", "lab", (shut ? "▸ " : "▾ ") + label);
+  if (sub) lab.appendChild(el("span", "cnt", sub));
+  var bad = cards.filter(function (c) { return c.broken && c.flex !== "negotiable"; }).length;
+  if (bad) lab.appendChild(el("span", "broken", "外れ " + bad + "件"));
+  b.appendChild(lab);
+  b.appendChild(el("span", "tog", shut ? "開く" : "たたむ"));
+  b.addEventListener("click", function () { setFold(key, !shut); renderCards(); });
+  box.appendChild(b);
+  if (shut) return null;
+  var body = el("div", "foldbody " + cls);
+  box.appendChild(body);
+  return body;
+}
+// 新しく入ったルールは、たたんであっても見えるように、その見出しを1度だけ開く
+var revealed = {};
+function revealNew(g) {
+  if (!Object.keys(newIds).length) { revealed = {}; return; }
+  function open(keys, cards) {
+    if (cards.some(function (c) { return newIds[c.id] && !revealed[c.id]; })) keys.forEach(function (k) { setFold(k, false); });
+  }
+  open(["only"], g.only);
+  open(["fac", "fac_must"], g.facMust);
+  open(["fac", "fac_soft"], g.facSoft);
+  g.people.forEach(function (p) { open(["ppl", "p_" + p.name], p.must.concat(p.wish, p.soft)); });
+  if (g.multi) open(["ppl", "multi"], g.multi.must.concat(g.multi.wish, g.multi.soft));
+  Object.keys(newIds).forEach(function (id) { revealed[id] = true; });
+}
+
+// 右の一覧（作者 2026-11-07「右のルールも煩雑で見にくくて、施設のハードルール、ソフトルールそれぞれの重み付けと、個人ごとに
+// まとめられたハードルールとソフトルールが分かりやすく見れるといい」）。上から 今月だけ・施設のルール・人ごとのルール。
+// 見出しを押すと、たたむ・開く（消すのではなく見えなくするだけ）。人ごとの見出しは、ふだんたたんで件数だけ出す
+var personShown = null;
 function renderCards() {
   var box = document.getElementById("cards");
   box.textContent = "";
+  var g = groupCards(S.cards, (S.staff || []).map(function (s) { return s.name; }));
+  revealNew(g);
+  var picked = person && person !== personShown;   // 表の名前を押した時は、その人の見出しを開いて見える所へ
+  if (picked) { setFold("ppl", false); setFold("p_" + person, false); }
+  personShown = person;
+  var rs = S.rule_stats;
+  if (rs && g.total > GROUP_AT) box.appendChild(el("div", "grpnote", "ルール " + rs.total + "件" + (rs.added ? "（今月 +" + rs.added + "件）" : "")));
   // 今月だけのルールはいちばん上に出す（前は一覧に出ず、入ったことが見えなかった。2026-11-06 作者の答え）
-  var only = S.cards.filter(monthOnly).reverse();
-  only.forEach(function (c) { box.appendChild(makeCard(c)); });
-  var rules = S.cards.filter(function (c) { return c.scope === "rule" && !monthOnly(c); });
-  var said = rules.filter(function (c) { return c.meta && c.meta.said; }).reverse();
-  var base = rules.filter(function (c) { return !(c.meta && c.meta.said); });
-  var list = said.concat(base);
-  if (!list.length && !only.length) box.appendChild(el("div", "empty", "ルールはまだありません"));
-  if (list.length <= GROUP_AT) { cleanEntry(box); list.forEach(function (c) { box.appendChild(makeCard(c)); }); }
-  else renderGrouped(box, list);
+  var only = g.only;
+  if (only.length) {
+    var ob = foldHead(box, "only", "今月だけ", only.length + "件", only, false, "sec");
+    if (ob) only.forEach(function (c) { ob.appendChild(makeCard(c)); });
+  }
+  if (!g.total && !only.length) box.appendChild(el("div", "empty", "ルールはまだありません"));
+  cleanEntry(box);
+  var fac = g.facMust.concat(g.facSoft);
+  if (fac.length) {
+    var fb = foldHead(box, "fac", "施設のルール", fac.length + "件", fac, false, "sec");
+    if (fb) [["fac_must", "守る（動かせない・運用の都合）", g.facMust], ["fac_soft", "できれば（相談できる）", g.facSoft]].forEach(function (k) {
+      if (!k[2].length) return;
+      var sb = foldHead(fb, k[0], k[1], k[2].length + "件", k[2], false, "sub");
+      if (sb) k[2].forEach(function (c) { sb.appendChild(makeCard(c)); });
+    });
+  }
+  var ppl = g.people.concat(g.multi ? [g.multi] : []);
+  if (ppl.length) {
+    var all = [];
+    ppl.forEach(function (p) { all = all.concat(p.must, p.wish, p.soft); });
+    var pb = foldHead(box, "ppl", "人ごとのルール", all.length + "件" + (g.people.length ? "（" + g.people.length + "人）" : ""), all, false, "sec");
+    if (pb) {
+      ppl.forEach(function (p) {
+        var mine = p.must.concat(p.wish, p.soft), parts = [];
+        if (p.must.length) parts.push("守る" + p.must.length + "件");
+        if (p.wish.length) parts.push("本人の希望" + p.wish.length + "件");
+        if (p.soft.length) parts.push("できれば" + p.soft.length + "件");
+        var label = p.name === null ? "複数の人" : p.name + "さん" + (p.gone ? "（今の名簿にいない）" : "");
+        var hb = foldHead(pb, p.name === null ? "multi" : "p_" + p.name, label, parts.join("・"), mine, true,
+          "sub" + (p.name !== null && p.name === person ? " picked" : ""));
+        if (hb) mine.forEach(function (c) { hb.appendChild(makeCard(c)); });
+      });
+      // 名簿にいない人のルール（辞めた人の事情が残った形）は、片付けの候補になることを知らせる
+      var gone = g.people.filter(function (p) { return p.gone; });
+      if (gone.length) {
+        var gn = 0;
+        gone.forEach(function (p) { gn += p.must.length + p.wish.length + p.soft.length; });
+        pb.appendChild(el("div", "grpnote", "今の名簿にいない人（" + gone.map(function (p) { return p.name; }).join("・") + "さん）のルールが" +
+          gn + "件あります。3か月続くと、片付けの候補に出します"));
+      }
+    }
+  }
+  if (person && !g.people.some(function (p) { return p.name === person; })) box.appendChild(el("div", "grpnote", person + "さんだけのルールはまだありません"));
   renderArchived(box);
+  var pk = picked && box.querySelector(".fold.picked");
+  if (pk) pk.scrollIntoView({ block: "nearest" });
 }
 
 // ルールの整理（cleanup.py・docs/rule-cleanup.md の6）。片付けの候補を種類ごとにまとめ、その時に全部決める。
@@ -988,11 +1114,9 @@ function showWhy(name, day) {
   });
 }
 
-// ルールが多い時は、何件あっても開いた時の一覧を数行に収める（docs/rule-cleanup.md の3）。
-// 今月増えたルールだけ1件ずつ出し、全員のルールと人ごとのルールはたたんで件数だけ。人ごとは表の名前を押して開く
+// ルールが多い時（この数より多い時）は、一覧の上に全部の件数と今月増えた数を出す（docs/rule-cleanup.md の3）
 var GROUP_AT = 15;
-var openGroup = null;   // "all"（全員のルール）か null
-var person = null;      // 表で押した人の名前
+var person = null;      // 表で押した人の名前（右の一覧で、その人の見出しを開く）
 // 片付けの候補があれば、何件あって、なぜ見るかを一言添えて［整理する］
 function cleanEntry(box) {
   var rsc = S.rule_stats;
@@ -1003,58 +1127,6 @@ function cleanEntry(box) {
   cb2.addEventListener("click", openClean);
   cr.appendChild(cb2);
   box.appendChild(cr);
-}
-
-function renderGrouped(box, list) {
-  var rs = S.rule_stats;
-  if (rs) {
-    box.appendChild(el("div", "grp", "ルール " + rs.total + "件" + (rs.added ? "（今月 +" + rs.added + "件）" : "")));
-  }
-  cleanEntry(box);
-  var start = S.year + "-" + String(S.month).padStart(2, "0") + "-01";
-  var fresh = list.filter(function (c) { var m = c.meta || {}; return (m.said && m.from === start) || newIds[c.id]; });
-  var rest = list.filter(function (c) { return fresh.indexOf(c) < 0; });
-  var everyone = rest.filter(function (c) { return !c.who || !c.who.length; });
-  var named = rest.filter(function (c) { return c.who && c.who.length; });
-  if (fresh.length) {
-    box.appendChild(el("div", "grp", "今月増えたルール " + fresh.length + "件"));
-    fresh.forEach(function (c) { box.appendChild(makeCard(c)); });
-  }
-  var g = el("button", "card grpbtn" + (openGroup === "all" ? " open" : ""));
-  g.type = "button";
-  var gt = el("div", "top");
-  gt.appendChild(el("span", "nm", "全員のルール " + everyone.length + "件"));
-  gt.appendChild(el("span", "per", openGroup === "all" ? "たたむ" : "開く"));
-  g.appendChild(gt);
-  g.addEventListener("click", function () { openGroup = openGroup === "all" ? null : "all"; renderCards(); });
-  box.appendChild(g);
-  if (openGroup === "all") everyone.forEach(function (c) { box.appendChild(makeCard(c)); });
-  if (person) {
-    var mine = named.filter(function (c) { return c.who.indexOf(person) >= 0; });
-    var h = el("button", "card grpbtn open");
-    h.type = "button";
-    var ht = el("div", "top");
-    ht.appendChild(el("span", "nm", person + "さんのルール " + mine.length + "件"));
-    ht.appendChild(el("span", "per", "閉じる"));
-    h.appendChild(ht);
-    h.addEventListener("click", function () { person = null; renderTable(); renderCards(); });
-    box.appendChild(h);
-    mine.forEach(function (c) { box.appendChild(makeCard(c)); });
-  } else {
-    var who = {}, onRoster = {};
-    (S.staff || []).forEach(function (st) { onRoster[st.name] = true; });
-    named.forEach(function (c) { c.who.forEach(function (w) { who[w] = true; }); });
-    box.appendChild(el("div", "grpnote", "人ごとのルール " + named.length + "件（" + Object.keys(who).length +
-      "人）。表の名前を押すと、その人のルールだけ出ます"));
-    // 名簿にいない人のルール（辞めた人の事情が残った形）は、件数だけ別に知らせる
-    var gone = named.filter(function (c) { return c.who.every(function (w) { return !onRoster[w]; }); });
-    if (gone.length) {
-      var gn = {};
-      gone.forEach(function (c) { c.who.forEach(function (w) { gn[w] = true; }); });
-      box.appendChild(el("div", "grpnote", "うち、今の名簿にいない人（" + Object.keys(gn).join("・") + "さん）のルールが" +
-        gone.length + "件あります。3か月続くと、片付けの候補に出します"));
-    }
-  }
 }
 
 // ルールの強さ。表が作れない時は、相談できる → 本人の希望 → 運用の都合 の順にゆるめ、動かせないは最後まで守る（build.solve_staged）
