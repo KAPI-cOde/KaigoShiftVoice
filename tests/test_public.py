@@ -459,3 +459,27 @@ def test_公開版でも見本の表の案内が出て_案内の一言は見張�
     assert code == 200 and res["reply"]["kind"] == "applied", res
     p = res["state"]["guide"]["problems"][0]
     assert p["before"] == 11 and p["now"] == 0 and p["cells"] == []
+
+
+def test_公開版でも動画の3つの一言が通り_チャットでルールを聞くとClaudeを呼ばずに答える(make_server):
+    """提出の公開版（Hugging Face）で審査員が打つ流れ。3つの一言は見張りを通って直り、平均化の返事には回数の幅が出る。
+    ルールの問いは手元で答えるので Claude を呼ばず、開くボタンの先（ルールのページ・整理の画面）の口も断らない。"""
+    base, app, calls = make_server()
+    a, _ = new_user(base)
+    for i, text in enumerate(["遅番の次の日に早番はきついから、やめてあげて", "みんな、遅番が3日も4日も続くのはやめて",
+                              "早番も遅番も、可能な範囲で平均化して"], 1):
+        code, res, _ = req(base, "/api/say", "POST", {"text": text}, cookie=a, timeout=120)
+        assert code == 200 and res["reply"]["kind"] == "ask_period", (text, res)
+        code, res, _ = req(base, "/api/answer", "POST", {"uid": res["reply"]["uid"], "text": "rule"}, cookie=a, timeout=180)
+        assert code == 200 and res["reply"]["kind"] == "applied", (text, res)
+        assert calls() == i
+    assert [x[:2] for x in res["reply"]["extra"]["spread"]] == ["早番", "遅番"], res["reply"]
+    for text, topic in [("外れているルールは？", "broken"), ("ルールを見せて", "list"), ("ルールを整理して", "tidy")]:
+        code, res, _ = req(base, "/api/say", "POST", {"text": text}, cookie=a)
+        r = res["reply"]
+        assert code == 200 and r["kind"] == "info" and r["extra"]["topic"] == topic and r["sent"] is None, (text, res)
+        assert "AI の見立て" not in r["message"]   # 公開版は整理の AI を呼ばないので、画面へ案内しない
+    assert calls() == 3
+    for path in ["/api/cleanup", "/api/tidy"]:
+        code, _, _ = req(base, path, cookie=a, timeout=60)
+        assert code == 200, path
