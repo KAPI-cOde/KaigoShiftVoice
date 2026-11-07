@@ -728,8 +728,12 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                                 if len(real) == 1 else _flex(it.get("strength"), "wish"),
                                 "params": {"in": [sym]}, "who": who, "when": ds})
             else:
-                p.rules.append({"name": f"{_who(who)} {'・'.join(map(str, ds))}日は{sname}にしない",
-                                "kind": "cell", "flex": "wish", "params": {"not_in": [sym]},
+                # 「できれば休みにしないで」は配慮の強さ（相談できる）。前は言い方によらず本人の希望の強さで入り、年末の
+                # 3日を「できれば」で頼んでも3日とも必ず勤務になった（作者 2026-11-07「年末年始に入れてしまって構わない」）。
+                # 動かせない強さにはしない（読み取りが fixed と返しても、今までどおり本人の希望の強さ）
+                soft = len(real) == 1 and _cell_strength(it.get("strength"), text, t) == "negotiable"
+                p.rules.append({"name": f"{_who(who)} {'・'.join(map(str, ds))}日は{sname}にしない" + ("（できれば）" if soft else ""),
+                                "kind": "cell", "flex": "negotiable" if soft else "wish", "params": {"not_in": [sym]},
                                 "who": who, "when": ds})
         elif t == "move":
             who = _names(it.get("staff"), names)

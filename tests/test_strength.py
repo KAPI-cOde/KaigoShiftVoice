@@ -49,3 +49,12 @@ def test_dateless_item_dropped_only_when_copy_of_weekday(nov):
     with pytest.raises(Clarify):   # 別の人の日付の無い休みは、落とさずに聞き返す
         to_proposal([wd, {"type": "day_off", "staff": "小川", "days": None}], "木曜は早番にしないで。あと小川さんも休み",
                     fac, staff, m)
+
+
+def test_できれば休みにしないでは相談できる強さ(nov):
+    """年末の3日を「できれば休みにしないで」と頼むと、前は本人の希望の強さで入り、3日とも必ず勤務になった
+    （作者 2026-11-07「年末年始に入れてしまって構わない」）。言い切った時は今までどおり本人の希望の強さ。"""
+    avoid = lambda s: [{"type": "avoid_cell", "staff": "岡田", "days": [28, 29, 30], "shift": "公", "strength": s}]
+    assert _flex(nov, "岡田さん、28日から30日は、できれば休みにしないで", avoid("negotiable")) == ["negotiable"]
+    assert _flex(nov, "岡田さん、28日から30日は休みにしないで", avoid("negotiable")) == ["wish"]   # 言い切りは弱めない
+    assert _flex(nov, "岡田さん、28日から30日は絶対に休みにしないで", avoid("fixed")) == ["wish"]   # 動かせない強さにはしない
