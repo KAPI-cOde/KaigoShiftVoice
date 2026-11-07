@@ -1162,12 +1162,16 @@ class Session:
             if isinstance(v, dict) and "def" in v:
                 v["assign"] = assign(v["def"], fac, staff, m, m.table, pins=pins)
 
-    def rebuild(self, tries: int = 3, budget: float = 180.0) -> Reply:
+    def rebuild(self, tries: int = 3, budget: float = 180.0, *, op_id: str | None = None,
+                said: str = "全部のルールで一から作り直す", hist: dict | None = None) -> Reply:
         """［全部のルールで一から作り直す］。今の帳面の全部のルールで、表を白紙から何回か作り、いちばん良い表に置き換える。
         ［ひとつ戻す］で前の表に戻せる。作者の手順は「まずゼロから根本的に回す。だいぶいい感じになったら、少しの変更を
         加え始める」（2026-11-07）。一言の直しは狭い範囲しか動かさないので、根本のルールを足した後は表に無理が出た
         （実際の施設の12月で、夜勤の単発を足すと運用の都合を外す段へ下がり102マス動いた）。
-        回すごとに計算の種を変え、外れたルールの強さと数で比べる。合わせて budget 秒を超えたら、そこまでの表で決める"""
+        回すごとに計算の種を変え、外れたルールの強さと数で比べる。合わせて budget 秒を超えたら、そこまでの表で決める。
+        全部のルールで作れず、詰まり所の日があれば、理由1つと穴を埋める提案1つを言う（作者 2026-11-07「こういう理由で
+        できなかったけれど、こうしてもいいですか」）。op_id・said・hist は、提案を受けた時（_commit_hole）に、受けた中身と
+        作り直しを［ひとつ戻す］1回で戻せるよう、同じ戻す履歴に入れるため"""
         import time
         from dataclasses import replace
         m = self.store.month(self.year, self.month)
@@ -1204,10 +1208,12 @@ class Session:
         if best is None:
             return Reply("failed_solve", None, (last_try.message if last_try else "") + "。全部のルールでは表が作れませんでした。表は変えていません")
         st = best[1]
-        uid = f"rebuild-{self.now().strftime('%Y%m%d%H%M%S')}"
+        uid = op_id or f"rebuild-{self.now().strftime('%Y%m%d%H%M%S')}"
         before = m.table
-        m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": "全部のルールで一から作り直す",
-                          "layer_assign": {k: v["assign"] for k, v in m.layers.items() if isinstance(v, dict) and "def" in v}})
+        self._drop_hole_offers()   # 前の作り直しの提案は、新しい表には当てない
+        m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": said,
+                          "layer_assign": {k: v["assign"] for k, v in m.layers.items() if isinstance(v, dict) and "def" in v},
+                          **(hist or {})})
         m.table, m.built_rev = st.result.table, self.store.ledger().rev
         self._reassign_layers(m)   # 白紙から作ると、当番の人が出勤になることがある。新しい表で割り当て直す
         self.store.save_month(m)
@@ -1227,16 +1233,136 @@ class Session:
             second = "外れているルールはなくなり、［ひとつ戻す］で前の表に戻せます。"
         head = (f"一から作り直しました（外れていたルールは{len(was)}件から{now_n}件になりました）。" if before
                 else f"一から作り直しました（外れているルールは{now_n}件です）。")
+        hole = (self._hole_offer(fac, staff, rules, m, st.choke[0])
+                if left and st.result.stage != 1 and st.choke else None)
+        if hole:
+            second = hole["message"]
         extra = {}
         if left:
             dt_ = st.detail or {"lead": "", "items": [], "notes": [], "off_rules": 0}
             items = dt_["items"] or broken_parts(left, {x.name for x in staff})
             extra = {"broken": {"count": now_n, "lead": dt_["lead"], "items": items, "notes": dt_["notes"],
                                 "rebuild": False}}
+        if hole:
+            extra["hole"] = hole
         # 外れが残った時だけ赤い知らせ（warning）にする。外れが無くなった時は、見出しの横の添え書き（note）で黒く出す
-        return Reply("applied", uid, head + second, changes=changes, summary="全部のルールで一から作り直す",
+        return Reply("applied", uid, head + second, changes=changes, summary=said,
                      seconds=round(time.perf_counter() - t0, 1), warning=head + second if left else "",
                      extra={**extra, "note": "" if left else head + second})
+
+    def _drop_hole_offers(self) -> None:
+        for x in self.store.pending(self.year, self.month):
+            if x.get("status") == "offer" and (x.get("offer") or {}).get("hole") is not None:
+                self.store.resolve_pending(self.year, self.month, x["id"])
+
+    def _hole_offer(self, fac, staff, rules, m, choke: dict) -> dict | None:
+        """詰まり所の日に、誰をどの勤務に入れれば組めるかの提案（choke.hole_offers）を、未反映の案として残し、
+        画面へ返す形にする。理由1文と提案1文。ほかの案は2つまで、たたんで見せる。外すルールが帳面に無い候補（返す案の
+        g- など）は、受けても外せないので出さない"""
+        from .build import impossible_wishes
+        from .choke import hole_offers
+        from .rules import fair_on
+        led = self.store.ledger()
+        ids = set(led.rules_at())
+        rules, _ = impossible_wishes(fac, fair_on(rules), m)   # 詰まり所を探した時と同じルール（solve_staged の中と同じ）
+        cands = [c for c in hole_offers(fac, staff, rules, m, choke["day"], limit=6)
+                 if all(r.id in ids for r, _i in c["except"])][:3]
+        nm = {st.symbol: st.name for st in fac.shift_types}
+        d = choke["day"]
+        wd = "月火水木金土日"[dt.date(self.year, self.month, d).weekday()]
+        wishes = [w for w, wd_ in choke.get("wishes", []) if wd_ == d]
+        if not cands:   # 1人に頼むだけでは埋まらない。理由と次の手だけを言う（押す案は無い）
+            return {"uid": None, "others": [], "message": (
+                f"{d}日（{wd}）は、" + (f"{'さん・'.join(wishes)}さんの希望休が重なり、" if wishes else "")
+                + "人が足りず組めません。1人に頼むだけでは埋まらないので、その日の人数を一言で減らすか、"
+                + ("希望休を本人と相談してください" if wishes else "ルールを一言で直せないか試してください"))}
+
+        def item(c: dict) -> dict:
+            exc = list(dict.fromkeys(r.name for r, _i in c["except"]))
+            who = f"{c['staff']}さんに{d}日の{nm.get(c['symbol'], c['symbol'])}を"
+            sup = f"（{c['unit']}へ応援）" if c["unit"] else ""
+            off = "".join(f"「{x}」" for x in exc) + "をこの日だけ外します" if exc else ""
+            return {"staff": c["staff"], "day": d, "symbol": c["symbol"], "unit": c["unit"],
+                    "except": list(dict.fromkeys(r.id for r, _i in c["except"])),
+                    "label": who + "頼む" + sup + ("。" + off if off else ""),
+                    "ask": who + "頼めますか" + sup + "。" + (off + "。" if off else "")}
+
+        c0 = cands[0]
+        where = (f"{c0['hole_unit']}の" if c0["hole_unit"] else "") + nm.get(c0["symbol"], c0["symbol"])
+        reason = (f"{d}日（{wd}）は、" + (f"{'さん・'.join(wishes)}さんの希望休が重なり、" if wishes else "")
+                  + f"{where}に入れる人がいません。")
+        items = [item(c) for c in cands]
+        message = reason + items[0]["ask"] + "引き受けた分は翌月に返します"
+        u = self.store.add_pending(self.year, self.month, f"{d}日の{where}の穴を埋める", status="offer", offer={
+            "hole": items, "pick": 0, "message": message, "summary": items[0]["label"],
+            "base_rev": led.rev, "base_table": json.dumps(m.table)})
+        return {"uid": u["id"], "message": message, "others": [x["label"] for x in items[1:]]}
+
+    def _commit_hole(self, u: dict, pick: int | None = None) -> Reply:
+        """穴を埋める提案を受けた。帳面に、その人のその日のマスの頼み（今月だけ）と、その人のルールをその日だけ外す印を
+        書き、応援なら月の応援に入れ、引き受けの記録に1件足してから、全部のルールで作り直す。作り直しと同じ戻す履歴に
+        入れるので、［ひとつ戻す］1回で、表・帳面・応援・引き受けの記録が全部戻る。作り直しで表ができなかった時は、
+        書いた物をすべて戻す。案を作った後に表か帳面が変わっていたら、古い案では直さない"""
+        uid, o = u["id"], u["offer"]
+        items = o["hole"]
+        k = o.get("pick", 0) if pick is None else pick
+        if not 0 <= k < len(items):
+            return Reply("error", uid, "選んだ案が見つかりません。表は変えていません")
+        c = items[k]
+        m = self.store.month(self.year, self.month)
+        led = self.store.ledger()
+        if led.rev != o.get("base_rev") or json.dumps(m.table) != o.get("base_table"):
+            self.store.resolve_pending(self.year, self.month, uid)
+            return Reply("ask", uid, "表かルールが変わったので、この案は使えません。もう一度［全部のルールで一から作り直す］を"
+                                     "押してください。表は変えていません")
+        date = f"{self.year:04d}-{self.month:02d}-{c['day']:02d}"
+        frm = f"{self.year:04d}-{self.month:02d}-01"
+        until = f"{self.year:04d}-{self.month:02d}-{calendar.monthrange(self.year, self.month)[1]:02d}"
+        fac = self.store.facility()
+        nm = {st.symbol: st.name for st in fac.shift_types}
+        at = self.now().isoformat(timespec="seconds")
+        rid = f"r{_next_id(led)}"
+        led.append("add", rule={"id": rid, "name": f"{c['staff']}さん {c['day']}日 {nm.get(c['symbol'], c['symbol'])}"
+                                + (f"（{c['unit']}へ応援）" if c["unit"] else "（穴を埋める）"),
+                                "kind": "cell", "flex": "fixed", "params": {"in": [c["symbol"]]}, "who": [c["staff"]],
+                                "when": [c["day"]], "scope": "once",
+                                "meta": {"said": c["label"], "source": "穴を埋める提案", "at": at}},
+                   op_id=uid, frm=frm, until=until)
+        cur = led.rules_at()
+        keep = ("id", "name", "kind", "flex", "params", "who", "when", "scope", "meta", "light")
+        for x in c["except"]:
+            r = cur[x].to_dict()
+            rd = {key: v for key, v in r.items() if key in keep}
+            meta = {key: v for key, v in rd.get("meta", {}).items() if key not in ("from", "until")}
+            meta["except_cells"] = sorted(set(meta.get("except_cells", [])) | {f"{c['staff']}/{date}/{c['symbol']}"})
+            rd["meta"] = meta
+            led.append("change", rule_id=x, rule=rd, op_id=uid)
+        self.store.save_ledger(led)                                              # 1 帳面
+        hist = {"rest_adjust": dict(m.rest_adjust), "support": dict(m.support)}
+        if c["unit"]:
+            m.support = {**m.support, f"{c['staff']}/{c['day']}": c["unit"]}
+            self.store.save_month(m)                                             # 2 応援
+        aid = f"a-hole-{uid}"
+        acc = self.store.acceptances()
+        self.store.save_acceptances([a for a in acc if a.id != aid] + [Acceptance(
+            id=aid, staff=c["staff"], date=date, layer=f"{nm.get(c['symbol'], c['symbol'])}で穴埋め", op_id=uid,
+            tx_rev=led.rev, note=c["label"])])                                  # 3 引き受けの記録
+        hist["acceptance_id"] = aid
+        self.store.resolve_pending(self.year, self.month, uid)                   # 4 未反映の案
+        r = self.rebuild(op_id=uid, said=c["label"], hist=hist)                  # 5 作り直し（同じ戻す履歴）
+        if r.kind != "applied":
+            led = self.store.ledger()
+            for t in [t for t in led.txs if t.get("op_id") == uid and t["op"] != "undo"]:
+                led.append("undo", target_rev=t["rev"], op_id=f"undo-{uid}", meta={"at": at})
+            self.store.save_ledger(led)
+            m = self.store.month(self.year, self.month)
+            m.support, m.rest_adjust = hist["support"], hist["rest_adjust"]
+            self.store.save_month(m)
+            self.store.save_acceptances([a for a in self.store.acceptances() if a.id != aid])
+            r.message = f"この案（{c['label']}）でも表が作れなかったので、何も変えていません。" + r.message
+            return r
+        r.message = f"{c['staff']}さんの引き受けとして記録し、作り直しました。" + r.message
+        return r
 
     def undo(self) -> Reply:
         """［ひとつ戻す］。最後に採用した一言の札を取り消し（帳面に取り消しの1行）、表を直す前に戻す。"""
@@ -1484,6 +1610,8 @@ class Session:
         o = u["offer"]
         if o.get("cover") is not None:   # 穴埋めの記録。表を持たない案なので、下の作り直しの確かめには通さない
             return self._commit_cover(u)
+        if o.get("hole") is not None:    # 作り直しで作れなかった日の穴を埋める提案。一言の案の作り直しには通さない
+            return self._commit_hole(u, pick)
         m = self.store.month(self.year, self.month)
         led = self.store.ledger()
         if o.get("cancel") is not None and not o.get("replace"):

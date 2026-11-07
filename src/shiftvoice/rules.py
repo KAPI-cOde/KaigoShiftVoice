@@ -609,6 +609,39 @@ def _syms(spec, facility: Facility) -> tuple[str, ...]:
 
 
 def expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> list[Instance]:
+    """ルールの場面。その日だけ外したマス（meta の except_cells）は、計算・外れの確かめ・詰まり所のどれでも数えない"""
+    return _except_cells(rule, month, _expand(rule, facility, staff, month))
+
+
+def _except_cells(rule: Rule, month: Month, out: list[Instance]) -> list[Instance]:
+    """「名前/YYYY-MM-DD/記号」のマス（穴を埋める提案を受けた時に、その人のこのルールをその日だけ外した所）。
+    回数のルールはそのマスを数えず、ほかの種類はそのマスにその記号を含む場面を外す（遅番の次の日の早番を1日だけ認めても、
+    その日の遅番から次の日への並びは守る）"""
+    ex = rule.meta.get("except_cells")
+    if not ex:
+        return out
+    ym = f"{month.year:04d}-{month.month:02d}-"
+    cells: dict[tuple[str, int], str] = {}
+    for c in ex:
+        name, date, sym = c.rsplit("/", 2)
+        if date.startswith(ym):
+            cells[(name, int(date[8:10]))] = sym
+    if not cells:
+        return out
+
+    def hit(t: Term) -> bool:
+        return cells.get((t.staff, t.day)) in t.symbols
+
+    res = []
+    for inst in out:
+        if not any(hit(t) for t in inst.terms):
+            res.append(inst)
+        elif rule.kind == "count":
+            res.append(Instance(inst.rule, inst.key, [t for t in inst.terms if not hit(t)], inst.lo, inst.hi))
+    return res
+
+
+def _expand(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> list[Instance]:
     p = rule.params
     k = rule.kind
     out: list[Instance] = []

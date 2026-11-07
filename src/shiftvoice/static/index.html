@@ -49,6 +49,7 @@
   .reply details.brokenlist { margin-top: 8px; font-size: 12px; }
   .reply details.brokenlist summary { cursor: pointer; text-decoration: underline; }
   .reply details.brokenlist ul { margin: 4px 0; padding-left: 18px; }
+  .reply .holeother { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin: 6px 0; }
   .reply .q { margin: 4px 0 6px; font-weight: 700; }
   button { font: inherit; background: #fff; color: #000; border: 1px solid #000; border-radius: 3px; padding: 4px 14px; cursor: pointer; }
   button:hover { background: #f4f4f4; }
@@ -1377,6 +1378,11 @@ function renderReplyBody(r) {
     box.appendChild(cvb);
     return;
   }
+  if (r.kind === "hole_offer") {  // 開き直した時の、作り直しで作れなかった日の穴を埋める提案
+    box.appendChild(el("div", "offer", r.message || ""));
+    holeButtons(box, r.extra.hole);
+    return;
+  }
   if (r.kind === "fix_offer") {  // 配った後のほかの直し。［これで直す］まで表は変えない
     box.appendChild(el("div", "offer", r.message || ""));
     var fb = el("div", "btns");
@@ -1398,6 +1404,7 @@ function renderReplyBody(r) {
     // 引き受けの記録（その人のこの月の分）。1行ずつ「11/1 引き受け（休みは10日へ）」
     ((r.extra && r.extra.records) || []).forEach(function (t) { box.appendChild(el("div", "records", t)); });
     if (r.warning) box.appendChild(el("div", "warning", r.warning));
+    if (r.extra && r.extra.hole && r.extra.hole.uid) holeButtons(box, r.extra.hole);
     var bx = r.extra && r.extra.broken;
     if (bx) {
       // 段を下げて外れた時。本文は理由と提案の2文だけにし、選ぶボタンと、たたんだ外れの全部を下に出す（作者 2026-11-07）
@@ -1530,6 +1537,41 @@ function renderDist() {
     }).catch(fail);
   });
   w.appendChild(b);
+}
+
+// 作り直しで作れなかった日の穴を埋める提案（作者 2026-11-07「こういう理由でできなかったけれど、こうしてもいいですか」）。
+// ［了承をもらって入れる］で、その人の引き受けを記録して作り直す。ほかの案はたたんで見せる
+function holeButtons(box, h) {
+  var hb = el("div", "btns");
+  var ok = el("button", "primary", "了承をもらって入れる"); ok.type = "button";
+  ok.addEventListener("click", function () { sendHole(h.uid, null); });
+  hb.appendChild(ok);
+  var no = el("button", "", "やめる"); no.type = "button";
+  no.addEventListener("click", function () { sendOffer("cancel", h.uid); });
+  hb.appendChild(no);
+  box.appendChild(hb);
+  if ((h.others || []).length) {
+    var det = el("details", "brokenlist");
+    det.appendChild(el("summary", "", "ほかの案（" + h.others.length + "件）"));
+    h.others.forEach(function (t, i) {
+      var row = el("div", "holeother");
+      row.appendChild(el("span", "", t));
+      var b = el("button", "", "この案で入れる"); b.type = "button";
+      b.addEventListener("click", function () { sendHole(h.uid, i + 1); });
+      row.appendChild(b);
+      det.appendChild(row);
+    });
+    box.appendChild(det);
+  }
+}
+function sendHole(uid, pick) {
+  if (busy) return;
+  var rb = document.getElementById("reply");
+  rb.textContent = "";
+  var w = el("div", "q", "引き受けを記録して、全部のルールで作り直しています（1〜3分ほどかかります）");
+  w.setAttribute("role", "status");
+  rb.appendChild(w);
+  sendOffer("accept", uid, pick === null ? null : { pick: pick });
 }
 
 function sendOffer(path, uid, extra) {
@@ -2687,7 +2729,9 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
       return { day: m.day, kind: m.kind, line: m.line, parts: m.parts, label: m.label, warn: m.warn,
                changes: m.changes, message: m.message, summary: m.summary, vs_first: m.vs_first || "" };
     });
-    offerR = o.cover ? { kind: "cover_offer", uid: of.id, changes: [], message: o.message }
+    offerR = o.hole ? { kind: "hole_offer", uid: of.id, changes: [], message: o.message,
+                        extra: { hole: { uid: of.id, others: o.hole.slice(1).map(function (x) { return x.label; }) } } }
+           : o.cover ? { kind: "cover_offer", uid: of.id, changes: [], message: o.message }
            : o.duty ? { kind: "standby_offer", uid: of.id, changes: o.changes || [],
                message: o.message || ("その日の待機の" + o.duty + "さんに頼む案です（表で変わるのは" + (o.changes || []).length + "マス）"),
                summary: o.summary || ("公休　" + pr(o.requester) + "　" + pr(o.duty)),

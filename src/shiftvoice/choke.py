@@ -39,20 +39,12 @@ def chokepoints(facility: Facility, staff: list[Staff], rules: list[Rule], month
 
     D = month.days
     req = S.requested_cells(rules, facility, staff, month)
-    items = []   # (ルール, 場面, 月の中の日の最小, 最大)
-    for r in with_overrides(rules):
-        if r.flex not in HARD:
-            continue
-        for inst in expand(r, facility, staff, month):
-            ds = [t.day for t in inst.terms if t.day >= 1]
-            if ds:
-                items.append((r, inst, min(ds), max(ds)))
+    items = _items(facility, staff, rules, month)
     seen: set[frozenset] = set()
     found: list[dict] = []
     for d in range(1, D + 1):
         a, b = max(1, d - window), min(D, d + window)
-        inside = [(r, i) for r, i, lo, hi in items if a <= lo and hi <= b]
-        core = _core(facility, staff, month, req, inside + _caps_in(items, a, b), a, b, dtime, S)
+        core = _core(facility, staff, month, req, _window(items, a, b), a, b, dtime, S)
         if not core:
             continue
         key = frozenset((r.id, i.key) for r, i in core)
@@ -67,6 +59,24 @@ def chokepoints(facility: Facility, staff: list[Staff], rules: list[Rule], month
             by_day[c["day"]] = c
     out = sorted(by_day.values(), key=lambda c: (-len(c["wishes"]), c["day"]))
     return out[:limit]
+
+
+def _items(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month) -> list:
+    """段1で外せないルールの場面と、その場面の月の中の日の最小・最大。[(ルール, 場面, 最小, 最大), ...]"""
+    items = []
+    for r in with_overrides(rules):
+        if r.flex not in HARD:
+            continue
+        for inst in expand(r, facility, staff, month):
+            ds = [t.day for t in inst.terms if t.day >= 1]
+            if ds:
+                items.append((r, inst, min(ds), max(ds)))
+    return items
+
+
+def _window(items, a: int, b: int) -> list:
+    """a〜b 日の小さなモデルに入れる場面。中で閉じる場面と、はみ出す小さな上限を窓の分に切った場面"""
+    return [(r, i) for r, i, lo, hi in items if a <= lo and hi <= b] + _caps_in(items, a, b)
 
 
 def _caps_in(items, a: int, b: int) -> list:
@@ -207,3 +217,117 @@ def explain(chokes: list[dict], month: Month) -> list[str]:
         else:
             out.append(f"ほかに{when}も詰まっています" + (f"（{_names(c['wishes'], d)}の希望休）" if c["wishes"] else ""))
     return out
+
+
+def hole_offers(facility: Facility, staff: list[Staff], rules: list[Rule], month: Month, day: int, *,
+                window: int = WINDOW, dtime: float = DTIME, limit: int = 3) -> list[dict]:
+    """詰まり所の日 day に、誰か1人を1つの勤務に入れれば、その日の前後が組めるか（作者 2026-11-07「この人に早番を
+    頼むなら解決する？」）。候補ごとに、詰まり所と同じ小さなモデルで、その人をその勤務に決めて解く。希望休と動かせない
+    ルールは外さない。外してよいのは、その人だけの場面で、その日に当たる運用の都合のルールだけ（いちばん少なく外す）。
+    ほかのユニットの人は、その日だけ詰まったユニットへ応援で入る形で試す。
+    1件は {"staff", "day", "symbol", "unit"（応援で入るユニット。応援でなければ None）, "hole_unit", "except": [(ルール, 場面)]}。
+    並べ方は、外すルールが少ない人、外すなら休みの並びや連勤より回数のルールを先（休みの並びは体を守るため）、
+    同じユニットの人、その月の勤務の日が少ない人の順。1人につき1件"""
+    from dataclasses import replace
+
+    from . import solver as S
+
+    a, b = max(1, day - window), min(month.days, day + window)
+    # 候補を確かめる窓は、day を含む詰まり所の窓（真ん中が day−window〜day+window）を全部覆う幅。真ん中の窓だけで
+    # 確かめると、応援で抜けたユニットの次の日の窓が組めなくなるのを見落とした（作り話の施設の試験で、受けた後も同じ日が
+    # 詰まり所に残った）
+    a2, b2 = max(1, day - 2 * window), min(month.days, day + 2 * window)
+    req = S.requested_cells(rules, facility, staff, month)
+    base = _items(facility, staff, rules, month)
+    core = _core(facility, staff, month, req, _window(base, a, b), a, b, dtime, S)
+    if not core:
+        return []
+    units = sorted(_hole_units(core, facility))
+    work = {st.symbol for st in facility.shift_types if st.kind == "work"}
+    syms = sorted({x for _r, inst in core if _r.kind in ("coverage", "unit_after")
+                   for t in inst.terms if t.day == day and t.coef > 0 for x in t.symbols} & work)
+    table = month.table or {}
+    best: dict[str, tuple] = {}
+    for s in staff:
+        row = table.get(s.name)
+        workdays = sum(v in work for v in row) if row else month.days   # 表に行の無い人（その月から入る人）は後ろへ
+        for sym in syms:
+            if sym not in s.can:
+                continue
+            for u in ([None] if not units or s.unit in units else units):
+                m2 = month if u is None else replace(month, support={**month.support, f"{s.name}/{day}": u})
+                items = base if u is None else _items(facility, staff, rules, m2)
+                exc = _try_pin(facility, staff, m2, req, _window(items, a2, b2), a2, b2, dtime, S, s.name, day, sym)
+                if exc is None:
+                    continue
+                heavy = sum(1 for r, _i in exc if r.kind != "count")
+                key = (len(exc), heavy, u is not None, workdays)
+                if s.name not in best or key < best[s.name][0]:
+                    best[s.name] = (key, {"staff": s.name, "day": day, "symbol": sym, "unit": u,
+                                          "hole_unit": u or (s.unit if units else None), "except": exc})
+    return [v for _k, v in sorted(best.values(), key=lambda kv: kv[0])][:limit]
+
+
+def _hole_units(core: list, facility: Facility) -> set[str]:
+    """芯の人数のルールの場面が指すユニット（「1丁目/12」「1丁目（明け番なし）/12」）"""
+    out = set()
+    for r, inst in core:
+        if r.kind in ("coverage", "unit_after"):
+            u = inst.key.rsplit("/", 1)[0].split("（")[0]
+            if u in facility.units:
+                out.add(u)
+    return out
+
+
+def _try_pin(facility, staff, month, req, items, a, b, dtime, S, who: str, day: int, sym: str) -> list | None:
+    """who を day の sym に決めて a〜b 日を解く。作れなければ None。作れれば、外した場面の一覧（無ければ空）。
+    外してよいのは、who だけの場面で day に当たる運用の都合の場面。外す数を最も少なくする"""
+    m = cp_model.CpModel()
+    x = {}
+    for s in staff:
+        for d in range(a, b + 1):
+            vs = []
+            for k in S._allowed(s, facility, req.get((s.name, d), set())):
+                v = m.new_bool_var("")
+                x[(s.name, d, k)] = v
+                vs.append(v)
+            m.add_exactly_one(vs)
+    if (who, day, sym) not in x:
+        return None
+    m.add(x[(who, day, sym)] == 1)
+    soft = []
+    for r, inst in items:
+        expr, const = [], 0
+        for t in inst.terms:
+            if t.day < 1:
+                v = cell_value({}, month, t.staff, t.day)
+                const += t.coef if v is not None and v in t.symbols else 0
+                continue
+            for k in t.symbols:
+                var = x.get((t.staff, t.day, k))
+                if var is not None:
+                    expr.append(t.coef * var)
+        e = sum(expr) + const
+        mine = (r.flex == "operational" and all(t.staff == who for t in inst.terms)
+                and any(t.day == day for t in inst.terms))
+        lit = m.new_bool_var("") if mine else None
+        if inst.lo is not None:
+            c = m.add(e >= inst.lo)
+            if lit is not None:
+                c.only_enforce_if(lit)
+        if inst.hi is not None:
+            c = m.add(e <= inst.hi)
+            if lit is not None:
+                c.only_enforce_if(lit)
+        if lit is not None:
+            soft.append((lit, r, inst))
+    if soft:
+        m.maximize(sum(lit for lit, _r, _i in soft))
+    sv = cp_model.CpSolver()
+    sv.parameters.num_workers = 1
+    sv.parameters.random_seed = 11
+    sv.parameters.max_deterministic_time = dtime
+    st = sv.solve(m)
+    if st not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return None
+    return [(r, inst) for lit, r, inst in soft if not sv.value(lit)]
