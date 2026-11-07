@@ -550,7 +550,7 @@ class Session:
         s = next((x for x in self.store.staff_on(self.year, self.month) if x.name == name), None)
         if s is None or sym not in s.can:
             return None
-        c = _cap(self.store.facility(), with_overrides(month_rules(self.store, self.year, self.month)), s, sym, m.days)
+        c = _cap(self.store.facility(), with_overrides(month_rules(self.store, self.year, self.month)), s, sym, m)
         return c if c < m.days else None
 
     def _leave_caps(self) -> dict[str, int]:

@@ -58,7 +58,7 @@ def _saito_cap(sess):
     from shiftvoice.shortage import _cap
     st = sess.store
     s = next(x for x in st.staff_on(2026, 11) if x.name == "斉藤")
-    return _cap(st.facility(), with_overrides(month_rules(st, 2026, 11)), s, "夜", 30)
+    return _cap(st.facility(), with_overrides(month_rules(st, 2026, 11)), s, "夜", st.month(2026, 11))
 
 
 def _saito_rules(sess, between):
@@ -127,3 +127,44 @@ def test_足りない時に上限を上げると_作り直しが止まらずに�
     assert shortages(fac, staff, month_rules(sess.store, 2026, 11), sess.store.month(2026, 11)) == []
     r = sess.rebuild(tries=1)
     assert r.kind == "applied", r.message
+
+
+def _east_caps(staff, caps):
+    east = [s for s in staff if s.unit == "東" and "夜" in s.can]
+    return [Rule(id=f"t-cap-{s.name}", ver=1, name=f"{s.name}さん 夜勤は月{n}回まで", kind="count", flex="operational",
+                 params={"shifts": ["夜"], "max": n}, who=[s.name], scope="rule") for s, n in zip(east, caps) if n is not None]
+
+
+def test_日付の例外で要らない日は_要る回数に数えない(nov):
+    """東の夜勤に入れる8人の上限を合わせて29回にする。11月は30日なので毎日1人だと1回足りないが、「1日は東の夜勤は0人」が
+    あれば要るのは29回で足りている。前は日付の例外を数えず、足りているのに止めた"""
+    fac, staff, m, rules = nov
+    caps = _east_caps(staff, [4, 4, 4, 4, 4, 3, 3, 3])
+    assert {i["unit"] for i in shortages(fac, staff, copy.deepcopy(rules) + caps, m)} == {"東"}
+    off = Rule(id="t-off1", ver=1, name="1日の東の夜勤は0人", kind="coverage", flex="operational",
+               params={"shifts": ["夜"], "scope": "each_unit", "op": "==", "n": 0, "units": ["東"]}, who=None, when=[1],
+               scope="once")
+    assert shortages(fac, staff, copy.deepcopy(rules) + caps + [off], m) == []
+
+
+def test_何種類かの勤務をまとめた上限は_その中の勤務の上限にもなる(nov):
+    """青木さんの「現場勤務は月1日まで」（早・日・遅・夜の合計）は夜勤の上限にもなる。前は上限0の時しか見ず、30回と数えた"""
+    fac, staff, m, rules = nov
+    caps = _east_caps(staff, [None, 4, 4, 4, 4, 4, 4, 4])
+    assert shortages(fac, staff, copy.deepcopy(rules) + caps, m) == []
+    aoki = Rule(id="t-aoki", ver=1, name="青木さん 現場の勤務は月1回まで", kind="count", flex="operational",
+                params={"shifts": ["早", "日", "遅", "夜"], "max": 1}, who=["青木"], scope="rule")
+    x = shortages(fac, staff, copy.deepcopy(rules) + caps + [aoki], m)
+    assert [(i["unit"], i["cap"]) for i in x] == [("東", 29)], x
+
+
+def test_夜勤に入れる人だけの上限も数える(nov):
+    """見本の「夜勤の回数（夜勤に入れる人）」は夜勤に入れる人だけの上限。3回までにすると東は8人で24回、西は7人のうち
+    元の表の前提で4回の小島さん（名指しが優先する）を入れて22回"""
+    fac, staff, m, rules = nov
+    rules = copy.deepcopy(rules)
+    for r in rules:
+        if r.params.get("capable_only"):
+            r.params = {**r.params, "min": None, "max": 3}
+    x = shortages(fac, staff, rules, m)
+    assert sorted((i["unit"], i["cap"]) for i in x) == [("東", 24), ("西", 22)], x

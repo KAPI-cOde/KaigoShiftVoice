@@ -4,27 +4,29 @@
 from __future__ import annotations
 
 from .model import Facility, Month, Rule, Staff
-from .rules import _days, _syms_of, on_days, with_overrides
+from .rules import _syms, _syms_of, expand, with_overrides
 
 HARD = ("fixed", "wish", "operational")
 
 
-def _need(rule: Rule, month: Month) -> int:
-    p = rule.params
-    return sum(p["n"] for d in _days(rule, month) if on_days(p, month, d))
+def _need(rule: Rule, facility: Facility, staff: list[Staff], month: Month) -> dict[str, int]:
+    """人数のルールで要る回数を、場面（ユニットの名前か「全体」）ごとに。表を作る時と同じ expand で数えるので、日付の例外
+    （「1日は不要」など、その日だけ人数が違う日）と曜日を数え方に入れる（前は毎日の数を月の日数分足し、足りているのに止めた）"""
+    out: dict[str, int] = {}
+    for ins in expand(rule, facility, staff, month):
+        out[ins.key.split("/")[0]] = out.get(ins.key.split("/")[0], 0) + (ins.lo or 0)
+    return out
 
 
-def _cap(facility: Facility, eff: list[Rule], s: Staff, sym: str, days: int) -> int:
-    c = days
+def _cap(facility: Facility, eff: list[Rule], s: Staff, sym: str, month: Month) -> int:
+    """その人のその勤務の月の上限。表を作る時と同じ expand で数える（名指しの優先・取り込みの幅の広げ方・その勤務に入れる人
+    だけの上限を含む）。何種類かの勤務をまとめた上限（「現場勤務は月8日まで」）は、その中の1つの勤務の上限にもなる"""
+    c = month.days
     for q in eff:
-        qp = q.params
-        if (q.kind == "count" and q.flex in HARD and qp.get("max") is not None and sym in _syms_of(qp.get("shifts"))
-                and (not q.who or s.name in q.who) and s.name not in q.meta.get("except_max", ())
-                and not qp.get("capable_only") and not q.when):
-            if _syms_of(qp.get("shifts")) == {sym}:
-                c = min(c, qp["max"])
-            elif qp["max"] == 0:
-                c = 0   # 「勤務を入れない」（全部の勤務の回数0）
+        if q.kind == "count" and q.flex in HARD and not q.when and sym in _syms(q.params.get("shifts"), facility):
+            for ins in expand(q, facility, [s], month):
+                if ins.hi is not None:
+                    c = min(c, ins.hi)
     return c
 
 
@@ -44,7 +46,7 @@ def shortages(facility: Facility, staff: list[Staff], rules: list[Rule], month: 
         if len(syms) != 1:
             continue
         sym = next(iter(syms))
-        per = _need(r, month)
+        need = _need(r, facility, staff, month)
         if p.get("scope") == "all" and not p.get("units"):
             groups = [(None, staff)]
         elif p.get("scope") == "each_unit":
@@ -52,8 +54,8 @@ def shortages(facility: Facility, staff: list[Staff], rules: list[Rule], month: 
         else:
             continue
         for unit, members in groups:
-            caps = {s.name: _cap(facility, eff, s, sym, month.days) for s in members if sym in s.can}
-            cap = sum(caps.values())
+            caps = {s.name: _cap(facility, eff, s, sym, month) for s in members if sym in s.can}
+            cap, per = sum(caps.values()), need.get(unit or "全体", 0)
             if cap < per:
                 room = sorted(((n, c) for n, c in caps.items() if 0 < c < month.days and n not in busy), key=lambda x: x[1])
                 out.append({"unit": unit, "symbol": sym, "name": facility.shift(sym).name, "need": per, "cap": cap, "people": room})
