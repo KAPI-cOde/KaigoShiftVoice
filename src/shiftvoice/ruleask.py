@@ -126,6 +126,11 @@ def group_cards(cards: list[dict], roster: list[str], year: int, month: int) -> 
             "dated": rest, "total": len(cards)}
 
 
+def shown_total(g: dict) -> int:
+    """ルールのページに並ぶ数（表の上の［ルール（N件）］と同じ）。日付の頼みは表のマスに出るので数えない。"""
+    return g["total"] - len(g["dated"])
+
+
 def _quoted(cs: list[dict]) -> str:
     return "".join(f"「{c['name']}」" for c in cs)
 
@@ -157,8 +162,8 @@ def list_answer(store: Store, year: int, month: int, rules) -> tuple[str, dict]:
         lines.append(f"今月だけのルール{len(g['only'])}件{tail}")
         hidden |= len(g["only"]) > NAMES_AT
     if g["dated"]:
-        lines.append(f"日付の頼み（希望休など）{len(g['dated'])}件。表のマスに出ています")
-    head = f"ルールは全部で{g['total']}件です"
+        lines.append(f"ほかに、日付の頼み（希望休など）が{len(g['dated'])}件あり、表のマスに出ています")
+    head = f"ルールは全部で{shown_total(g)}件です"
     foot = ["全部はルールのページで見られます"] if hidden else []
     return _message(head, lines, foot), _extra("list", lines, [r.id for r in rules], [OPEN_RULES])
 
@@ -199,11 +204,11 @@ def _place(b: dict, rule, names: set[str], fac) -> str:
     return f"{where}の{when}{many}"
 
 
-def broken_answer(store: Store, year: int, month: int, rules) -> tuple[str, dict]:
+def broken_answer(store: Store, year: int, month: int, rules, total: int | None = None) -> tuple[str, dict]:
     """「外れているルールは？」。右の一覧の赤い「外れ」と同じ数え方（state の broken と同じ check_table。
     できれば守るルール＝相談できる強さは、一覧と同じく外れの件数に入れず、別の1行で言う）。"""
     m = store.month(year, month)
-    total = len(rules)
+    total = len(rules) if total is None else total   # 見出しの（全部でN件）は、ルールのページに並ぶ数
     if not m.table:
         return "表がまだありません。表もルールも変えていません", _extra("broken", [], [], [OPEN_RULES])
     fac, staff = store.facility(), store.staff_on(year, month)
@@ -298,6 +303,8 @@ def answer(store: Store, year: int, month: int, topic: str, ai_on_screen: bool =
     span = (f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last:02d}")   # state の cards と同じ並び
     if topic == "tidy":
         return tidy_answer(store, year, month, ai_on_screen)
+    listed = list(store.ledger().rules_at(between=span).values())
     if topic == "broken":
-        return broken_answer(store, year, month, month_rules(store, year, month, with_premise=False))
-    return list_answer(store, year, month, list(store.ledger().rules_at(between=span).values()))
+        g = group_cards([_card(r) for r in listed], [s.name for s in store.staff()], year, month)
+        return broken_answer(store, year, month, month_rules(store, year, month, with_premise=False), shown_total(g))
+    return list_answer(store, year, month, listed)

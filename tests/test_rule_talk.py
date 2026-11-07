@@ -98,6 +98,22 @@ def test_外れが無ければ無いと言い_全部の件数を添える(sess):
     assert r.extra["lines"] == []
 
 
+def test_日付の頼みを足しても_チャットの全部の件数は表の上のルールの件数のまま(sess):
+    """表の上の［ルール（N件）］とルールのページは、希望休などの日付の頼みを数えない（表のマスに出る）。チャットの
+    「全部でN件」も同じ数え方にする。前は日付の頼みまで数え、すぐ横の［ルール（12件）］と「全部で13件」が並んだ。"""
+    sess.open()
+    before = {t: re.search(r"全部で(\d+)件", asked(sess, q, t).message)[1] for q, t in [("外れているルールは？", "broken"),
+                                                                                 ("ルールを見せて", "list")]}
+    add_rule(sess, "w1", "岡田さん 15・16日 休み", "cell", {"shift": "公", "avoid": False}, who=["岡田"], flex="wish",
+             scope="once", when=[15, 16])
+    assert any(c["kind"] == "cell" for c in sess.state()["cards"])
+    r = asked(sess, "外れているルールは？", "broken")
+    assert re.search(r"全部で(\d+)件", r.message)[1] == before["broken"], r.message
+    r = asked(sess, "ルールを見せて", "list")
+    assert re.search(r"全部で(\d+)件", r.message)[1] == before["list"], r.message
+    assert "ほかに、日付の頼み（希望休など）が1件あり、表のマスに出ています" in r.extra["lines"]
+
+
 def test_できれば守るルールの外れは_件数に入れず別の行で言う(sess):
     """右の一覧の赤い「外れ」は相談できる強さを数えない。チャットの件数も同じにし、黙らずに別の行で言う。"""
     add_rule(sess, "x3", "連勤は2日まで", "max_run", {"shifts": "work", "max": 2}, flex="negotiable")
