@@ -1026,6 +1026,16 @@ class Session:
         self.store.update_pending(self.year, self.month, u["id"], status="offer", offer=offer)
         return Reply("fix_offer", u["id"], msg, summary=offer["summary"])
 
+    def _reassign_layers(self, m: Month) -> None:
+        """当番（待機など）を、今の表で割り当て直す。"""
+        fac = self.store.facility()
+        pins = {int(k): v for k, v in ((self.store.premise(self.year, self.month) or {})
+                                        .get("standby_pins", {})).items()}
+        staff = self.store.staff_on(self.year, self.month)
+        for v in m.layers.values():
+            if isinstance(v, dict) and "def" in v:
+                v["assign"] = assign(v["def"], fac, staff, m, m.table, pins=pins)
+
     def rebuild(self, tries: int = 3, budget: float = 180.0) -> Reply:
         """［全部のルールで一から作り直す］。今の帳面の全部のルールで、表を白紙から何回か作り、いちばん良い表に置き換える。
         ［ひとつ戻す］で前の表に戻せる。作者の手順は「まずゼロから根本的に回す。だいぶいい感じになったら、少しの変更を
@@ -1070,8 +1080,10 @@ class Session:
         st = best[1]
         uid = f"rebuild-{self.now().strftime('%Y%m%d%H%M%S')}"
         before = m.table
-        m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": "全部のルールで一から作り直す"})
+        m.history.append({"op_id": uid, "table": m.table, "built_rev": m.built_rev, "said": "全部のルールで一から作り直す",
+                          "layer_assign": {k: v["assign"] for k, v in m.layers.items() if isinstance(v, dict) and "def" in v}})
         m.table, m.built_rev = st.result.table, self.store.ledger().rev
+        self._reassign_layers(m)   # 白紙から作ると、当番の人が出勤になることがある。新しい表で割り当て直す
         self.store.save_month(m)
         changes = changed_cells(before, m.table)
         msg = (f"全部のルールで一から作り直しました（{n}回作って、いちばん良い表）。変わったマスは{len(changes)}です。"
@@ -1098,6 +1110,9 @@ class Session:
         m.table, m.built_rev = h["table"], led.rev
         for lid in h.get("layers", []):
             m.layers.pop(lid, None)
+        for lid, a in h.get("layer_assign", {}).items():   # 作り直しで割り当て直した当番は、前の割り当てに戻す
+            if lid in m.layers:
+                m.layers[lid]["assign"] = a
         if "rest_adjust" in h:   # 配った後の直しは、公休の足し引き・応援・引き受けの記録もまとめて戻す（16章の11）
             m.rest_adjust, m.support = h["rest_adjust"], h["support"]
         self.store.save_month(m)
