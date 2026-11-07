@@ -31,6 +31,7 @@ from .redo import BACK_WORDS, as_redo, bare_redo, fill_answer, narrowed, same_ce
 from .giveback import accepted_counts
 from .model import Acceptance
 from .resolve import _off, changed_cells, resolve
+from .ruleask import rule_question
 from .rules import check_table, dated_same_as_latest, restated_count, restated_run, same_slot
 from .review import history as _history
 from .standby import ASK_WIDER, NO_MOVE, assign, duty_days, fix_absence, oncall_layer, use_move
@@ -417,9 +418,20 @@ class Session:
     # 話す
     def say(self, text: str) -> Reply:
         text = fix_spoken(fix_heard(text.strip(), self.store.facility()), self.store.facility())
+        topic = rule_question(text)
+        if topic:   # ルールを見る・確かめる・整理する問い。表もルールも変えないので、Claude へ送らず手元で答える（ruleask.py）
+            return self._rule_answer(topic)
         u = self.store.add_pending(self.year, self.month, text, at=self.now().isoformat(timespec="seconds"),
                                    status="new")
         return self._stamp(self._read(u))
+
+    def _rule_answer(self, topic: str) -> Reply:
+        """問いの答え（kind "info"）。未反映の発言にも残さず、聞き返しの途中（足す勤務の時刻など）も消さない。
+        画面がボタンにできる物は extra["actions"]、1件1行の文は extra["lines"]。"""
+        from .ruleask import answer
+        ai = self.tidier is not None and os.environ.get("SHIFTVOICE_PUBLIC") != "1"
+        msg, extra = answer(self.store, self.year, self.month, topic, ai_on_screen=ai)
+        return Reply("info", None, msg, extra=extra, sent=None, sent_known=True)
 
     def _stamp(self, r: Reply) -> Reply:
         """返事に、その一言で Claude へ送った文を添える（送っていなければ None）。"""
