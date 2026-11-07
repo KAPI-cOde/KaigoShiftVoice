@@ -1107,8 +1107,10 @@ class Session:
             items = dt_["items"] or broken_parts(left, {x.name for x in staff})
             extra = {"broken": {"count": now_n, "lead": dt_["lead"], "items": items, "notes": dt_["notes"],
                                 "rebuild": False}}
+        # 外れが残った時だけ赤い知らせ（warning）にする。外れが無くなった時は、見出しの横の添え書き（note）で黒く出す
         return Reply("applied", uid, head + second, changes=changes, summary="全部のルールで一から作り直す",
-                     seconds=round(time.perf_counter() - t0, 1), warning=head + second, extra=extra)   # 画面は applied の本文を warning で出す
+                     seconds=round(time.perf_counter() - t0, 1), warning=head + second if left else "",
+                     extra={**extra, "note": "" if left else head + second})
 
     def undo(self) -> Reply:
         """［ひとつ戻す］。最後に採用した一言の札を取り消し（帳面に取り消しの1行）、表を直す前に戻す。"""

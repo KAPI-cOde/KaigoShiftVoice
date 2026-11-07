@@ -91,9 +91,11 @@ def test_rebuild_message_is_two_sentences_with_before_and_after_counts(sess):
     mm = re.search(r"外れていたルールは(\d+)件から(\d+)件になりました", r.message)
     assert mm and int(mm.group(1)) == was and was > 0, r.message
     assert "ひとつ戻す" in r.message
-    assert "変わったマス" not in r.message and "回作って" not in r.message and r.warning == r.message   # 画面は applied の本文を warning で出す
+    assert "変わったマス" not in r.message and "回作って" not in r.message
     left = int(mm.group(2))
-    if left:
+    if left:   # 外れが残った時だけ赤い知らせ。無くなった時は見出しの横に黒で出す
+        assert r.warning == r.message and not r.extra["note"]
         assert r.extra["broken"]["count"] == left and r.extra["broken"]["items"] and not r.extra["broken"]["rebuild"]
     else:
+        assert r.warning == "" and r.extra["note"] == r.message
         assert "broken" not in (r.extra or {})
