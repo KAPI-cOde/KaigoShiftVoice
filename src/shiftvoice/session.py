@@ -29,7 +29,7 @@ from .reader import LimitError, ReadError
 from .redo import BACK_WORDS, as_redo, bare_redo, fill_answer, narrowed, same_cell_drops, same_count
 from .giveback import accepted_counts
 from .model import Acceptance
-from .resolve import changed_cells, resolve
+from .resolve import _off, changed_cells, resolve
 from .rules import check_table, dated_same_as_latest, restated_count, same_slot
 from .review import history as _history
 from .standby import ASK_WIDER, NO_MOVE, assign, duty_days, fix_absence, oncall_layer, use_move
@@ -303,6 +303,7 @@ def _no_table(rr) -> str:
 
 REBUILD_OFFER = "全部のルールで一から作り直しますか"
 UNDO_OFFER = "このままにするか、［ひとつ戻す］で前の表に戻すかを選んでください"   # 作り直しを受けない公開版・配った後
+TELL_OFFER = "直したい所を一言で伝えてください"   # 表を変えずに返す時で、作り直しを受けない公開版・配った後
 _SYM_KEYS = ("shifts", "in", "not_in", "if", "then", "next_in", "next_not_in", "prev_in", "next2_in", "after", "yes", "no")
 
 
@@ -318,6 +319,16 @@ def conflict_warning(targets: list[Rule], broken: list[dict], rules: dict[str, R
     こうしてもいいですか？』くらいが、人間に判断できる限度」）。理由は、新しいルールと、いちばんぶつかったルールを1つ。
     選ぶのは、外れた運用の都合と本人の希望のうち、新しいルールと同じ勤務の記号を数えるルールを先に、次に新しく外れた場面の
     多いルール、次に外れた場面の多いルール、次に帳面の順。before は直す前の表で外れていた場面（前からの外れで選ばないように）"""
+    label = f"「{targets[0].name}」" + (f"ほか{len(targets) - 1}件" if len(targets) > 1 else "")
+    top = top_conflict(targets, broken, rules, facility, before)
+    if top:
+        return f"{label}を守ると、「{top}」が守れません。{offer}"
+    return f"{label}は、ほかのルールとぶつかって守れませんでした。{offer}"
+
+
+def top_conflict(targets: list[Rule], broken: list[dict], rules: dict[str, Rule], facility,
+                 before: set[tuple[str, str]]) -> str | None:
+    """targets を守ろうとして外れた、いちばんぶつかったルールの名前（選び方は conflict_warning の説明のとおり）。無ければ None。"""
     ids = {r.id for r in targets}
     want = set().union(*(_rule_syms(r, facility) for r in targets)) if targets else set()
     seen: dict[str, list[dict]] = {}
@@ -331,11 +342,7 @@ def conflict_warning(targets: list[Rule], broken: list[dict], rules: dict[str, R
         bs = seen[rid]
         return (bool(want & _rule_syms(rules.get(rid), facility)),
                 sum((b["rule"], b["key"]) not in before for b in bs), len(bs), -order.index(rid))
-    label = f"「{targets[0].name}」" + (f"ほか{len(targets) - 1}件" if len(targets) > 1 else "")
-    if seen:
-        top = seen[max(order, key=rank)][0]["name"]
-        return f"{label}を守ると、「{top}」が守れません。{offer}"
-    return f"{label}は、ほかのルールとぶつかって守れませんでした。{offer}"
+    return seen[max(order, key=rank)][0]["name"] if seen else None
 
 
 class Session:
@@ -785,18 +792,21 @@ class Session:
         start, end = self._span()
         at = self.now().isoformat(timespec="seconds")
         added: list[Rule] = []
-        # 言われた変更が全部もう入っている時だけ「もう入っています」（10章。変更を飛ばす作りは希望が消える道になったのでしない）
-        cur = led.rules_at(between=self._span()).values()
-        def same(rd):
-            dated = dated_same_as_latest(rd, list(cur))   # 日付の人数は、いちばん後に言ったものと比べる
+        # 言われた変更が全部もう入っている時だけ、ルールを足さない（10章。変更を飛ばす作りは希望が消える道になったのでしない）。
+        # 今の表で守れていなければ、表だけ直す（_already_in）
+        cur = list(led.rules_at(between=self._span()).values())
+        def same(rd) -> Rule | None:
+            dated = dated_same_as_latest(rd, cur)   # 日付の人数は、いちばん後に言ったものと比べる
             if dated is not None:
-                return dated
-            return any(r.kind == rd["kind"] and r.params == rd["params"] and (r.who or None) == (rd.get("who") or None)
-                       and r.when == rd.get("when") and r.scope == scope and r.flex == rd["flex"] for r in cur)
-        if p.rules and not p.staff_changes and all(same(rd) for rd in p.rules) \
+                return next((r for r in reversed(cur) if r.kind == "coverage" and r.when == rd.get("when")
+                             and r.params == rd["params"]), None) if dated else None
+            return next((r for r in cur if r.kind == rd["kind"] and r.params == rd["params"]
+                         and (r.who or None) == (rd.get("who") or None) and r.when == rd.get("when")
+                         and r.scope == scope and r.flex == rd["flex"]), None)
+        olds_same = [same(rd) for rd in p.rules]
+        if p.rules and not p.staff_changes and all(olds_same) \
                 and not any(t.get("op_id") == u["id"] for t in led.txs):
-            self.store.resolve_pending(self.year, self.month, u["id"])
-            return Reply("ask", u["id"], f"{self.month}月はもう入っています")
+            return self._already_in(u, m, list({r.id: r for r in olds_same}.values()))
         # 毎月のルールで、同じ所を決める前からのルールがあれば、置き換えるか別に足すかを聞く（ルールを積もらせない）
         hinted = set(u.get("reread_replace") or [])   # 読み直しが、言い直しだと答えた前のルール
         olds = [r for r in cur if scope == "rule" and (any(same_slot(rd, r) for rd in p.rules) or r.id in hinted)]
@@ -926,6 +936,44 @@ class Session:
             summary = f"{kept}。毎月のルールとして残しました（来月からの表にも効きます）"
         return Reply("applied", u["id"], summary, changes=changes, rule_ids=[r.id for r in added],
                      summary=summary, seconds=secs, warning=warning, extra=extra)
+
+    def _already_in(self, u: dict, m, olds: list[Rule]) -> Reply:
+        """言われたルールが全部もう帳面にある。今の表で守れていれば「もう入っています」。守れていない場面があれば
+        （段を下げて作った表など）、ルールは足さずに、その外れだけを一言の直しと同じ狭い範囲の直しで直す。
+        直すとほかのルールが外れる時は、表を変えずに、守れていない数と、ぶつかるルール1つと、次の手1つを言う"""
+        fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
+        rules = month_rules(self.store, self.year, self.month, with_premise=False)
+        ids = {r.id for r in olds}
+        before = check_table(rules, fac, staff, m, m.table) if m.table else []
+        n = sum(b["rule"] in ids for b in before)
+        if not n:
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            return Reply("ask", u["id"], f"{self.month}月はもう入っています")
+        # 帳面にあると先に言わず、守れていないことを認める文から始める（人が指摘した外れに「そのルールはあります」と返さない）
+        bad = [r for r in olds if any(b["rule"] == r.id for b in before)]
+        label = f"「{bad[0].name}」" + (f"ほか{len(bad) - 1}件" if len(bad) > 1 else "")
+        rr = self._resolve(m, olds)
+        was = {(b["rule"], b["key"]): b for b in before}
+        after = check_table(rules, fac, staff, m, rr.table) if rr.ok else []
+        # ほかのルールの外れを、新しく作るか前より離すなら、直せたことにしない（外れの付け替えになるため）
+        worse = {(b["rule"], b["key"]) for b in after if b["flex"] in ("fixed", "wish", "operational")
+                 and ((b["rule"], b["key"]) not in was or _off(b) > _off(was[(b["rule"], b["key"])]))}
+        if rr.ok and not worse and not any(b["rule"] in ids for b in after):
+            led = self.store.ledger()
+            m.history.append({"op_id": u["id"], "table": m.table, "built_rev": m.built_rev,
+                              "said": u["text"], "rest_adjust": m.rest_adjust, "support": m.support})
+            m.table, m.built_rev = rr.table, led.rev
+            self.store.save_month(m)
+            self.store.resolve_pending(self.year, self.month, u["id"])
+            msg = f"{label}は今の表で{n}か所守れていなかったので、直しました"
+            return Reply("applied", u["id"], msg, changes=rr.changes, summary=msg, seconds=rr.seconds,
+                         warning=(rr.staged.note or "") if rr.staged.result.stage == 1 else "")
+        self.store.resolve_pending(self.year, self.month, u["id"])
+        top = top_conflict(olds, after, {r.id: r for r in rules}, fac, set(was) - worse)
+        why = f"直すと「{top}」とぶつかります" if top else "ほかのルールとぶつかって直せません"
+        offer = REBUILD_OFFER if os.environ.get("SHIFTVOICE_PUBLIC") != "1" and not m.distributed else TELL_OFFER
+        return Reply("ask", u["id"], f"{label}は今の表で{n}か所守れていません（{why}）。{offer}",
+                     seconds=rr.seconds, extra={"not_kept": n})
 
     @staticmethod
     def _support_after(p: Proposal, m) -> dict[str, str]:
