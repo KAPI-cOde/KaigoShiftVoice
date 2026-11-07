@@ -1701,6 +1701,8 @@ class Session:
                     broken_n[b["rule"]] = broken_n.get(b["rule"], 0) + 1
             except Exception:   # 数えられない時も画面は開く（印が出ないだけ）
                 broken_n = {}
+        # ルールを入れた一言の印（帳面の add の op_id）。右の一覧で、同じ一言から入ったルールを1枚に束ねる（見た目だけ）
+        op_of = {t["rule"]["id"]: t.get("op_id") for t in led.txs if t["op"] == "add" and isinstance(t.get("rule"), dict)}
         return {
             # 貼った月の次の月を開いていて、まだ配っていない時だけ、希望休を入れて作り直せる
             "redo_wishes": bool(pasted and next_ym(*pasted) == (self.year, self.month) and not m.distributed),
@@ -1713,7 +1715,7 @@ class Session:
             "support": self._support_rows(m, fac, staff),
             "cards": [{"id": r.id, "name": r.name, "flex": r.flex, "scope": r.scope, "who": r.who,
                        "when": r.when, "kind": r.kind, "params": r.params, "meta": r.meta,
-                       "shadowed_by": _shadowed(r, rules), "broken": broken_n.get(r.id, 0)}
+                       "shadowed_by": _shadowed(r, rules), "broken": broken_n.get(r.id, 0), "op_id": op_of.get(r.id)}
                       for r in rules.values()],
             "pending": self.store.pending(self.year, self.month),
             "archived": [h for h in _history(self.store.ledger())][-30:],

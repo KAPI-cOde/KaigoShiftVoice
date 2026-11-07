@@ -446,7 +446,7 @@ def test_month_only_cards(card, want):
     js = f"var S={{year:2026,month:11}};{fn};console.log(JSON.stringify(monthOnly({json.dumps(card)})))"
     assert json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout) is want
     top = html[html.index("function renderCards()"):]
-    assert top.index("only.forEach") < top.index("cleanEntry(box)")     # 毎月のルールの上に出す
+    assert top.index("bundleCards(only)") < top.index("cleanEntry(box)")     # 毎月のルールの上に出す（同じ一言の束も同じ場所）
     assert '"今月だけ"' in html[html.index("function makeCard"):html.index("function renderSaid")]
 
 

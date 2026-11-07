@@ -77,6 +77,12 @@
   .cards .fold .broken { margin-left: 6px; font-size: 11px; font-weight: 700; color: #b00; border: 1px solid #b00; border-radius: 3px; padding: 0 4px; }
   .cards .foldbody { display: flex; flex-direction: column; gap: 6px; }
   .cards .foldbody.sub { padding-left: 10px; }
+  /* 同じ一言から入ったルールの束。中のルールの名前は小さく、開いた時の中身は左の線で束の中だと分かるように1段下げる */
+  .cards .bundle { display: flex; flex-direction: column; gap: 6px; }
+  .card.bundlehead .members { font-size: 11px; color: #444; margin-top: 3px; }
+  .card.bundlehead .members div { margin-top: 1px; }
+  .card.bundlehead .members .str { color: #777; margin-left: 6px; }
+  .cards .bundlebody { display: flex; flex-direction: column; gap: 6px; padding-left: 8px; border-left: 2px solid #bbb; margin-left: 4px; }
   td.name { cursor: pointer; }
   td.cell { cursor: pointer; }
   .rvbtn { white-space: nowrap; flex-shrink: 0; align-self: center; }
@@ -834,6 +840,36 @@ function groupCards(cards, roster) {
   return g;
 }
 
+// 同じ一言から入ったルールを、見た目だけ1枚に束ねる（作者 2026-11-07「人間の認知負荷が飽和」「こちらで指示しなくても、
+// 少ないルールにまとめたり統合したりする動きを自動でやってほしい」）。帳面のルール（計算に使う物）は変えない。
+// 同じ一言は帳面の同じ op_id で見分け、op_id が無い時だけ同じ言った言葉で見分ける。言った言葉の無いルールは束ねない。
+// 返すのは {key, said, cards} の並び（1件だけの物も同じ形）。束は、中のいちばん前のルールの場所に置く
+function bundleCards(cards) {
+  var at = {}, out = [];
+  cards.forEach(function (c) {
+    var said = c.meta && c.meta.said;
+    var k = said ? (c.op_id ? "op:" + c.op_id : "said:" + said) : null;
+    if (k && k in at) { at[k].cards.push(c); return; }
+    var b = { key: k || "id:" + c.id, said: said || null, cards: [c] };
+    if (k) at[k] = b;
+    out.push(b);
+  });
+  return out;
+}
+
+// 施設のルールの束は、守る・できればをまたいでも1枚にし、中にいちばん強いルールがある方（守る）の箱に置く。
+// 箱ごとの件数と外れの数は、実際にその箱に描くルールで数える
+function facBoxes(must, soft) {
+  var MUST = { fixed: true, operational: true };
+  var r = { must: [], soft: [], mustCards: [], softCards: [] };
+  bundleCards(must.concat(soft)).forEach(function (b) {
+    var strong = b.cards.some(function (c) { return MUST[c.flex]; });
+    (strong ? r.must : r.soft).push(b);
+    (strong ? r.mustCards : r.softCards).push.apply(strong ? r.mustCards : r.softCards, b.cards);
+  });
+  return r;
+}
+
 // 見出しを押した時の、たたむ・開く。ブラウザに覚えておき、覚えられない時もこの画面の間は切り替わる
 var folds = {};
 function folded(key, dflt) { return key in folds ? folds[key] : viewPref("sv_fold_" + key, dflt); }
@@ -880,6 +916,8 @@ function renderCards() {
   var box = document.getElementById("cards");
   box.textContent = "";
   var g = groupCards(S.cards, (S.staff || []).map(function (s) { return s.name; }));
+  var fbx = facBoxes(g.facMust, g.facSoft);
+  g.facMust = fbx.mustCards; g.facSoft = fbx.softCards;   // 束で守るの箱へ移ったルールも、新しく入った時はその箱を開く
   revealNew(g);
   var picked = person && person !== personShown;   // 表の名前を押した時は、その人の見出しを開いて見える所へ
   if (picked) { setFold("ppl", false); setFold("p_" + person, false); }
@@ -890,17 +928,17 @@ function renderCards() {
   var only = g.only;
   if (only.length) {
     var ob = foldHead(box, "only", "今月だけ", only.length + "件", only, false, "sec");
-    if (ob) only.forEach(function (c) { ob.appendChild(makeCard(c)); });
+    if (ob) putBundles(ob, bundleCards(only));
   }
   if (!g.total && !only.length) box.appendChild(el("div", "empty", "ルールはまだありません"));
   cleanEntry(box);
   var fac = g.facMust.concat(g.facSoft);
   if (fac.length) {
     var fb = foldHead(box, "fac", "施設のルール", fac.length + "件", fac, false, "sec");
-    if (fb) [["fac_must", "守る（動かせない・運用の都合）", g.facMust], ["fac_soft", "できれば（相談できる）", g.facSoft]].forEach(function (k) {
+    if (fb) [["fac_must", "守る（動かせない・運用の都合）", g.facMust, fbx.must], ["fac_soft", "できれば（相談できる）", g.facSoft, fbx.soft]].forEach(function (k) {
       if (!k[2].length) return;
       var sb = foldHead(fb, k[0], k[1], k[2].length + "件", k[2], false, "sub");
-      if (sb) k[2].forEach(function (c) { sb.appendChild(makeCard(c)); });
+      if (sb) putBundles(sb, k[3]);
     });
   }
   var ppl = g.people.concat(g.multi ? [g.multi] : []);
@@ -917,7 +955,7 @@ function renderCards() {
         var label = p.name === null ? "複数の人" : p.name + "さん" + (p.gone ? "（今の名簿にいない）" : "");
         var hb = foldHead(pb, p.name === null ? "multi" : "p_" + p.name, label, parts.join("・"), mine, true,
           "sub" + (p.name !== null && p.name === person ? " picked" : ""));
-        if (hb) mine.forEach(function (c) { hb.appendChild(makeCard(c)); });
+        if (hb) putBundles(hb, bundleCards(mine));
       });
       // 名簿にいない人のルール（辞めた人の事情が残った形）は、片付けの候補になることを知らせる
       var gone = g.people.filter(function (p) { return p.gone; });
@@ -1185,6 +1223,54 @@ function makeCard(c) {
       renderCards();
     });
     return b;
+}
+
+// 束（bundleCards）を箱に並べる。1件だけの物は今までどおりのカード
+function putBundles(box, bundles) {
+  bundles.forEach(function (b) { box.appendChild(b.cards.length > 1 ? makeBundle(b) : makeCard(b.cards[0])); });
+}
+// 同じ一言から入った2件以上のルールの1枚。見出しは言った一言を短くした物、その下に中のルールの名前を小さく並べる。
+// 押すと中のルールが今までどおりのカードで出る。外れの赤い数は、中のルールの外れの合計
+var openBundle = {};
+function makeBundle(bd) {
+  var on = !!openBundle[bd.key] || bd.cards.some(function (c) { return c.id === selected; });
+  var wrap = el("div", "bundle");
+  var b = el("button", "card bundlehead" + (on ? " open" : ""));
+  b.type = "button";
+  b.setAttribute("aria-expanded", on ? "true" : "false");
+  b.title = "言った言葉 「" + bd.said + "」";
+  var top = el("div", "top");
+  var s = bd.said.length > 26 ? bd.said.slice(0, 25) + "…" : bd.said;
+  var nm = el("span", "nm", "「" + s + "」");
+  if (bd.cards.every(monthOnly)) nm.appendChild(el("span", "new", "今月だけ"));
+  if (bd.cards.some(function (c) { return newIds[c.id]; })) nm.appendChild(el("span", "new", "新しいルール"));
+  var bad = 0;
+  bd.cards.forEach(function (c) { if (c.flex !== "negotiable") bad += c.broken || 0; });
+  if (bad) nm.appendChild(el("span", "broken", "外れ " + bad + "か所"));
+  top.appendChild(nm);
+  top.appendChild(el("span", "per", bd.cards.length + "件のルール　" + (on ? "たたむ" : "開く")));
+  b.appendChild(top);
+  if (!on) {
+    var ls = el("div", "members");
+    bd.cards.forEach(function (c) {
+      var row = el("div", "", c.name);
+      if (STRENGTH[c.flex]) row.appendChild(el("span", "str", STRENGTH[c.flex]));
+      ls.appendChild(row);
+    });
+    b.appendChild(ls);
+  }
+  b.addEventListener("click", function () {
+    openBundle[bd.key] = !on;
+    if (on && bd.cards.some(function (c) { return c.id === selected; })) { selected = null; renderTable(); }
+    renderCards();
+  });
+  wrap.appendChild(b);
+  if (on) {
+    var body = el("div", "bundlebody");
+    bd.cards.forEach(function (c) { body.appendChild(makeCard(c)); });
+    wrap.appendChild(body);
+  }
+  return wrap;
 }
 
 function renderSaid() {
