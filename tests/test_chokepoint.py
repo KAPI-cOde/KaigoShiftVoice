@@ -80,6 +80,7 @@ def test_希望休を入れて作り直す画面に詰まり所の文とマス�
     assert out["choke"] and out["choke"][0]["day"] == 12
     assert sorted(out["choke"][0]["cells"]) == sorted(f"{w}|12" for w in who)
     assert "いちばんの詰まり所は12日（土）" in out["choke"][0]["text"]
+    assert "本人と相談してください" not in (out["note"] or "")   # 箱の上の知らせで先に相談をすすめない
 
 
 def _night_fac():

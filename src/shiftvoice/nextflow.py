@@ -274,6 +274,10 @@ class NextFlow:
         # note は返さない案で段を下げた時の知らせ（赤で出す）
         out = {"status": gb.status, "message": gb.message, "counts": counts, "checks": gb.checks, "note": gb.base_note,
                "choke": _choke_out(gb.base_choke, dec)}
+        if out["choke"] and out["note"]:
+            # 詰まり所の箱は「先に空けられないか試し、どうしても空かない時に相談」と言うので、すぐ上の知らせで先に相談を
+            # すすめない（同じ画面で食い違った。作者の方針は対処をしつくしてから相談）
+            out["note"] = out["note"].replace("本人と相談してください", "相談の前に、下のいちばんの詰まり所で空けられないか試してください")
         if gb.status == "cannot" and not any(v > 0 for v in counts.values()):
             # 引き受けた人がいない月（取り込んで作ったばかりの施設など）。返す物が無いので、返さない案だけで採れるようにする
             dec_days = dec.days
