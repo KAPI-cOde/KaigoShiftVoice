@@ -997,6 +997,10 @@ class Session:
             prev = {}
         leave = {st.symbol for st in fac.shift_types if st.kind == "leave"}
         last = {n: sum(v in leave for v in row) for n, row in prev.items()}
+        from .shortage import shortage_text, shortages
+        short = shortages(fac, staff, rules, m)
+        if short:   # 回数の上限の合計が毎日の人数に届かない。計算しても上限を外して作るだけなので、先に何が足りないかを言う
+            return Reply("ask", None, shortage_text(short), extra={"shortage": short})
         solve = fac.settings.get("solve", {})
         if f"{self.year:04d}-{self.month:02d}" in solve.get("seed_by_month", {}):
             tries = 1   # 種を決めてある月（撮影用）は、何回回しても同じ表になる
