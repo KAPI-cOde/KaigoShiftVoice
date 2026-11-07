@@ -60,3 +60,49 @@ def test_s4_impossible_fixed_asks_c3(nov):
     assert [s["stage"] for s in r.stages] == [1, 3, 2, 4]
     assert not r.ok and r.message == C3_MESSAGE
 
+
+
+def _scripted(calls, status):
+    """段ごとの状態を決めた解き方の代わり。status(stage) が ok なら表を返す。"""
+    from shiftvoice.solver import SolveResult
+
+    def solve(facility, staff, rules, month, *, stage=1, **kw):
+        calls.append(stage)
+        s = status(stage)
+        return SolveResult(s, {"x": []} if s == "ok" else None, seconds=0.1, stage=stage)
+    return solve
+
+
+def _wish_rule():
+    return Rule(id="t-wish", ver=1, name="小島さん 12日は休み（試験用の希望休）", kind="cell", flex="wish",
+                params={"in": ["公"]}, who=["小島"], when=[12])
+
+
+def test_段3が時間切れなら希望を外す段へ進まない(monkeypatch):
+    """段1で作れないと分かっても、段3（希望を全部守り、運用の都合を外せる形）が時間切れなら、希望を全部守って作れるかは
+    分からない。そのまま段2（希望を外す）へ進むと、作れたかもしれない月で希望休を外した表を出してしまう（作者 2026-11-07
+    「希望休は原則守る。対処をしつくしてから、どうしても空かない時だけ相談」）。止めて、詰まり所と一緒に聞き返す。"""
+    from shiftvoice import build, choke
+    calls = []
+    monkeypatch.setattr(build, "solve_month", _scripted(calls, lambda st: {1: "infeasible", 3: "timeout"}.get(st, "ok")))
+    monkeypatch.setattr(choke, "chokepoints", lambda *a, **k: [{"day": 12, "text": "いちばんの詰まり所は12日です"}])
+    r = build._solve_staged(build_fac(), [], [_wish_rule()], None, explain=True)   # 叶わない希望休の下ごしらえは飛ばす
+    assert 2 not in calls and 4 not in calls
+    assert [s["stage"] for s in r.stages] == [1, 3]
+    assert not r.ok and r.message == TIMEOUT_MESSAGE
+    assert r.choke and r.choke[0]["day"] == 12      # 表が無くても、詰まり所は画面へ渡す
+
+
+def test_外す希望が無ければ段3が時間切れでも今までどおり段2と段4へ進む(monkeypatch):
+    """貼った直後の最初の表（翌月の希望休がまだ無い）で止めると、取り込みそのものが「作れませんでした」で止まる。"""
+    from shiftvoice import build
+    calls = []
+    monkeypatch.setattr(build, "solve_month", _scripted(calls, lambda st: {1: "infeasible", 3: "timeout", 2: "infeasible"}.get(st, "ok")))
+    r = build.solve_staged(build_fac(), [], [], None)
+    assert calls[:1] == [1] and 2 in calls and calls[-1] == 4
+    assert r.ok and r.result.stage == 4
+
+
+def build_fac():
+    from shiftvoice.model import Facility
+    return Facility(id="t", name="t", units=["u"], shift_types=[], settings={})

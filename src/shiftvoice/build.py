@@ -3,7 +3,8 @@
 段の順
 - 段1 本人の希望と運用の都合を外せなくして解く（fixed は常に外せない）
 - 作れないと分かった（infeasible）なら 段3 希望だけ守る（運用の都合を外す）→ 段2 運用だけ守る（希望を外す）→ 段4 全部外す。
-  運用の都合を先に外し、本人の希望休は最後まで守る（作者の答え 2026-11-06。前は希望を先に外していた）
+  運用の都合を先に外し、本人の希望休は最後まで守る（作者の答え 2026-11-06。前は希望を先に外していた）。
+  段3 が時間切れ（希望を全部守って作れるかが分からない）の時は、本人の希望があれば段2・段4へ進まずに止める
 - 時間切れ（作れないとは分かっていない）なら 段3 だけ試す。段4 へは自動で進まない。
   見つからなければ「この時間では見つかりませんでした」と言い、もう少し考えるか、どれを譲るかを聞く
 """
@@ -268,6 +269,11 @@ def _solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], mon
             return StagedResult(r, stages, note=STAGE_NOTE[st] + ("。" + detail if detail else "")
                                 + ("。" + consult if consult else ""), choke=chokes)
         timed_out = timed_out or r.status == "timeout"
+        if st == 3 and r.status == "timeout" and any(x.flex == "wish" for x in rules):
+            # 希望を全部守って作れるかが分からないまま、希望を外す段（2・4）へ進まない（作者 2026-11-07「希望休は原則
+            # 守る。日勤専属の人に早出を頼むなどの対処をしつくしてから、どうしても空かない時だけ相談」）。前は段2へ進み、
+            # 作れたかもしれない月で希望休を外した表を出していた。外す希望が無ければ、今までどおり段2・段4へ進む
+            break
     return StagedResult(r, stages, message=TIMEOUT_MESSAGE if timed_out else C3_MESSAGE, choke=chokes)
 
 
