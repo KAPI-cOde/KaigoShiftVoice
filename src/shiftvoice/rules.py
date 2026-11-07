@@ -83,6 +83,15 @@ def _replace_same(rules: list[Rule]) -> list[Rule]:
     return out
 
 
+def restated_count(rd: dict, r: Rule) -> bool:
+    """新しく言った回数のルール rd（帳面に入れる前の dict）が、その月の中で前からの回数のルール r に代わるか
+    （_replace_same と同じ条件で、同じ人どうし）。今月だけの数は毎月の数を帳面から消さないが、その月は新しい方が効く。"""
+    return (rd.get("kind") == r.kind == "count" and not rd.get("when") and not r.when
+            and rd.get("flex") == r.flex == "operational" and bool(rd.get("who"))
+            and sorted(rd["who"]) == sorted(r.who or []) and "from" in r.meta
+            and sorted(rd.get("params", {}).get("shifts") or []) == sorted(r.params.get("shifts") or []))
+
+
 def _syms_of(v) -> set[str]:
     return {v} if isinstance(v, str) else set(v or [])
 

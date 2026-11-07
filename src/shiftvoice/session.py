@@ -29,7 +29,7 @@ from .redo import BACK_WORDS, as_redo, bare_redo, fill_answer, narrowed, same_ce
 from .giveback import accepted_counts
 from .model import Acceptance
 from .resolve import changed_cells, resolve
-from .rules import check_table, dated_same_as_latest, same_slot
+from .rules import check_table, dated_same_as_latest, restated_count, same_slot
 from .review import history as _history
 from .standby import ASK_WIDER, NO_MOVE, assign, duty_days, fix_absence, oncall_layer, use_move
 from .store import Store
@@ -156,6 +156,33 @@ def only_shift_items(masked: str, facility) -> list[dict] | None:
     sym = next(st.symbol for st in work if st.name == m.group(3))
     return [{"type": "staff_info", "staff": m.group(1), "from_month": int(m.group(2)) if m.group(2) else None,
              "can_add": [sym], "can_remove": [st.symbol for st in work if st.symbol != sym], "only": sym}]
+
+
+_KAN = str.maketrans("０１２３４５６７８９一二三四五六七八九", "012345678912345678" + "9")
+_RAISE_PERIOD = r"(?:今月(?:だけ|のみ|は)?|毎月|これから(?:ずっと)?|ずっと)?"
+_RAISE_TAIL = (r"(?:て|ても|で|いい|良い|よい|大丈夫|ください|下さい|ほしい|欲しい|お願い(?:します)?|ね|よ|です|ます|る|OK)*")
+
+
+def raise_items(masked: str, facility, cap_of) -> list[dict] | None:
+    """伏せた後の一言が「職員NNさんの夜勤を1回増やして」「夜勤の上限を2回上げて」なら、今の上限に足した数の回数のルールを
+    手元で作る。読み取りは今の上限を知らないので送らない（足りなさの知らせを見て上限を上げる一言。作者 2026-11-07）。
+    cap_of(職員NN, 記号) はその人の今の上限（上限が無ければ None）。上限が無い人は表に勤務を足す頼みかもしれないので、
+    今までどおり読み取りへ送る。"""
+    work = sorted((st for st in facility.shift_types if st.kind == "work"), key=lambda st: -len(st.name))
+    if not work:
+        return None
+    names = "|".join(re.escape(st.name) for st in work)
+    m = re.fullmatch(r"(職員\d{2,3})(?:さん|くん|ちゃん)?(?:は|の|も)?" + _RAISE_PERIOD + r"(?:の)?(" + names + r")(?:の)?"
+                     r"(?:上限|回数)?(?:を|は)?" + _RAISE_PERIOD + r"(?:あと|もう)?([0-9０-９一二三四五六七八九])回(?:分)?"
+                     r"(?:増やし|ふやし|上げ|あげ)" + _RAISE_TAIL, _tight(masked))
+    if not m:
+        return None
+    sym = next(st.symbol for st in work if st.name == m.group(2))
+    cap = cap_of(m.group(1), sym)
+    if cap is None:
+        return None
+    return [{"type": "count_limit", "staff": [m.group(1)], "shift": sym, "min": None,
+             "max": cap + int(m.group(3).translate(_KAN)), "until_day": None, "strength": "operational", "reason": None}]
 
 
 # ユニット間の応援（「12日、青木さんは西の遅番に入って」「西へ応援」）。応援は人の数え先が変わるだけで型の読み取りに
@@ -447,7 +474,8 @@ class Session:
             self.store.update_pending(self.year, self.month, u["id"], text=text, sent_text=None, items=filled, status="read")
             return self._safe_propose({**u, "text": text, "items": filled})
         local = only_shift_items(masked, fac) or support_items(masked, fac) or add_shift_items(masked, fac, waiting) \
-            or bare_redo(masked, self.store.ledger().rules_at(between=self._span()))
+            or bare_redo(masked, self.store.ledger().rules_at(between=self._span())) \
+            or raise_items(masked, fac, lambda code, sym: self._cap_now(masker.unmask(code), sym))
         if local is not None:   # 手元で読めた（日勤だけ・ユニット間の応援・勤務の種類を足す など）。Claude へは送らない
             self._ask_times = local[0].get("ask_times")
             if local[0].get("ask_more"):
@@ -513,6 +541,17 @@ class Session:
         self.store.update_pending(self.year, self.month, uid, text=text, heard=u["text"], status="new",
                                   unknown=None)
         return self._stamp(self._read({**u, "text": text}))
+
+    def _cap_now(self, name: str, sym: str) -> int | None:
+        """その人の、開いている月の今の回数の上限（足りなさを数える時と同じ数え方。shortage._cap）。上限が無ければ None。"""
+        from .rules import with_overrides
+        from .shortage import _cap
+        m = self.store.month(self.year, self.month)
+        s = next((x for x in self.store.staff_on(self.year, self.month) if x.name == name), None)
+        if s is None or sym not in s.can:
+            return None
+        c = _cap(self.store.facility(), with_overrides(month_rules(self.store, self.year, self.month)), s, sym, m.days)
+        return c if c < m.days else None
 
     def _leave_caps(self) -> dict[str, int]:
         """人ごとの有給の上限（職員と対象月を持つ回数の決まり。13章）。"""
@@ -617,8 +656,10 @@ class Session:
         # 今たまたま守られているだけのルール（「夜勤をこれ以上足さない」の今の回数まで など）は、この後の直しを縛るので
         # 当てない。前からの外せないルールがもう同じことを決めている時だけ「もう守られています」
         # 回数の言い直しで置き換わる前のルールは、もう決めている物に数えない（2回を3回へゆるめる時に「もう守られています」と言わない）
+        # 今月だけの数で毎月の数を上げる時も、その月は新しい方が効く（rules._replace_same）ので、前の数を根拠にしない
+        # （「斉藤さんの夜勤は4回まで」を今月だけと答えると、毎月2回までがあるので「もう守られています」と止まり、上がらなかった）
         cur = [r for r in self.store.ledger().rules_at(between=self._span()).values()
-               if not any(same_count(rd, r, scope or "once", p.until) for rd in p.rules)]
+               if not any(same_count(rd, r, scope or "once", p.until) or restated_count(rd, r) for rd in p.rules)]
         by = [implied_by(rd, cur) for rd in p.rules]
         if not all(by):
             return ""

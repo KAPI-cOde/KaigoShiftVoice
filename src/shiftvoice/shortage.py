@@ -68,4 +68,10 @@ def shortage_text(items: list[dict]) -> str:
         where = f"{x['unit']}の" if x.get("unit") else ""
         out.append(f"{where}{x['name']}が{x['need'] - x['cap']}回足りません。入れる人の上限の合計は{x['cap']}回で、毎日の人数には"
                    f"{x['need']}回要ります。" + (f"上限を上げられそうな人は{ppl}です。" if ppl else ""))
-    return "".join(out) + "誰かの上限を一言で上げてから（例「〇〇さんの夜勤は12月だけ5回まで」）、もう一度作り直してください。表は変えていません"
+    # 次に言うことは、上げられそうな最初の人の名前と、今の上限より1回多い数で1文にする（月は言わない。毎月か今月だけかは
+    # 一言の後に聞く。前の例は「12月だけ」と月を決めていて、11月の表では別の月の話として止まった）
+    x = next((x for x in items if x["people"]), None)
+    if x is None:
+        return "".join(out) + "入れる人か上限を増やしてから、もう一度作り直してください。表は変えていません"
+    n, c = x["people"][0]
+    return "".join(out) + f"上げるには「{n}さんの{x['name']}は{c + 1}回まで」のように言い、もう一度作り直してください。表は変えていません"
