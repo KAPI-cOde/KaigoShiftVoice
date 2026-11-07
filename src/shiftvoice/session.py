@@ -21,7 +21,7 @@ from .addshift import add_shift_items, fix_spoken, hide_spoken, read_spoken, sho
 from .heard import fix_heard
 from .build import C3_MESSAGE, broken_parts, TIMEOUT_MESSAGE, build_original, clip_to_month, month_rules, patience_of, solve_staged
 from .daycount import day_counts as _day_counts
-from .intake import EVERYONE_HINT, WHO_UNKNOWN, Clarify, Proposal, to_proposal
+from .intake import EVERYONE_HINT, WHO_UNKNOWN, Clarify, Proposal, said_strength, to_proposal
 from .ledger import Ledger
 from .model import Rule
 from .names import Masker
@@ -31,7 +31,7 @@ from .redo import BACK_WORDS, as_redo, bare_redo, fill_answer, narrowed, same_ce
 from .giveback import accepted_counts
 from .model import Acceptance
 from .resolve import _off, changed_cells, resolve
-from .rules import check_table, dated_same_as_latest, restated_count, same_slot
+from .rules import check_table, dated_same_as_latest, restated_count, restated_run, same_slot
 from .review import history as _history
 from .standby import ASK_WIDER, NO_MOVE, assign, duty_days, fix_absence, oncall_layer, use_move
 from .store import Store
@@ -658,7 +658,8 @@ class Session:
         if not re.search(r"職員\d{2}", masked) and any(
                 isinstance(it, dict) and it.get("staff") not in (None, [], "") for it in new):
             new = [{"type": "unclear", "question": WHO_UNKNOWN}]   # 名前を言っていない一言に人を当てた（最初の読みと同じ守り）
-        if re.search(r"職員\d{2}", masked):   # 全員と読んだ印は、名前を1人も言っていない一言にだけ使う
+        if set(re.findall(r"職員\d{2,3}", masked)) - set(re.findall(r"職員\d{2,3}", got["next"] or "")):
+            # 全員と読んだ印は、名前を1人も言っていない一言にだけ使う。日付の頼みとして next に切り出した人の名前は数えない
             new = [{k: v for k, v in it.items() if k != "everyone"} if isinstance(it, dict) else it for it in new]
         known = set(self.store.ledger().rules_at(between=self._span()))
         fields = {"reread": True}
@@ -735,7 +736,7 @@ class Session:
     def _propose(self, u: dict) -> Reply:
         m = self.store.month(self.year, self.month)
         try:
-            p = self._proposal(u["items"], u["text"])
+            p = self._proposal(u["items"], self._rule_text(u))
         except Clarify as e:
             self.store.resolve_pending(self.year, self.month, u["id"])
             if e.need:
@@ -770,6 +771,17 @@ class Session:
             self.store.update_pending(self.year, self.month, u["id"], status="ask_period")
             return Reply("ask_period", u["id"], ASK_PERIOD, summary=p.summary, extra={"kept": kept} if kept else {})
         return self._apply(u, p, scope, kept=kept)
+
+    def _rule_text(self, u: dict) -> str:
+        """読み直しが日付の頼みを next に切り出した一言は、その頼みの人の名前を除いた文で確かめる
+        （「早番は月8回まで、あと石田さん12日休み」の石田さんを、全員の早番のルールの人に数えて聞き返さない）。"""
+        if not u.get("reread_next"):
+            return u["text"]
+        masker = Masker(self.store.staff(), self.store.facility())
+        codes = set(re.findall(r"職員\d{2,3}", masker.mask(u["reread_next"])[0]))
+        t = re.sub(r"(職員\d{2,3})(?:さん|くん|ちゃん)?", lambda x: "" if x.group(1) in codes else x.group(0),
+                   masker.mask(u["text"])[0])
+        return masker.unmask(t)
 
     def _add_shift(self, u: dict, p: Proposal, m) -> Reply:
         """施設の勤務の種類を1つ足す（毎月残る。施設の形の変更なので毎月か今月だけかは聞かない）。表は変えない。
@@ -822,7 +834,8 @@ class Session:
         # 今月だけの数で毎月の数を上げる時も、その月は新しい方が効く（rules._replace_same）ので、前の数を根拠にしない
         # （「斉藤さんの夜勤は4回まで」を今月だけと答えると、毎月2回までがあるので「もう守られています」と止まり、上がらなかった）
         cur = [r for r in self.store.ledger().rules_at(between=self._span()).values()
-               if not any(same_count(rd, r, scope or "once", p.until) or restated_count(rd, r) for rd in p.rules)]
+               if not any(same_count(rd, r, scope or "once", p.until) or restated_count(rd, r) or restated_run(rd, r)
+                          for rd in p.rules)]
         by = [implied_by(rd, cur) for rd in p.rules]
         if not all(by):
             return ""
@@ -867,6 +880,15 @@ class Session:
         # 言われた変更が全部もう入っている時だけ、ルールを足さない（10章。変更を飛ばす作りは希望が消える道になったのでしない）。
         # 今の表で守れていなければ、表だけ直す（_already_in）
         cur = list(led.rules_at(between=self._span()).values())
+        if scope == "rule" and u.get("dup") == "replace" and not said_strength(u["text"]):
+            # 強さを言っていない言い直し（「連勤は4日までにしてください」）を「置き換える」と答えた時は、置き換わる前のルールの
+            # 強さを引き継ぐ。読み取りの既定（運用の都合）のままだと、動かせない連勤の上限・公休の数が言い直しで弱まった。
+            # 「別に足す」と答えた時は引き継がない（足した方は言ったとおりの強さで入る）
+            prev_ids = set(u.get("reread_replace") or []) | set(u.get("dup_old") or [])
+            for rd in p.rules:
+                prev = {r.flex for r in cur if r.kind == rd["kind"] and r.id in prev_ids}
+                if len(prev) == 1:
+                    rd["flex"] = prev.pop()
         def same(rd) -> Rule | None:
             dated = dated_same_as_latest(rd, cur)   # 日付の人数は、いちばん後に言ったものと比べる
             if dated is not None:

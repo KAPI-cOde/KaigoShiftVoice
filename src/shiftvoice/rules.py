@@ -92,6 +92,37 @@ def restated_count(rd: dict, r: Rule) -> bool:
             and sorted(rd.get("params", {}).get("shifts") or []) == sorted(r.params.get("shifts") or []))
 
 
+def restated_run(rd: dict, r: Rule) -> bool:
+    """新しく言った続く日の上限 rd が、同じ相手・同じ勤務の前の上限 r をゆるめる言い直しか（「今月は連勤6日までOK」）。
+    ゆるめた数は前の上限がもう決めていることではないので、「もう守られています」の根拠にしない。
+    「できれば」の弱い頼みでは前の上限をゆるめない（_loosen_runs と同じ）。"""
+    p = rd.get("params") or {}
+    return (rd.get("kind") == r.kind == "max_run" and not rd.get("when") and not r.when
+            and rd.get("flex") != "negotiable" and sorted(rd.get("who") or []) == sorted(r.who or [])
+            and p.get("shifts") == r.params.get("shifts") and p.get("max") is not None
+            and r.params.get("max") is not None and p["max"] > r.params["max"])
+
+
+def _loosen_runs(rules: list[Rule]) -> list[Rule]:
+    """今月だけ（か期限つき）で毎月の続く日の上限をゆるめた時（「今月は連勤6日までOK」）、その月は毎月の上限をゆるめた数まで
+    上げる。毎月のルールは帳面に残る（翌月はまた効く）。上げないと、きびしい方の毎月の上限が効いたままで何も変わらない。"""
+    import copy
+    loose = [r for r in rules if r.kind == "max_run" and (r.scope == "once" or r.meta.get("until")) and "from" in r.meta]
+    if not loose:
+        return rules
+    out = []
+    for g in rules:
+        if g.kind == "max_run" and g.scope == "rule" and not g.meta.get("until"):
+            mx = max((r.params["max"] for r in loose
+                      if restated_run({"kind": r.kind, "when": r.when, "flex": r.flex, "who": r.who, "params": r.params}, g)),
+                     default=None)
+            if mx is not None:
+                g = copy.copy(g)
+                g.params = {**g.params, "max": mx}
+        out.append(g)
+    return out
+
+
 def _syms_of(v) -> set[str]:
     return {v} if isinstance(v, str) else set(v or [])
 
@@ -199,7 +230,7 @@ def with_overrides(rules: list[Rule]) -> list[Rule]:
     全員向けが動かせない決まり（公休の数 など）の時は外さない。
     その前に、同じ相手に2本ある帳面の回数のルールは新しい方を残す（_replace_same）。"""
     import copy
-    rules = _weekday_dated(_run_exceptions(_coverage_dates(_coverage_units(_coverage_days(_replace_same(rules))))))
+    rules = _weekday_dated(_run_exceptions(_loosen_runs(_coverage_dates(_coverage_units(_coverage_days(_replace_same(rules)))))))
     named: dict[tuple, list[tuple[Rule, str, dict]]] = {}   # 勤務 → [(元のルール, 人, {"min": 値, "max": 値})]
     for r in rules:
         if r.kind == "count" and r.who and not r.when and r.flex in ("operational", "fixed"):

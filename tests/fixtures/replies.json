@@ -50,5 +50,14 @@
  "職員01さんは有給消化。夜勤は単発で1〜3回なら手伝える。24日と25日と年末は夜勤に入れない": "{\"items\":[{\"type\":\"leave_count\",\"staff\":\"職員01\",\"count\":null,\"reason\":\"有給消化\"},{\"type\":\"consecutive_limit\",\"staff\":\"職員01\",\"shift\":\"夜\",\"max\":1,\"strength\":\"wish\",\"reason\":null},{\"type\":\"count_limit\",\"staff\":[\"職員01\"],\"shift\":\"夜\",\"min\":1,\"max\":3,\"until_day\":null,\"strength\":\"wish\",\"reason\":null},{\"type\":\"day_off\",\"staff\":\"職員01\",\"days\":[24,25],\"strength\":\"fixed\",\"reason\":null},{\"type\":\"custom\",\"summary\":\"年末に夜勤を入れない\"}]}",
  "委員会の日は、できるだけ委員の3人を午前の勤務に。全員が無理なら2人いればいい": "{\"items\":[{\"type\":\"custom\",\"summary\":\"委員会の日は委員3人を午前の勤務に（全員が無理なら2人でよい）\"}]}",
  "遅番4回はやめましょう。": "{\"items\":[{\"type\":\"none\"}]}",
- "遅番4連続はやめよう": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":\"遅\",\"max\":3,\"except_staff\":null,\"strength\":\"negotiable\",\"reason\":null}]}"
+ "遅番4連続はやめよう": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":\"遅\",\"max\":3,\"except_staff\":null,\"strength\":\"negotiable\",\"reason\":null}]}",
+ "夜勤は全員3回から4回": "{\"items\":[{\"type\":\"count_limit\",\"staff\":null,\"shift\":\"夜\",\"min\":3,\"max\":4,\"until_day\":null,\"strength\":\"operational\",\"reason\":null}]}",
+ "夜勤は3回から5回": "{\"items\":[{\"type\":\"count_limit\",\"staff\":null,\"shift\":\"夜\",\"min\":3,\"max\":5,\"until_day\":null,\"strength\":\"negotiable\",\"reason\":null}]}",
+ "今月は連勤6日までOKにする": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":null,\"max\":6,\"except_staff\":null,\"strength\":\"operational\",\"reason\":null}]}",
+ "早番は月8回まで、あと職員02さん12日休み": "{\"items\":[{\"type\":\"count_limit\",\"staff\":null,\"shift\":\"早\",\"min\":null,\"max\":8,\"until_day\":null,\"strength\":\"operational\",\"reason\":null},{\"type\":\"day_off\",\"staff\":\"職員02\",\"days\":[12],\"reason\":null}]}",
+ "連勤は4日までにしてください": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":null,\"max\":4,\"except_staff\":null,\"strength\":\"operational\",\"reason\":null}]}",
+ "公休は月9日で": "{\"items\":[{\"type\":\"unclear\",\"question\":\"公休を月9日にするのは、全員ですか。それとも特定の職員の方ですか。特定の方なら職員の番号を教えてください。\"}]}",
+ "夜勤は各ユニット1人": "{\"items\":[{\"type\":\"coverage\",\"shift\":\"夜\",\"min\":1,\"max\":1,\"weekdays\":null,\"holidays\":false,\"strength\":\"operational\",\"reason\":null}]}",
+ "強めのソフトで、連勤は4日まで": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":null,\"max\":4,\"except_staff\":null,\"strength\":\"operational\",\"reason\":null}]}",
+ "できれば連勤は3日までにしたい": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":null,\"max\":3,\"except_staff\":null,\"strength\":\"negotiable\",\"reason\":null}]}"
 }

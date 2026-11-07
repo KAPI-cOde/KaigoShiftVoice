@@ -197,6 +197,11 @@ def _count_strength(v, text: str, single: bool) -> str:
     return "operational"
 
 
+def said_strength(text: str) -> bool:
+    """一言が強さ（必ず・できれば・本人の希望・ハード・ソフト）を言ったか。"""
+    return any(w in text for w in FIXED_WORDS + MAYBE_WORDS + OWN_WORDS) or bool(_STRENGTH_TALK.search(text or ""))
+
+
 # 名指しの上限を、全員の上限の例外として頼む言い方（「千葉さん、今月だけ6連勤まではいい」「6日まで許して」）
 PERMIT_WORDS = r"今月だけ|今月は|てもいい|ても良い|てもよい|でもいい|でいい|許|かまわない|構わない|大丈夫|OK"
 
@@ -850,6 +855,11 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 params["min"] = lo
             if hi is not None:
                 params["max"] = hi
+            if not who and all(facility.shift(x).kind == "work" for x in syms) \
+                    and any(not any(x in s.can for x in syms) for s in staff):
+                # 夜勤に入れない人に、全員の夜勤の下限を付けない。休みの勤務は can に無いので付けない。
+                # 全員が入れる勤務には付けない（前から帳面にある全員の回数と同じ物として「もう入っています」が当たるため）
+                params["capable_only"] = True
             what = ("現場の勤務は" if it.get("shift") in ("現場", "出勤", "勤務", "出")
                     else "と".join(facility.shift(x).name for x in syms) + ("は合わせて" if len(syms) > 1 else "は"))
             p.rules.append({"name": f"{_who(who)} {what}{label}{rng}", "kind": "count",
