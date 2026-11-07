@@ -932,8 +932,14 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 raise Clarify("どの勤務を続けて何日までにするか、「早番は続けて2日まで」のように言ってください")
             if run:
                 nm = facility.shift(run).name
+                # 人を名指しした勤務の続く日の上限（「〇〇さんの夜勤はできるだけ単発で」）は、その人の毎月の強めのルール。
+                # 「できるだけ」でも配慮にせず運用の都合にする（作者 2026-11-07「この場合は個人のハードルール。強めのソフトか
+                # ハードに」）。必ず系の言葉なら動かせない
+                fl = _count_strength(it.get("strength"), text, len(real) == 1)
+                if who and fl == "negotiable":
+                    fl = "operational"
                 p.rules.append({"name": f"{_who(who)} {nm}を2日続けない" if mx == 1 else f"{_who(who)} {nm}は続けて{mx}日まで",
-                                "kind": "max_run", "flex": _count_strength(it.get("strength"), text, len(real) == 1),
+                                "kind": "max_run", "flex": fl,
                                 "params": {"shifts": [run], "max": mx}, "who": who, "when": None})
             else:
                 p.rules.append({"name": f"{_who(who)} 連勤は{mx}日まで", "kind": "max_run",
