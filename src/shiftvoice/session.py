@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import calendar
+import copy
 import dataclasses
 import json
 import os
@@ -515,16 +516,102 @@ class Session:
             if getattr(self.reader, "calls_claude", True) is False:   # 鍵なし（NoKeyReader）
                 return Reply("error", u["id"], NO_KEY, extra={"no_key": True})
             return Reply("error", u["id"], READ_FAILED)
+        items, more_fields = self._reread_if_stuck(u, items, raw, masked, spoken, masker)
         # 一度読んだら残し、AI を呼び直さない（3章 drafts）
-        self.store.update_pending(self.year, self.month, u["id"], items=items, status="read")
-        u = {**u, "items": items}
+        self.store.update_pending(self.year, self.month, u["id"], items=items, status="read", **more_fields)
+        u = {**u, "items": items, **more_fields}
         return self._safe_propose(u)
+
+    # 読み直し（最初の読みが型に当てはまらずに止まる時だけ）
+    STUCK_WORDS = ("まだ扱えません", "頼みが混ざっています")
+
+    def _proposal(self, items: list[dict], text: str) -> Proposal:
+        """読み取りの結果を手元で確かめて、候補にする（_propose と同じ当て方）。"""
+        fac, staff = self.store.facility(), self.store.staff()
+        m = self.store.month(self.year, self.month)
+        spoken = self.store.ledger().rules_at(between=self._span())
+        its = items if m.distributed else as_redo(items, spoken)
+        return to_proposal(its, text, fac, staff, m, leave_caps=self._leave_caps(), rules=list(spoken.values()))
+
+    def _stuck(self, items: list[dict], text: str) -> str | None:
+        """最初の読みが、型に当てはまらない・知らない形・聞き返しで止まるなら、止まった理由。通るなら None。
+        名前の無い一言（誰の頼みか）と、答えをつなぐ聞き返し（日付・勤務が足りない）は、読み直しても同じなので当てない。"""
+        if any(it.get("type") == "unclear" and it.get("question") == WHO_UNKNOWN for it in items):
+            return None
+        try:
+            self._proposal(copy.deepcopy(items), text)
+        except Clarify as e:
+            asked = next((it.get("question") for it in items if it.get("type") == "unclear"), None)
+            if e.need is None and (any(w in str(e) for w in self.STUCK_WORDS) or (asked is not None and str(e) == asked)):
+                return str(e)
+            return None
+        except Exception:  # noqa: BLE001 想定外の例外は今までどおり _safe_propose に任せる
+            return None
+        return None
+
+    def _reread_context(self, masker: Masker, tokens: dict[str, str]) -> dict:
+        """読み直しへ添える施設の文脈。人は職員NN、ユニットはユニットN。名前を伏せきれないルールは名前を出さない。"""
+        fac = self.store.facility()
+        rules = []
+        for r in self.store.ledger().rules_at(between=self._span()).values():
+            name, unknown = masker.mask(r.name)
+            rules.append({"id": r.id, "name": None if unknown else name, "kind": r.kind, "strength": r.flex,
+                          "period": "毎月" if r.scope == "rule" and not r.meta.get("until") else "今月だけ",
+                          "who": [masker.to_code.get(w, "職員??") for w in r.who] if r.who else "全員"})
+        spoken = {st.symbol for st in fac.shift_types if getattr(st, "spoken", False)}
+        shifts = [{"symbol": st.symbol, "name": st.name, "kind": st.kind} for st in fac.shift_types if st.symbol not in spoken]
+        shifts += [{"symbol": tok, "name": tok, "kind": "work"} for tok in tokens]
+        days = calendar.monthrange(self.year, self.month)[1]
+        return {"month": {"year": self.year, "month": self.month, "days": days},
+                "units": list(masker.unit_code.values()),
+                "staff": masker.roster_codes(), "shifts": shifts, "rules": rules}
+
+    def _reread_if_stuck(self, u: dict, items: list[dict], raw: list[dict], masked: str, tokens: dict[str, str],
+                         masker: Masker) -> tuple[list[dict], dict]:
+        """最初の読みで止まる時だけ、文脈つきで読み直す。読み直せなければ最初の読みのまま（今までどおりの聞き返し）。
+        返すのは、使う読み取り結果と、未反映の発言に残す印（読み直した・置き換える前のルール・続けて言う一言）。"""
+        reread = getattr(self.reader, "reread", None)
+        if reread is None:
+            return items, {}
+        why = self._stuck(items, u["text"])
+        if why is None:
+            return items, {}
+        ctx = self._reread_context(masker, tokens)
+        payload = json.dumps([ctx, raw, masker.mask(why)[0], masked], ensure_ascii=False)
+        staff = self.store.staff()
+        if any(s.name in payload or (s.call and s.call in payload) for s in staff):
+            return items, {}   # 名前が1つでも残る文は送らない（伏せ方の穴。最初の読みの聞き返しのまま）
+        try:
+            got = reread(masked, ctx, first=raw, why=masker.mask(why)[0])
+        except ReadError:
+            return items, {}
+        new = show_spoken(got["items"], tokens)
+        if not re.search(r"職員\d{2}", masked) and any(
+                isinstance(it, dict) and it.get("staff") not in (None, [], "") for it in new):
+            new = [{"type": "unclear", "question": WHO_UNKNOWN}]   # 名前を言っていない一言に人を当てた（最初の読みと同じ守り）
+        known = set(self.store.ledger().rules_at(between=self._span()))
+        fields = {"reread": True}
+        if [x for x in got["replace"] if x in known]:
+            fields["reread_replace"] = [x for x in got["replace"] if x in known]
+        if got["next"]:
+            fields["reread_next"] = masker.unmask(show_spoken(got["next"], tokens))
+        return masker.unmask(new), fields
 
     def _safe_propose(self, u: dict) -> Reply:
         """読み取りの後で想定外の例外が出ても、画面に「通信が切れた」ように見せない。読み取りの失敗と同じ返事にする
         （取り込んで作った施設で、有給の記号が無くて落ちた。敵対レビュー 2026-11-03）。"""
         try:
-            return self._propose(u)
+            r = self._propose(u)
+            if u.get("reread_next") and r.kind != "error":
+                # 読み直しで、ルールと日付の頼みが1つの一言に混ざっていた。ルールの方を候補にし、日付の頼みは続けて言ってもらう。
+                # 聞き返しは本文だけが画面に出るので本文に、直した時は読んだ中身（summary）に添える
+                note = f"日付の頼みは、続けて「{u['reread_next']}」と言ってください"
+                if r.kind == "ask":
+                    r.message = f"{r.message.rstrip('。')}。{note}"
+                else:
+                    r.summary = f"{r.summary}。{note}" if r.summary else note
+                r.extra = {**(r.extra or {}), "reread_next": u["reread_next"]}
+            return r
         except Exception as e:  # noqa: BLE001 想定外の例外だけ。聞き返し（Clarify）は _propose の中で返事になる
             self.store.update_pending(self.year, self.month, u["id"], status="failed",
                                       error=f"{type(e).__name__}: {e}")
@@ -567,12 +654,9 @@ class Session:
         return caps
 
     def _propose(self, u: dict) -> Reply:
-        fac, staff = self.store.facility(), self.store.staff()
         m = self.store.month(self.year, self.month)
-        spoken = self.store.ledger().rules_at(between=self._span())
-        items = u["items"] if m.distributed else as_redo(u["items"], spoken)
         try:
-            p = to_proposal(items, u["text"], fac, staff, m, leave_caps=self._leave_caps(), rules=list(spoken.values()))
+            p = self._proposal(u["items"], u["text"])
         except Clarify as e:
             self.store.resolve_pending(self.year, self.month, u["id"])
             if e.need:
@@ -714,7 +798,8 @@ class Session:
             self.store.resolve_pending(self.year, self.month, u["id"])
             return Reply("ask", u["id"], f"{self.month}月はもう入っています")
         # 毎月のルールで、同じ所を決める前からのルールがあれば、置き換えるか別に足すかを聞く（ルールを積もらせない）
-        olds = [r for r in cur if scope == "rule" and any(same_slot(rd, r) for rd in p.rules)]
+        hinted = set(u.get("reread_replace") or [])   # 読み直しが、言い直しだと答えた前のルール
+        olds = [r for r in cur if scope == "rule" and (any(same_slot(rd, r) for rd in p.rules) or r.id in hinted)]
         if olds and u.get("dup") is None and not any(t.get("op_id") == u["id"] for t in led.txs):
             self.store.update_pending(self.year, self.month, u["id"], status="ask_replace", scope=scope,
                                       dup_old=[r.id for r in olds])

@@ -130,19 +130,30 @@ class Sent:
 class RecordedReader:
     """録った返事で答える。キーは伏せた後の一言。無い一言は ReadError（呼べない時と同じ扱い）。"""
 
-    def __init__(self, replies: dict[str, str]):
+    def __init__(self, replies: dict[str, str], rereads: dict[str, str] | None = None):
         self.replies = replies
+        self.rereads = rereads or {}   # 読み直しの録った返事（キーは伏せた後の一言）
         self.sent: list[Sent] = []
+        self.reread_sent: list[Sent] = []
 
     @classmethod
     def from_file(cls, path: Path) -> "RecordedReader":
-        return cls(json.loads(Path(path).read_text(encoding="utf-8")))
+        """同じ所に rereads.json があれば、読み直しの録った返事も読む。"""
+        rr = Path(path).with_name("rereads.json")
+        return cls(json.loads(Path(path).read_text(encoding="utf-8")),
+                   json.loads(rr.read_text(encoding="utf-8")) if rr.exists() else None)
 
     def read(self, masked_text: str, history: list[dict] | None = None) -> list[dict]:
         self.sent.append(Sent(SYSTEM, build_messages(masked_text, history)))
         if masked_text not in self.replies:
             raise ReadError("録った返事がない一言")
         return parse_reply(self.replies[masked_text])
+
+    def reread(self, masked_text: str, context: dict, first: list | None = None, why: str | None = None) -> dict:
+        self.reread_sent.append(Sent(REREAD_SYSTEM, build_reread_messages(masked_text, context, first, why)))
+        if masked_text not in self.rereads:
+            raise ReadError("録った読み直しの返事がない一言")
+        return parse_reread(self.rereads[masked_text])
 
 
 @dataclass
@@ -152,6 +163,10 @@ class HaikuReader:
     timeout: float = 15.0
     sent: list[Sent] = field(default_factory=list)
     record_to: Path | None = None   # 渡すと、返事を録る（伏せた一言 → 返事の文）
+    reread_record_to: Path | None = None   # 渡すと、読み直しの返事を録る
+    reread_timeout: float = 60.0
+    reread_sent: list[Sent] = field(default_factory=list)
+    last_reread_usage: dict | None = None   # 直前の読み直しのトークン数（費用を測る時に見る）
 
     def read(self, masked_text: str, history: list[dict] | None = None) -> list[dict]:
         import anthropic
@@ -176,6 +191,32 @@ class HaikuReader:
             rec[masked_text] = text
             p.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
         return items
+
+    def reread(self, masked_text: str, context: dict, first: list | None = None, why: str | None = None) -> dict:
+        """読み直し（Sonnet 5.5・考えるのは少なめ）。最初の読みが型に当てはまらなかった時だけ session が呼ぶ。"""
+        import anthropic
+
+        msgs = build_reread_messages(masked_text, context, first, why)
+        self.reread_sent.append(Sent(REREAD_SYSTEM, msgs))
+        try:
+            client = anthropic.Anthropic(timeout=self.reread_timeout, max_retries=1)
+            resp = client.messages.create(
+                model=REREAD_MODEL, max_tokens=REREAD_MAX_TOKENS, system=REREAD_SYSTEM, messages=msgs,
+                thinking={"type": "adaptive"}, output_config={"effort": "low"},
+            )
+        except anthropic.APIError as e:
+            raise ReadError(f"読み直しを呼べませんでした（{type(e).__name__}）") from e
+        self.last_reread_usage = {"input": resp.usage.input_tokens, "output": resp.usage.output_tokens}
+        if resp.stop_reason != "end_turn":
+            raise ReadError(f"読み直しの返事が途中で止まりました（{resp.stop_reason}）")
+        text = "".join(b.text for b in resp.content if b.type == "text")
+        got = parse_reread(text)
+        if self.reread_record_to:
+            p = Path(self.reread_record_to)
+            rec = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+            rec[masked_text] = text
+            p.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
+        return got
 
 
 BUILD_SYSTEM = """あなたは介護施設の勤務表アプリの組み立て係です。作成者の一言から、表に無い当番（待機など）の定義を JSON で作ります。
@@ -251,3 +292,72 @@ class SonnetBuilder:
         if resp.stop_reason != "end_turn":
             raise ReadError(f"組み立ての返事が途中で止まりました（{resp.stop_reason}）")
         return parse_build("".join(b.text for b in resp.content if b.type == "text"))
+
+
+# ---- 読み直し（最初の読みが型に当てはまらずに止まった時だけ）
+# 最初の読みは伏せた一言だけを見る1回きりの当てはめなので、「この形の頼みは、まだ扱えません」や聞き返しで止まることがある。
+# 読み直しは、今のルールの一覧・名簿の番号とユニットと入れる勤務・勤務の記号・表で数えられるルールの種類を添えて、
+# Sonnet に同じ形の答え（items）をもう一度作らせる。最初の読みで通る一言には呼ばない（呼ぶかは session が決める）
+
+REREAD_MODEL = "claude-sonnet-5-5"
+REREAD_MAX_TOKENS = 6000   # 考える分も入る。足りずに途中で止まった時は ReadError（最初の読みの返事に戻す）
+NOT_REREAD = ("custom", "pair_apart", "rest_after_night", "around_off", "weigh", "explain", "none")
+
+RULE_KINDS = """表で数えられるルールの種類（手元の計算が扱える物。上の型を手元でこの形に直す）
+- cell 人と日を決めたマス。in（その勤務にする）か not_in（その勤務にしない）。型は day_off・set_cell・avoid_cell・move・swap
+- count 人ごとの月の回数。shifts（数える記号の並び。「現場」は勤務の全部）、min・max、日の範囲（1日〜until_day）。型は count_limit・leave_count
+- coverage 1日の人数。shifts、min・max、曜日・祝日、施設全体かユニットごと。型は coverage
+- max_run 続けて働く日数の上限。shifts（なければ勤務の全部）、max、除く人。型は consecutive_limit
+- sequence 並び。ある日の勤務の次の日に置ける・置けない勤務。型は forbid_sequence
+- weekday 人の曜日の頼み。その曜日にその勤務にする・しない。型は weekday_pref
+- 職員の情報（入れる勤務を足す・外す）は staff_info
+- ここに無い物（2人を同じ日に組ませない、休みの前後、表に無い当番など）は作れない"""
+
+REREAD_EXTRA = """
+
+ここからは読み直しの時だけの指示です。上の型と項目の決めはそのまま守ります。
+最初の読みでは、この一言を型に当てはめられず、手元で止まりました。最初の読みの答えと、止まった理由を添えます。
+今度は、添えた施設の文脈（今のルールの一覧・名簿の番号とユニットと入れる勤務・勤務の記号と名前・表の月）と、下の「表で数えられるルールの種類」を見て、上の型の組み合わせで表せるかを考えてください。
+
+- 返事は JSON だけ。形は {"items": [...]}。使える型は day_off set_cell avoid_cell move swap forbid_sequence count_limit coverage weekday_pref consecutive_limit leave_count staff_info cancel cover unclear。custom pair_apart rest_after_night around_off weigh explain は使わない
+- 1回の答えの items は、日付の頼み（day_off set_cell avoid_cell move swap）だけか、それ以外（ルール）だけにする。混ぜると手元で止まる。一言に両方があれば、ルールの方を items にし、日付の頼みは "next" に、作成者が続けて言えばよい一言を1つだけ書く（例 "next": "職員03さん、24日と25日は夜勤にしない"）。日付の頼みだけなら日付の頼みを items にする
+- 一言が今のルールの言い直し・置き換えなら、"replace": [置き換える今のルールの id の並び] を書く。新しく足すだけなら書かない
+- 勤務の名前の言い換え（「午前の勤務」「現場」など）は、勤務の記号と名前の一覧で当てる。一覧に無い記号は使わない
+- 表の月の外の日（11月の表で「年末」など）は件にしない。名簿に無い番号を作らない。一言に無い人・日・数を足さない
+- 型で表せない時や、人・日・数が足りない時は、items を [{"type":"unclear","question": 何が足りないかを聞く1文}] にする（例「委員の3人は誰で、委員会は何日ですか」）。聞くのは足りない物だけで、1文にする。名簿の人を指す時は職員03のような番号を書き、「職員NN」のような伏せ字は書かない
+
+""" + RULE_KINDS
+
+
+REREAD_SYSTEM = SYSTEM + REREAD_EXTRA
+
+
+def build_reread_messages(masked_text: str, context: dict, first: list | None, why: str | None) -> list[dict]:
+    """読み直しで送る会話（1往復）。context の中身は伏せた後の物だけ（session が作り、名前が無いことを確かめてから渡す）。"""
+    parts = ["施設の文脈 " + json.dumps(context, ensure_ascii=False)]
+    if first is not None:
+        parts.append("最初の読みの答え " + json.dumps({"items": first}, ensure_ascii=False))
+    if why:
+        parts.append(f"手元で止まった理由「{why}」")
+    parts.append(f"一言「{masked_text}」")
+    return [{"role": "user", "content": "\n".join(parts)}]
+
+
+def parse_reread(text: str) -> dict:
+    """読み直しの返事。{"items": [...], "replace": [id], "next": 一言}。型は読み取りと同じ確かめ方。
+    考えた後の Sonnet は、JSON の前に説明を書き、JSON を ```json の囲みに入れることがある。囲みがあれば最後の囲みを読む。"""
+    fences = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
+    if fences:
+        text = fences[-1]
+    items = parse_reply(text)
+    if any(it.get("type") in NOT_REREAD for it in items) and not all(it.get("type") == "unclear" for it in items):
+        items = [it for it in items if it.get("type") not in NOT_REREAD]
+        if not items:
+            raise ReadError("読み直しでも型に当てはまらない")
+    obj = json.loads(re.search(r"\{.*\}", text, re.S).group(0))
+    rep = obj.get("replace")
+    nxt = obj.get("next")
+    return {"items": items,
+            "replace": [str(x) for x in rep] if isinstance(rep, list) else [],
+            "next": nxt if isinstance(nxt, str) and nxt.strip() else None}
+
