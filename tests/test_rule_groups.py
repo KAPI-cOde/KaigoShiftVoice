@@ -172,3 +172,20 @@ def test_state_cards_carry_the_op_id_of_the_utterance(sess):
     others = [c["op_id"] for c in cards if c not in two]
     assert two[0]["op_id"] not in others
     assert all(o for o in others)                                       # 最初からのルールにも、1件ずつ違う op_id がある
+
+
+def test_画面の件数は_チャットで答える全部の件数と食い違わない():
+    """表の上の［ルール（N件）］（画面の JS）と、チャットの「全部でN件」（ruleask.shown_total）は同じ数え方でなければ並べて見た人が混乱する。"""
+    from shiftvoice.ruleask import group_cards, shown_total
+    g = _run(CARDS, ROSTER)
+    assert g["total"] + len(g["only"]) == shown_total(group_cards(CARDS, ROSTER, 2026, 11))
+
+
+def test_答えのボタンの開く先は_画面の分かれ道にすべてある():
+    """ruleask の actions の open の値に画面の分かれ道が無いと、ボタンが黙って消える。"""
+    from shiftvoice import ruleask
+    h = HTML.read_text(encoding="utf-8")
+    opens = [v["open"] for k, v in vars(ruleask).items() if k.startswith("OPEN_") and isinstance(v, dict)]
+    assert len(opens) >= 2
+    for o in opens:
+        assert f'a.open === "{o}"' in h, o
