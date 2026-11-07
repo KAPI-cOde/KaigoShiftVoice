@@ -513,6 +513,32 @@ def _weekday_off(items: list[dict], text: str) -> list[dict]:
              "avoid": it["type"] == "avoid_cell", "until_month": None, "reason": it.get("reason")}]
 
 
+_SOME_DAY = re.compile(r"[0-9０-９]|[一二三四五六七八九十]+日|曜|週|土日|今日|明日|あした|あす|明後日|あさって|今度|"
+                       r"月末|月初|上旬|中旬|下旬|頃|ごろ|その日|この日|同じ日")
+
+
+_SEQUENCE_WORDS = re.compile(r"次の日|翌日|翌朝|あと|後|続け|連続|連チャン|明け|前の日|前日|[0-9０-９]+回|[一二三四五六七八九十]+回")
+
+
+def _no_day_avoid(items: list[dict], text: str) -> list[dict]:
+    """日にちを何も言っていない「〇〇さんは早番には入れないで」を、その人のその勤務の月0回にする。
+    本物の Haiku は日付の無い avoid_cell で返し、「何日か」を聞き返して止まった（2026-11-08）。
+    件が1つで、人と勤務があり、一言に日付・曜日・日を指す言葉が1つも無い時だけ。
+    同じ一言を、並びの禁止（前の勤務が空、または同じ勤務の並び）と読むこともある（6回に2回。2026-11-08）。
+    一言に「次の日」「続けて」のような並びの言葉が無ければ、同じく勤務に入れない頼みと読む。"""
+    if len(items) == 1 and items[0].get("type") == "forbid_sequence" and items[0].get("staff") and items[0].get("next") \
+            and items[0].get("first") in (None, "", items[0]["next"]) and not _SEQUENCE_WORDS.search(text):
+        items = [{"type": "avoid_cell", "staff": items[0]["staff"], "days": None, "shift": items[0]["next"],
+                  "reason": items[0].get("reason")}]
+    if len(items) != 1 or items[0].get("type") != "avoid_cell" or items[0].get("days") \
+            or not items[0].get("staff") or not items[0].get("shift") or _SOME_DAY.search(text):
+        return items
+    it = items[0]
+    staff = it["staff"] if isinstance(it["staff"], list) else [it["staff"]]
+    return [{"type": "count_limit", "staff": staff, "shift": it["shift"], "min": None, "max": 0, "until_day": None,
+             "strength": it.get("strength") or "operational", "reason": it.get("reason")}]
+
+
 # 入れ替えた2つのマスの強さ。2つのマスは1つの約束の両側なので、片方だけ守られると、同じ勤務に2人・誰もいない勤務が
 # できる。本人の希望（wish）は、段1では外せないが、段1で作れない時（その人の曜日の希望とぶつかる時など）に1つずつ外れ、
 # 片方だけの入れ替えが残る（2026-11-05、斉藤さんの「水曜は早番に入れない」とぶつかる11日の入れ替えで、杉山さんだけが
@@ -663,7 +689,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     """leave_caps は人ごとの有給の上限（帳面の回数の決まりから。日数のない有給の頼みに使う。13章）。
     rules はこの月の帳面のルール（人数の頼みを、今の同じ勤務の人数のルールと同じ数え方にそろえるのに使う）。"""
     names = {s.name for s in staff}
-    items = _tidy_leave(_weekday_off(_was_really(_same_day_move(_self_fix(_tidy(items, month), text), text, facility, names), text, facility), text), text)
+    items = _tidy_leave(_no_day_avoid(_weekday_off(_was_really(_same_day_move(_self_fix(_tidy(items, month), text), text, facility, names), text, facility), text), text), text)
     real = [it for it in items if it.get("type") != "none"]
     if not real:
         raise Clarify("表を変える頼みが見つかりませんでした。もう一度言ってください")
@@ -777,6 +803,16 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         elif t == "count_limit":
             who = _names(it.get("staff"), names)
             together = it.get("shift") if isinstance(it.get("shift"), list) else None
+            if together is None and isinstance(it.get("shift"), str) and it["shift"] not in facility.symbols:
+                # 「日勤と遅番合わせて月12回まで」を、本物の Haiku は "日・遅" の1つの文字で返した（2026-11-08）
+                parts = [x for x in re.split(r"[・、,，/と＋+\s]+", it["shift"]) if x]
+                if len(parts) > 1 and all(x in facility.symbols for x in parts):
+                    together = parts
+            if together is None and not it.get("shift") and re.search(r"合わせて|あわせて|合計|合算|トータル", text):
+                # 「日勤と遅番合わせて月12回まで」を、本物の Haiku は勤務を空で返すこともある（2026-11-08）
+                named = sorted((text.index(st.name), st.symbol) for st in facility.shift_types if st.name in text)
+                if len(named) > 1:
+                    together = [sym_ for _, sym_ in named]
             if it.get("shift") in ("現場", "出勤", "勤務", "出"):
                 # 「〇〇さんの現場勤務は8日まで」。現場に入る勤務の全部（研修など頼まれた時だけの勤務と休みは数えない）の月の日数。
                 # 前は「8日まで」を期限か「8」の記号と読んで聞き返した（作者 2026-11-07「月8日までだと分からないのはどうかしている」）
@@ -1021,6 +1057,10 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         elif t == "staff_info":
             who = _names(it.get("staff"), names) or []
             fm = _num(it.get("from_month"))
+            if fm is None and re.search(r"(?<!再)来月", text):
+                fm = month.month % 12 + 1   # 読み取りは開いている月を知らないので、「来月から」は月を空で返す（2026-11-08）
+            elif fm is None and re.search(r"再来月", text):
+                fm = (month.month + 1) % 12 + 1
             if fm is None:
                 fm = month.month   # 月を言っていなければ、開いている月から（前は聞き返して止まった。2026-11-06）
             if not who or not fm or fm > 12:

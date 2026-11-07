@@ -18,6 +18,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 
 from .addshift import add_shift_items, fix_spoken, hide_spoken, read_spoken, show_spoken
+from .heard import fix_heard
 from .build import C3_MESSAGE, broken_parts, TIMEOUT_MESSAGE, build_original, clip_to_month, month_rules, patience_of, solve_staged
 from .daycount import day_counts as _day_counts
 from .intake import EVERYONE_HINT, WHO_UNKNOWN, Clarify, Proposal, to_proposal
@@ -409,7 +410,7 @@ class Session:
 
     # 話す
     def say(self, text: str) -> Reply:
-        text = fix_spoken(text.strip(), self.store.facility())
+        text = fix_spoken(fix_heard(text.strip(), self.store.facility()), self.store.facility())
         u = self.store.add_pending(self.year, self.month, text, at=self.now().isoformat(timespec="seconds"),
                                    status="new")
         return self._stamp(self._read(u))
@@ -483,7 +484,7 @@ class Session:
             self.store.update_pending(self.year, self.month, u["id"], text=text, sent_text=None, items=filled, status="read")
             return self._safe_propose({**u, "text": text, "items": filled})
         local = only_shift_items(masked, fac) or support_items(masked, fac) or add_shift_items(masked, fac, waiting) \
-            or bare_redo(masked, self.store.ledger().rules_at(between=self._span())) \
+            or bare_redo(masked, self.store.ledger().rules_at(between=self._span()), masker.to_name) \
             or raise_items(masked, fac, lambda code, sym: self._cap_now(masker.unmask(code), sym))
         if local is not None:   # 手元で読めた（日勤だけ・ユニット間の応援・勤務の種類を足す など）。Claude へは送らない
             self._ask_times = local[0].get("ask_times")
@@ -548,11 +549,25 @@ class Session:
         日付の頼みで誰か分からない時と、答えをつなぐ聞き返し（日付・勤務が足りない）は、読み直しても同じなので当てない。"""
         if any(it.get("type") == "unclear" and it.get("question") == WHO_UNKNOWN for it in items):
             return None
+        if len(items) == 1 and items[0].get("type") == "cancel" and not items[0].get("staff") and not items[0].get("days"):
+            # 人も日も言わない取り消しで、取り消せる話したマスの頼みが1つも無い時は、取り消しと読み違えたのかもしれない
+            # （「早番は4回もいらない」を cancel と読んだ）。聞き返す前に、ルールの一覧を添えて読み直す
+            sym = items[0].get("shift")
+            spoken = self.store.ledger().rules_at(between=self._span()).values()
+            if not any(r.kind == "cell" and r.when and str(r.meta.get("source", "")).startswith("話した")
+                       and (not sym or sym in r.params.get("in", []) + r.params.get("not_in", [])) for r in spoken):
+                return "取り消す頼みが見つかりませんでした。誰の、何日の頼みか言ってください"
         try:
             self._proposal(copy.deepcopy(items), text)
         except Clarify as e:
             asked = next((it.get("question") for it in items if it.get("type") == "unclear"), None)
             if e.need is None and (any(w in str(e) for w in self.STUCK_WORDS) or (asked is not None and str(e) == asked)):
+                return str(e)
+            symbols = self.store.facility().symbols
+            if e.need == "shift" and any(isinstance(it.get("shift"), str) and it["shift"] and it["shift"] not in symbols
+                                         for it in items):
+                # 読み取りが勤務の記号でない字を書いた（「連金」を「連」）。勤務の名前だけを答えても、書いてある字は
+                # 置き換わらない（fill_answer は空の勤務だけを埋める）ので、聞き返しより文脈つきの読み直しにする
                 return str(e)
             if str(e) == WHO_UNKNOWN + EVERYONE_HINT and not re.search(r"職員\d{2}", masked) \
                     and not self._names_left(masked):

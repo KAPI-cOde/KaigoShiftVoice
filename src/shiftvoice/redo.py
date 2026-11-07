@@ -86,9 +86,20 @@ def _one(v) -> str | None:
     return v
 
 
-def bare_redo(masked: str, rules: dict) -> list[dict] | None:
-    """人を言わない「20日じゃなくて21日」。読み取りは何も読めないので、その日に話した頼みの人が1人の時だけ手元で読む。"""
-    m = None if "職員" in masked else _DIRECT.fullmatch(_plain(masked))
+_WHO_DIRECT = re.compile(r"(職員\d+)(?:さん)?(?:の|は|が)?" + _DIRECT.pattern)
+
+
+def bare_redo(masked: str, rules: dict, to_name: dict[str, str] | None = None) -> list[dict] | None:
+    """人を言わない「20日じゃなくて21日」。読み取りは何も読めないので、その日に話した頼みの人が1人の時だけ手元で読む。
+    人を言った「職員02さん12日じゃなくて14日だった」は、その人がその日に話した頼みがある時だけ手元で読む（to_name は番号→名前）。
+    本物の Haiku は新しい日の頼みだけを返し、前の日の頼みが残った（2026-11-08）。"""
+    if "職員" in masked:
+        w = _WHO_DIRECT.fullmatch(_plain(masked)) if to_name else None
+        who = to_name.get(w[1]) if w else None
+        if not who or not _spoken(rules, who, int(w[2])) or w[2] == w[3]:
+            return None
+        return [{"type": "move", "staff": who, "shift": None, "from_day": int(w[2]), "to_day": int(w[3]), "reason": None}]
+    m = _DIRECT.fullmatch(_plain(masked))
     if not m:
         return None
     who = {r.who[0] for r in _spoken(rules, None, int(m[1]))}
