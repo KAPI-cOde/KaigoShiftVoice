@@ -213,3 +213,14 @@ def test_見出しの行に応援の人の名前がある表():
     odd = "\n".join([head, "2丁目\t" + "\t".join("岡田" if d in (1, 5) else "" for d in range(30)),
                      "上野\t" + plain(2)]) + "\n"
     assert "2丁目" in parse_paste(odd).table
+
+
+def test_勤務の名前と集計の行の名前で人の行を見出しにしない():
+    """「青木フロア」の名前で休みを空欄・勤務を「夜勤」と書く人の行と、「夜勤人数」の行がある表。見出しの行の応援の名前を
+    見分ける時に、「夜勤」が「夜勤人数」に前方一致して名前と見られ、人の行が見出しになって黙って消えた（Astra 2026-11-07）"""
+    head = "氏名\t" + "\t".join(str(d) for d in range(1, 31))
+    rows = ["青木フロア\t" + "\t".join("夜勤" if d % 5 == 0 else "" for d in range(30)),
+            "上野\t" + "\t".join(["日", "公", "日"][d % 3] for d in range(30)),
+            "夜勤人数\t" + "\t".join("1" for _ in range(30))]
+    p = parse_paste("\n".join([head] + rows) + "\n")
+    assert "青木フロア" in p.table and "上野" in p.table

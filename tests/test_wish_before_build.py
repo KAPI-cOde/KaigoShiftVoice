@@ -188,3 +188,21 @@ def test_日付の人数を言い直して前の数に戻せる(sess):
     b = fl.build()
     assert b["status"] == "ok", b
     assert sum(row[11] == "早" for row in b["tables"]["base"].values()) == 3
+
+
+def test_日付の人数の数え方を切り替えて言い直せる(sess):
+    """「12日は早番を3人」（施設全体）→「12日はどのユニットも早番は0人」→「12日は早番を3人」と言い直すと、最後の3人が
+    最初の3人と同じ中身と見られて入らず、各ユニット0人が残った（Astra 2026-11-07。数え方が違っても後に言った方が勝つ）"""
+    import json as _j
+
+    from shiftvoice.reader import RecordedReader
+    fl = _ready(sess)
+    reader = RecordedReader({
+        "12日は早番を3人": _j.dumps({"items": [{"type": "coverage", "shift": "早", "min": 3, "max": None}]}),
+        "12日はどのユニットも早番は0人": _j.dumps({"items": [{"type": "coverage", "shift": "早", "min": 0, "max": 0}]})})
+    for text in ("12日は早番を3人", "12日はどのユニットも早番は0人", "12日は早番を3人"):
+        w = fl.wish(text, reader)
+        assert w.get("wish_note", "").startswith("入れました"), (text, w)
+    b = fl.build()
+    assert b["status"] == "ok", b
+    assert sum(row[11] == "早" for row in b["tables"]["base"].values()) == 3

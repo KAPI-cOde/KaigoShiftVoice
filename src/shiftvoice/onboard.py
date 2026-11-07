@@ -349,7 +349,9 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
     row_names: set[str] = set()   # 表の行の名前の欄（見出しの行の応援の人の名前を見分ける。下で日の列が決まってから入れる）
 
     def _is_row_name(v: str) -> bool:
-        return len(v) >= 2 and any(n == v or n.startswith(v) for n in row_names)   # 1文字は勤務の記号と取り違える
+        # 1文字は勤務の記号と取り違える。勤務の名前（「夜勤」）や集計の言葉は、「夜勤人数」の行に前方一致しても名前と見ない
+        # （人の行を見出しと読んで黙って消した。Astra 2026-11-07）
+        return len(v) >= 2 and not is_label(v) and any(n == v or n.startswith(v) for n in row_names)
 
     def is_total_row(cells: list[str], name_idx: int) -> bool:
         """名前以外のセルが空でなく、全部が数字の行は集計の行（出勤者数・公休数 など）。"""
@@ -404,7 +406,7 @@ def parse_paste(text: str, symbols: str = "") -> Pasted:
 
         marks: list[dict] = []   # 読んだ行の種類（貼った時の並べ方で持ち出すため）
         repeated = False         # ユニットごとに日付の行が繰り返す表か
-        row_names.update(n for n in (_clean_name(c[nc]) for _, c in body if nc < len(c)) if n)
+        row_names.update(n for n in (_clean_name(c[nc]) for _, c in body if nc < len(c)) if n and not is_label(n))
         for lineno, cells in body:
             name = _clean_name(cells[nc]) if nc < len(cells) else ""
             left_cells = cells[:cols[0]]

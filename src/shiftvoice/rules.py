@@ -185,11 +185,13 @@ def dated_same_as_latest(rd: dict, cur) -> bool | None:
     if rd.get("kind") != "coverage" or not rd.get("when") or (rd.get("params") or {}).get("weekdays"):
         return None
 
-    def slot(p: dict) -> tuple:
-        return frozenset(_syms_of(p.get("shifts"))), p.get("scope"), tuple(sorted(p.get("units") or []))
+    # 数え方（施設全体・ユニットごと）が違っても、後に言った日付の人数は前の数え方をゆるめる（_coverage_dates）ので、
+    # 同じ勤務なら数え方によらず、いちばん後のものと比べる（「施設全体3人」→「各ユニット0人」→「施設全体3人」で、
+    # 最後の3人が入らず各ユニット0人が残った。Astra 2026-11-07）
+    syms = frozenset(_syms_of(rd["params"].get("shifts")))
     days = set(rd["when"])
     same_slot = [r for r in cur if r.kind == "coverage" and r.when and not r.params.get("weekdays")
-                 and set(r.when) & days and slot(r.params) == slot(rd["params"])]
+                 and set(r.when) & days and frozenset(_syms_of(r.params.get("shifts"))) == syms]
     last = same_slot[-1] if same_slot else None
     return bool(last) and last.params == rd["params"] and last.when == rd["when"] and last.flex == rd.get("flex", last.flex)
 
