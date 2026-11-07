@@ -45,7 +45,7 @@ SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係で�
 - avoid_cell その日はその勤務にしない。staff, days, shift, reason
 - move 前に決まったマスを別の日へ移す。staff, shift, from_day, to_day, reason
 - forbid_sequence 並びの禁止（AのつぎのひにB）。staff(並び。全員なら null), first, next(記号。Bが2つ以上なら並び), strength, reason
-- count_limit 月の回数。staff(並び。全員なら null), shift, min, max(言っていなければ null), until_day(「〇日まで」なら日、なければ null), strength, reason。「夜勤なし」「夜勤0」は max 0。「15日まで夜勤なし」は max 0 と until_day 15（日付の型にしない）
+- count_limit 月の回数。staff(並び。全員なら null), shift, min, max(言っていなければ null), until_day(「〇日まで」なら日、なければ null), strength, reason。「夜勤なし」「夜勤0」は max 0。「15日まで夜勤なし」は max 0 と until_day 15（日付の型にしない）。「現場勤務は8日まで」「現場に入るのは月8日」「出勤は8日まで」は、勤務の全部を数える月の日数なので shift は「現場」、max 8、until_day は null（期限ではない）
 - weekday_pref 人の曜日の頼み。staff, weekdays(mon〜sun), shift, avoid(避けるなら true), until_month(「12月いっぱい」なら 12。なければ null), reason。その曜日を休みにする頼みは shift 公 と avoid false
 - coverage 1日に入る人数（勤務の記号の人数だけ）。shift, min(「2人に」「2人ほしい」「2人以上」なら 2), max(「3人まで」なら 3。ちょうどなら min と同じ。言っていなければ null), weekdays(曜日を言ったら mon〜sun の並び。毎日なら null), holidays(「祝日も」「土日祝」と言った時だけ true), strength, reason
 - consecutive_limit 続けて働く日数の上限。staff, shift(「夜勤は続けて2日まで」のように勤務を言った時だけ記号。言っていなければ null), max, except_staff(「ただし職員07さんは当たらない」「職員07さんは除く」の人の並び。なければ null), strength, reason。「夜勤は単発で」「夜勤を続けないで」は shift 夜・max 1。表に無い当番の話ではない。「なるべく2回まで、どうしようもない時は3回まで」は、max 2 の negotiable と max 3 の operational の2件にする。除く人は別の件にせず、両方の件の except_staff に入れる
@@ -72,6 +72,8 @@ cover は、人が残った・早く来たなど、もう済んだ穴埋めを�
 {"items":[{"type":"forbid_sequence","staff":null,"first":"明","next":"日","strength":"negotiable","reason":null}]}
 一言「職員05さん、遅番は月4回まで」
 {"items":[{"type":"count_limit","staff":["職員05"],"shift":"遅","min":null,"max":4,"until_day":null,"strength":"operational","reason":null}]}
+一言「職員12の現場勤務は8日まで」
+{"items":[{"type":"count_limit","staff":["職員12"],"shift":"現場","min":null,"max":8,"until_day":null,"strength":"operational","reason":null}]}
 一言「職員04さん、月曜は遅番にしないで。毎月」
 {"items":[{"type":"weekday_pref","staff":"職員04","weekdays":["mon"],"shift":"遅","avoid":true,"until_month":null,"reason":null}]}
 一言「職員04さんは日曜日は休みで固定してほしい」

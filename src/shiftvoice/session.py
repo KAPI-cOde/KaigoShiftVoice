@@ -1637,7 +1637,7 @@ class Session:
             "accepted_items": self._accepted_items(m),
             "last_said": m.history[-1]["said"] if m.history else None,
             # 種類と時刻は、表のマスの地の色に使う（取り込みで増えた記号も、早・日・遅・夜などの色にそろえる）
-            "symbols": [{"symbol": st.symbol, "name": st.name, "kind": st.kind, "start": st.start,
+            "symbols": [{"symbol": st.symbol, "name": st.name, "kind": st.kind, "start": st.start, "on_request_only": st.on_request_only,
                          "hours": st.hours, "next_is_ake": st.next_is_ake} for st in fac.shift_types],
             "absence_sim": self.store.absence_sim(self.year, self.month),
             "returned_note": self._returned_note(m),

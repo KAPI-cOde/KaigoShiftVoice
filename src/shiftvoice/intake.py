@@ -776,6 +776,10 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
         elif t == "count_limit":
             who = _names(it.get("staff"), names)
             together = it.get("shift") if isinstance(it.get("shift"), list) else None
+            if it.get("shift") in ("現場", "出勤", "勤務", "出"):
+                # 「〇〇さんの現場勤務は8日まで」。現場に入る勤務の全部（研修など頼まれた時だけの勤務と休みは数えない）の月の日数。
+                # 前は「8日まで」を期限か「8」の記号と読んで聞き返した（作者 2026-11-07「月8日までだと分からないのはどうかしている」）
+                together = [st.symbol for st in facility.shift_types if st.kind == "work" and not st.on_request_only]
             sym = _sym(together[0] if together else it.get("shift"), facility)
             syms = [_sym(x, facility) for x in together] if together else [sym]
             lo, hi = _num(it.get("min")), _num(it.get("max"))
@@ -809,7 +813,8 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 params["min"] = lo
             if hi is not None:
                 params["max"] = hi
-            what = "と".join(facility.shift(x).name for x in syms) + ("は合わせて" if len(syms) > 1 else "は")
+            what = ("現場の勤務は" if it.get("shift") in ("現場", "出勤", "勤務", "出")
+                    else "と".join(facility.shift(x).name for x in syms) + ("は合わせて" if len(syms) > 1 else "は"))
             p.rules.append({"name": f"{_who(who)} {what}{label}{rng}", "kind": "count",
                             "flex": _count_strength(it.get("strength"), text, len(real) == 1), "params": params,
                             "who": who, "when": when})

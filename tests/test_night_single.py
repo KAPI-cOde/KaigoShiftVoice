@@ -49,3 +49,18 @@ def test_cards_show_broken_rules(sess):
     cards = {c["id"]: c for c in sess.state()["cards"]}
     assert any(c["broken"] for c in cards.values())
     assert all(c["broken"] == 0 for c in cards.values() if c["kind"] == "weekday")
+
+
+def test_floor_days_per_month(sess):
+    """「〇〇の現場勤務は8日まで」は、その人の現場の勤務（研修と休みを除く）の月の日数の上限。前は「8日まで」を期限か「8」の
+    記号と読んで聞き返した（作者 2026-11-07）。"""
+    sess.open()
+    r = sess.say("小島の現場勤務は8日まで")
+    if r.kind == "ask_period":
+        r = sess.answer(r.uid, "once")
+    rules = [x for x in sess.store.ledger().rules_at().values() if x.kind == "count" and x.who == ["小島"] and x.params.get("max") == 8]
+    assert len(rules) == 1, r.message
+    assert set(rules[0].params["shifts"]) == {"早", "日", "遅", "夜"}
+    assert "現場の勤務は" in rules[0].name
+    t = sess.store.month(2026, 11).table["小島"]
+    assert sum(v in ("早", "日", "遅", "夜") for v in t) <= 8 or r.warning

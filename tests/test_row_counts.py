@@ -83,3 +83,20 @@ def test_screen_can_show_previous_month_tail_and_hides_unit_counts_by_default():
     assert "S.prev_tail" in h and "prevDays()" in h
     assert 'viewPref("sv_show_unit_counts", false)' in h          # ユニットごとの人数は、ふだんは隠す
     assert "return showUnitCounts || (!r.unit && start[r.symbol] < 9000)" in h   # ふだんは施設全体の勤務の行だけ（公休も隠す）
+
+
+
+def test_count_columns_follow_start_time():
+    """回数の列のふだんの勤務は始まりの早い順。8時の日勤は早番と日勤の間（作者 2026-11-07）。研修は後ろ。"""
+    import json
+    if not shutil.which("node"):
+        pytest.skip("node が無い")
+    syms = [{"symbol": "早", "name": "早番", "kind": "work", "start": "06:45"}, {"symbol": "日", "name": "日勤", "kind": "work", "start": "09:00"},
+            {"symbol": "遅", "name": "遅番", "kind": "work", "start": "13:15"}, {"symbol": "夜", "name": "夜勤", "kind": "work", "start": "16:00"},
+            {"symbol": "公", "name": "公休", "kind": "rest"}, {"symbol": "有", "name": "有給", "kind": "leave"},
+            {"symbol": "研", "name": "研修", "kind": "work", "start": "09:00", "on_request_only": True},
+            {"symbol": "8", "name": "8時の日勤", "kind": "work", "start": "08:00"}]
+    rows = [["早", "8", "日", "遅", "夜", "公", "有", "研"]]
+    prog = _js() + "\nvar a = JSON.parse(process.argv[1]);\nconsole.log(JSON.stringify(shiftCountCols(a.s, a.r).map(function (c) { return c.sym; })));"
+    out = subprocess.run(["node", "-e", prog, json.dumps({"s": syms, "r": rows}, ensure_ascii=False)], capture_output=True, text=True, check=True).stdout
+    assert json.loads(out) == ["早", "8", "日", "遅", "夜", "研", "公", "有"]

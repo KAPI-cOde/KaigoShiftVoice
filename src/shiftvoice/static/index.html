@@ -429,9 +429,17 @@ function shiftCountCols(symbols, rows) {
     if (!(x.kind in order)) return false;                 // 明け（ake）は出さない
     return x.kind !== "work" || core[x.symbol] || used[x.symbol];
   }).map(function (x, i) { return { sym: x.symbol, name: x.name, i: i }; });
-  var kindOf = {};
-  (symbols || []).forEach(function (x) { kindOf[x.symbol] = order[x.kind]; });
-  cols.sort(function (a, b) { return kindOf[a.sym] - kindOf[b.sym] || a.i - b.i; });
+  var kindOf = {}, reqOf = {}, startOf = {};
+  (symbols || []).forEach(function (x) {
+    kindOf[x.symbol] = order[x.kind];
+    reqOf[x.symbol] = x.on_request_only ? 1 : 0;   // 研修など頼まれた時だけ置く勤務は、ふだんの勤務の後ろ
+    var m = /^(\d{1,2}):(\d{2})/.exec(x.start || "");
+    startOf[x.symbol] = m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : 5000;
+  });
+  // ふだんの勤務は始まりの早い順（作者 2026-11-07「8は早と日の間に」）。休み・有給はその後ろ
+  cols.sort(function (a, b) {
+    return kindOf[a.sym] - kindOf[b.sym] || reqOf[a.sym] - reqOf[b.sym] || startOf[a.sym] - startOf[b.sym] || a.i - b.i;
+  });
   return cols;
 }
 function shiftCountsOf(row, cols) {
