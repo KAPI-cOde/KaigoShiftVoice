@@ -347,7 +347,7 @@
   @media print {
     @page { size: A4 landscape; margin: 10mm; }
     html, body { font-size: 11px; }
-    #keybar, #topbar, #guide, #banner, #diffs, .right, #accrows, #why, .said, .reply, #form, #hint, .tablebar button, .tablebar .viewtogs, .tablebar .exportlinks, .exportnote, footer, #vsetup, #vclean, #vrules, #vres { display: none !important; }
+    #keybar, #topbar, #guide, #banner, #diffs, .right, #accrows, #why, .said, .reply, #form, #hint, .tablebar button, .tablebar .viewtogs, .tablebar .exportlinks, .exportnote, .blist, footer, #vsetup, #vclean, #vrules, #vres { display: none !important; }
     .tablebar { display: block; margin: 0; }
     main, main#v11 { display: block; max-width: none; padding: 0; }
     h2 { font-size: 16px; }
@@ -1557,8 +1557,9 @@ function chatClear() {
 function chatScroll() {
   var log = document.getElementById("chatlog"), r = document.getElementById("reply");
   if (!log) return;
-  log.scrollTop = r && r.offsetHeight > log.clientHeight ? r.offsetTop - 8 : log.scrollHeight;
-  log.classList.toggle("faded", log.scrollTop > 4);
+  var tall = r && r.offsetHeight > log.clientHeight;
+  log.scrollTop = tall ? r.offsetTop - 8 : log.scrollHeight;
+  log.classList.toggle("faded", !tall && log.scrollTop > 4);   // 頭から見せる長い返事は、頭を薄くしない
 }
 window.addEventListener("resize", chatScroll);   // 窓の大きさが変わっても、いちばん新しい返事を入力欄の上に
 document.getElementById("chatlog").addEventListener("scroll", function () {
