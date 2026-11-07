@@ -16,3 +16,18 @@ def test_strength_words_are_not_a_reason(store):
     p = to_proposal(items, "小島さん、ハードルールで夜勤は3回までにしてください", fac, staff, m)
     assert not p.reason
     assert p.rules[0]["flex"] == "fixed"
+
+
+def test_名指しの続く日の上限は_ソフトルールと言えば相談できるのまま(store):
+    """名指しの続く日の上限は「できるだけ」でも運用の都合へ上げるが、作者が「ソフトルールで」と強さを言った時まで上げていた"""
+    fac, staff, m = store.facility(), store.staff(), store.month(2026, 11)
+
+    def flex(text):
+        items = [{"type": "consecutive_limit", "staff": ["千葉"], "shift": "夜", "max": 1, "except_staff": None,
+                  "strength": "negotiable", "reason": None}]
+        return to_proposal(items, text, fac, staff, m).rules[0]["flex"]
+    assert flex("千葉さん、ソフトルールで夜勤は単発で") == "negotiable"
+    assert flex("千葉さんの夜勤はソフトで2日続けない") == "negotiable"
+    assert flex("千葉さんの夜勤はできるだけ単発で") == "operational"
+    assert flex("千葉さん、強めのソフトで夜勤は単発で") == "operational"
+    assert flex("千葉さん、ハードルールで夜勤は単発で") == "fixed"
