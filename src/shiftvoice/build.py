@@ -27,6 +27,7 @@ class StagedResult:
     stages: list[dict] = field(default_factory=list)  # 段ごとの状態（段・状態・秒）
     message: str | None = None     # 作成者へ聞く一文（表が無い時だけ）
     note: str | None = None        # 表はできたが段を下げた時の知らせ
+    choke: list[dict] = field(default_factory=list)   # 段1で組めなかった時の詰まり所（choke.chokepoints。explain の時だけ）
 
     @property
     def ok(self) -> bool:
@@ -209,6 +210,7 @@ def _solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], mon
     一言の直し・静かなルールの確かめ・作れない時の診断は渡さないので、今までどおりの速さ"""
     stages: list[dict] = []
     patience = kw.pop("patience", None)
+    explain = kw.pop("explain", False)
     original = facility
 
     def run(stage: int) -> SolveResult:
@@ -244,6 +246,13 @@ def _solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], mon
         if r3.status == "ok":
             return StagedResult(r3, stages)
         r = r3
+    # 全部の希望休とルールで段1が組めなかった。段を下げる前に、いちばんの詰まり所を見つけて、作成者が手をつける前に
+    # 伝える（作者 2026-11-07。日勤専属の人に早出を頼むなどの対処を先に試し、どうしてもダメな時だけ希望休を相談する）。
+    # 一から表を作る時（explain）だけ。日ごとの小さなモデルなので、月全体が時間切れでも一瞬で出る
+    chokes = []
+    if explain:
+        from .choke import chokepoints
+        chokes = chokepoints(original, staff, rules, month)
     if r.status == "infeasible":
         order = [3, 2, 4]   # 運用の都合を先に外し、本人の希望は最後まで守る（作者の答え 2026-11-06）
     else:  # 時間切れは段3だけ。希望を外す段（2・4）へは進まない
@@ -257,9 +266,9 @@ def _solve_staged(facility: Facility, staff: list[Staff], rules: list[Rule], mon
             offkeys = {(b["rule"], b["key"]) for b in off}
             detail = broken_text([b for b in r.broken if (b["rule"], b["key"]) not in offkeys], {s.name for s in staff})
             return StagedResult(r, stages, note=STAGE_NOTE[st] + ("。" + detail if detail else "")
-                                + ("。" + consult if consult else ""))
+                                + ("。" + consult if consult else ""), choke=chokes)
         timed_out = timed_out or r.status == "timeout"
-    return StagedResult(r, stages, message=TIMEOUT_MESSAGE if timed_out else C3_MESSAGE)
+    return StagedResult(r, stages, message=TIMEOUT_MESSAGE if timed_out else C3_MESSAGE, choke=chokes)
 
 
 def premise_rules(premise: dict | None) -> list[Rule]:
@@ -309,4 +318,5 @@ def build_original(store: Store, year: int, month: int, *, with_premise: bool = 
     fac, staff = store.facility(), store.staff_on(year, month)
     m = store.month(year, month)
     rules = month_rules(store, year, month, with_premise=with_premise)
-    return solve_staged(fac, staff, rules, m, patience=patience_of(fac))   # 一から作るので、段1を長く探してよい
+    # 一から作るので、段1を長く探してよく、組めなければ詰まり所も探す
+    return solve_staged(fac, staff, rules, m, patience=patience_of(fac), explain=True)

@@ -71,6 +71,7 @@ class GiveBack:
     message: str = ""
     base_note: str = ""                # 返さない案で段を下げた時の知らせ
     base_seconds: float = 0.0          # 返さない案に使った秒（全段の合計）
+    base_choke: list = field(default_factory=list)   # 返さない案が段1で組めなかった時の詰まり所（choke.chokepoints）
 
 
 def _hard_broken(r: SolveResult) -> int:
@@ -90,13 +91,13 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
     # 敵対レビュー 2026-11-03）。段1で作れる時は、これまでと同じ表になる
     from .build import patience_of
     patience = patience_of(facility)   # 一から作るので、段1が時間切れなら長く探す（build.PATIENCE_DTIME）
-    staged = solve_staged(facility, staff, rules, month, patience=patience)
+    staged = solve_staged(facility, staff, rules, month, patience=patience, explain=True)
     base = staged.result
     # 返さない案を長く探して作った時は、返す案も同じ量で探す（A21。同じ計算の量で作る。少ないと返す案が作れない）
     give_dtime = patience if any(s.get("patience") and s["status"] == "ok" for s in staged.stages) else None
     if base.status != "ok" or _hard_broken(base):
         return GiveBack("base_failed", base, None, message=staged.message or "返さない案が作れませんでした",
-                        base_seconds=staged.seconds)
+                        base_seconds=staged.seconds, base_choke=staged.choke)
     note, secs = staged.note or "", staged.seconds
     names = [s.name for s in staff]
     takers = [n for n in names if counts.get(n, 0) > 0]
@@ -168,7 +169,7 @@ def build_pair(facility: Facility, staff: list[Staff], rules: list[Rule], month:
                 m.add(sum(per[n]) <= sr0[n])
 
     gb = GiveBack("cannot", base, None, counts=dict(counts), leave_avg=avg, message="この条件では返せません",
-                  base_note=note, base_seconds=secs)
+                  base_note=note, base_seconds=secs, base_choke=staged.choke)
     if not takers:
         gb.message = "引き受けた人がいません"
         return gb

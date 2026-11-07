@@ -231,6 +231,10 @@
   #guide .g1 button.linkish { padding: 0; }
   #guide b { font-weight: 700; }
   .grid td.cell.ng { outline: 2px solid #c00; outline-offset: -2px; }
+  /* 全部の希望休を入れると組めない時の、いちばんの詰まり所（12月の案の画面の表の上。重なった希望休のマスに赤い枠） */
+  .choke { border: 1px solid #000; border-radius: 3px; padding: 6px 10px; margin: 6px 0 10px; font-size: 13px; line-height: 1.6; }
+  .choke .c1 { font-weight: 700; }
+  .choke .cn { margin-top: 2px; }
   #banner { display: none; border: 1px solid #000; border-radius: 3px; padding: 8px 12px; margin: 0 0 10px; font-weight: 700; }
   .legendrow { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
   .legendrow .legend { flex: 1; min-width: 0; }
@@ -1827,15 +1831,26 @@ function nightSym() {
   return s ? s.symbol : "夜";
 }
 
+// 全部の希望休を入れると組めない時の詰まり所の文。1件目は詳しく（太字）、2件目からは1行
+function chokeBox(list) {
+  if (!list || !list.length) return null;
+  var c = el("div", "choke");
+  list.forEach(function (x, i) { c.appendChild(el("div", i === 0 ? "c1" : "cn", x.text)); });
+  return c;
+}
+
 function renderResult() {
   var box = document.getElementById("v12body");
   box.textContent = "";
   var b = BR;
   var wrap = el("div", "");
+  var chokeCells = {};
+  (b.choke || []).forEach(function (x) { (x.cells || []).forEach(function (k) { chokeCells[k] = true; }); });
   if (b.status !== "ok") {
     var w = el("div", "rv-wrap");
     w.appendChild(el("h1", "", "この条件では返せません"));
     w.appendChild(el("div", "ln", b.message || ""));
+    var cbx = chokeBox(b.choke); if (cbx) w.appendChild(cbx);
     var back = el("button", "", "見直しへ戻る"); back.type = "button"; back.style.marginTop = "14px";
     back.addEventListener("click", function () { get12().then(function (r) { R = r; renderReview(); }); });
     w.appendChild(back);
@@ -1845,6 +1860,7 @@ function renderResult() {
   var head = el("div", "");
   head.appendChild(el("div", "res-main", b.main));
   if (b.note) { var bn = el("div", "rv-err", b.note); bn.style.margin = "4px 0"; head.appendChild(bn); }
+  var cb = chokeBox(b.choke); if (cb) head.appendChild(cb);
   head.appendChild(el("div", "res-sub", b.sub));
   head.appendChild(el("div", "res-line2", b.line2));
   wrap.appendChild(head);
@@ -1889,6 +1905,7 @@ function renderResult() {
       // 光らせるのは返さない案から変わったマスだけ（引き受けた人の有給と、それに合わせて動いたマス）
       var bsym = base[n] ? (base[n][d2 - 1] || "") : sym;
       if (bsym !== sym) cls += " diff";
+      if (chokeCells[n + "|" + d2]) cls += " ng";   // 詰まり所で重なった希望休のマス
       tr.appendChild(el("td", cls, sym));
     }
     cntCells(tr, give[n] || [], rcols);

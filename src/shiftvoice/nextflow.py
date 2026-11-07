@@ -163,6 +163,13 @@ def parse_wish_paste(text: str, roster: list[str], days: int,
 
 
 
+def _choke_out(chokes: list[dict], month) -> list[dict]:
+    """詰まり所を画面に渡す形（文と、赤い枠を付けるマス「名前|日」）。1件目は詳しい文、2件目からは1行。"""
+    from .choke import explain
+    return [{"day": c["day"], "text": t, "cells": [f"{n}|{d}" for n, d in c["cells"]]}
+            for c, t in zip(chokes, explain(chokes, month))]
+
+
 class NextFlow:
     def __init__(self, store: Store, year: int, month: int):
         """year, month は今の月（11月）。進む先は翌月（12月）。"""
@@ -265,7 +272,8 @@ class NextFlow:
         dec = self.store.month(self.ny, self.nm)
         gb = build_pair(fac, staff, month_rules(self.store, self.ny, self.nm, with_premise=False), dec, counts)
         # note は返さない案で段を下げた時の知らせ（赤で出す）
-        out = {"status": gb.status, "message": gb.message, "counts": counts, "checks": gb.checks, "note": gb.base_note}
+        out = {"status": gb.status, "message": gb.message, "counts": counts, "checks": gb.checks, "note": gb.base_note,
+               "choke": _choke_out(gb.base_choke, dec)}
         if gb.status == "cannot" and not any(v > 0 for v in counts.values()):
             # 引き受けた人がいない月（取り込んで作ったばかりの施設など）。返す物が無いので、返さない案だけで採れるようにする
             dec_days = dec.days
