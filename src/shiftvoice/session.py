@@ -654,7 +654,7 @@ class Session:
             return items, {}
         ctx = self._reread_context(masker, tokens)
         payload = json.dumps([ctx, raw, masker.mask(why)[0], masked], ensure_ascii=False)
-        if self._names_left(payload):
+        if self._names_left(payload) or masker.leaks(payload):
             return items, {}   # 名前の一部でも残る文は送らない（伏せ方の穴。最初の読みの聞き返しのまま）
         try:
             got = reread(masked, ctx, first=raw, why=masker.mask(why)[0])

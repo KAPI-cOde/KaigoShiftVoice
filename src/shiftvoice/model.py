@@ -66,12 +66,15 @@ class Staff:
     unit: str
     can: list[str]       # 入れる勤務の記号
     call: str | None = None  # 呼び方
+    yomi: str | None = None  # 名前の読み（ひらがな。姓と名の間は空白で区切ってよい）。声の読み取りがかなで返した名前も伏せる
     changes: list[dict] = field(default_factory=list)  # 月から効く職員情報の変更（例 12月から夜勤可）
 
     def to_dict(self) -> dict:
         d = {"name": self.name, "unit": self.unit, "can": self.can}
         if self.call:
             d["call"] = self.call
+        if self.yomi:
+            d["yomi"] = self.yomi
         if self.changes:
             d["changes"] = self.changes
         return d
@@ -88,7 +91,7 @@ class Staff:
     @classmethod
     def from_dict(cls, d: dict) -> "Staff":
         return cls(name=d["name"], unit=d["unit"], can=list(d["can"]),
-                   call=d.get("call"), changes=list(d.get("changes", [])))
+                   call=d.get("call"), yomi=d.get("yomi"), changes=list(d.get("changes", [])))
 
 
 @dataclass

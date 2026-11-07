@@ -1147,14 +1147,15 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     # （再レビュー2回目 a の指摘）。マスの頼みは下で、人が無ければいつでも聞き返す
     # ただし「おかださん」のように名簿の表記に無いかなの呼びかけは伏せられないので、「さん」などの前の語が
     # 名前でない語（利用者・みな など）でなければ、人が出たとみなす（周8 レビュー b の指摘）
-    from .names import FAMILY_WORDS, NOT_NAMES
+    from .names import FAMILY_WORDS, KANA_KU_VERBS, KU_VERBS, NOT_NAMES
     not_name = NOT_NAMES | FAMILY_WORDS | {"みな", "みんな", "お客", "医者", "先生", "看護", "介護", "職員", "ケアマネ",
                             "施設長", "事務", "主任", "スタッフ", "お子", "おばあ", "おじい"} | {sh.name[:2] for sh in facility.shift_types}
     masker = Masker(staff, facility)
     named = {masker.to_name[c] for c in re.findall(r"職員\d{2,3}", masker.mask(text)[0]) if c in masker.to_name}
-    said = bool(named) or any(
-        not any(w.endswith(n) for n in not_name)
-        for w in re.findall(r"([ぁ-ゖァ-ヺー一-龥々]{1,6}?)(?:さん|くん|ちゃん)", text))
+    # 呼びかけの前の語。「続くんは」「行くんやったら」（関西の「続くのは」）の「続く」は呼びかけでない（伏せる側と同じ見方）
+    calls = [w for w, h in re.findall(r"([ぁ-ゖァ-ヺー一-龥々]{1,6}?)(さん|くん|ちゃん)", text)
+             if not (h == "くん" and (w[-1] in KU_VERBS or w.endswith(KANA_KU_VERBS)))]
+    said = bool(named) or any(not any(w.endswith(n) for n in not_name) for w in calls)
     # マスの頼み（休み・勤務・移動）と取り消しは、人が無いまま全員に効かせない。「全員15日休み」は頼みとして
     # ありえず、さんの無いかなの名前や「皆」を含む一言でもすり抜けないように（再レビュー2回目 b の指摘）
     cells_nobody = any(not r.get("who") for r in p.rules if r["kind"] == "cell") or any(
@@ -1171,8 +1172,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     per_named = {w for r in p.rules if r["kind"] in ("count", "max_run") for w in (r.get("who") or [])}
     both = everyone and bool(named) and named <= per_named and not any(
         not r.get("who") for r in p.rules if r["kind"] not in ("layer", "cell", "count", "max_run")) and not any(
-        not any(w.endswith(n) for n in not_name) and not any(w.endswith(n) for n in named)
-        for w in re.findall(r"([ぁ-ゖァ-ヺー一-龥々]{1,6}?)(?:さん|くん|ちゃん)", text))
+        not any(w.endswith(n) for n in not_name) and not any(w.endswith(n) for n in named) for w in calls)
     # 「ただし〇〇さんは当たらない」で名前が出た全員の上限（except_who）。言った名前が全部、除く人に入っている時は全員のルール
     excepted = {w for r in p.rules for w in (r.get("meta") or {}).get("except_who", [])}
     except_ok = bool(named) and named <= excepted and all(

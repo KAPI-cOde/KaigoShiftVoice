@@ -575,8 +575,8 @@ def payload(base: dict) -> dict | None:
            "shifts": [{"symbol": t.symbol, "name": t.name, "kind": t.kind} for t in base["fac"].shift_types],
            "rules": rules, "found": found}
     text = json.dumps(out, ensure_ascii=False)
-    if any(f in text for f in _fragments(mk)):
-        return None
+    if any(f in text for f in _fragments(mk)) or mk.leaks(text):
+        return None   # 名前の一部・読み・字体の違う書き方が残れば送らない
     return out
 
 
