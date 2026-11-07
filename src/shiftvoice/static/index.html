@@ -39,6 +39,10 @@
   .grid .prevlast { border-right: 2px solid #000; }
   .card .broken { white-space: nowrap; display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; color: #b00; border: 1px solid #b00; border-radius: 3px; padding: 0 4px; }
   .grid td.glow { background: #fff3a0; font-weight: 700; box-shadow: inset 0 0 0 2px #d4a800; }
+  .grid td.cell.rglow { background: #fff8d6; box-shadow: inset 0 0 0 1px #d9b84a; }
+  .selnote { display: none; align-items: center; gap: 10px; margin: 0 0 8px; font-size: 12px; }
+  .selnote .sw { display: inline-block; width: 14px; height: 14px; background: #fff8d6; box-shadow: inset 0 0 0 1px #d9b84a; }
+  .selnote button { font-size: 12px; padding: 1px 10px; }
 
   .said { margin-top: 10px; min-height: 22px; }
   .said p { margin: 0 0 2px; }
@@ -107,7 +111,7 @@
   .card .detail { margin-top: 6px; padding-top: 6px; border-top: 1px solid #ddd; font-size: 12px; }
   .card .detail div { margin-bottom: 2px; }
   .card .nums .numline { font-weight: 700; font-size: 13px; }
-  .card .nums .glownote { display: inline-block; background: #fff3a0; box-shadow: inset 0 0 0 1px #d4a800; padding: 0 5px; margin-top: 2px; }
+  .card .nums .glownote { display: inline-block; background: #fff8d6; box-shadow: inset 0 0 0 1px #d9b84a; padding: 0 5px; margin-top: 2px; }
   .empty { font-size: 12px; }
   #topbar { max-width: 1440px; margin: 0 auto; padding: 6px 20px 0; display: flex; justify-content: flex-end; font-size: 12px; }
   #topbar button { font-size: 12px; padding: 2px 10px; }
@@ -352,7 +356,7 @@
   @media print {
     @page { size: A4 landscape; margin: 10mm; }
     html, body { font-size: 11px; }
-    #keybar, #topbar, #guide, #banner, #diffs, .right, #accrows, #why, .said, .reply, #form, #hint, .tablebar button, .tablebar .viewtogs, .tablebar .exportlinks, .exportnote, .blist, footer, #vsetup, #vclean, #vrules, #vres { display: none !important; }
+    #keybar, #topbar, #guide, #banner, #diffs, .right, #accrows, #why, .said, .reply, #form, #hint, .tablebar button, .tablebar .viewtogs, .tablebar .exportlinks, .exportnote, .blist, .selnote, footer, #vsetup, #vclean, #vrules, #vres { display: none !important; }
     .tablebar { display: block; margin: 0; }
     main, main#v11 { display: block; max-width: none; padding: 0; }
     h2 { font-size: 16px; }
@@ -360,7 +364,7 @@
     .grid .name { width: 110px; }
     .grid th.cnt, .grid td.cnt { width: 16px; }
     .grid th, .grid td { height: var(--print-row, 20px); }
-    .grid td.glow, .grid td.diff { background: none !important; font-weight: 400; }
+    .grid td.glow, .grid td.diff, .grid td.rglow { background: none !important; font-weight: 400; box-shadow: none !important; }
     .grid td.k-early, .grid td.k-day, .grid td.k-late, .grid td.k-night, .grid td.k-ake, .grid td.k-leave { background: none !important; }   /* 紙は今どおり白黒（土日祝の列だけ灰色） */
     .grid td { box-shadow: none !important; }
     .grid td.off, .grid th.off { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -393,6 +397,7 @@
       <span class="exportlinks" id="exportlinks"><button type="button" id="copytsv">表をコピー（Excel に貼る）</button><button type="button" id="printtable">印刷</button></span>
     </div>
     <div class="blist" id="brokenbox"></div>
+    <div class="selnote" id="selnote"></div>
     <div id="copynote" class="exportnote"></div>
     <div id="printnote" class="printonly"></div>
     <div id="returnednote" class="small" style="display:none"></div>
@@ -508,6 +513,20 @@ function openDetail(card) {
   if (RD && RD.id === card.id && RD.of === S) return RD.d;
   loadDetail(card.id);
   return null;
+}
+function paleGlow(t) { return (t || "").replace(/^黄色＝/, "薄い黄色＝"); }
+function renderSelNote(card, cells) {
+  var sn = document.getElementById("selnote");
+  sn.textContent = "";
+  if (!card || !Object.keys(cells).length) { sn.style.display = "none"; return; }
+  var d = openDetail(card);
+  sn.appendChild(el("span", "sw", ""));
+  sn.appendChild(el("span", "", d && d.glow ? paleGlow(d.glow) : "薄い黄色＝「" + card.name + "」が届いているマス"));
+  var x = el("button", "", "消す");
+  x.type = "button";
+  x.addEventListener("click", function () { selected = null; renderTable(); renderCards(); });
+  sn.appendChild(x);
+  sn.style.display = "flex";
 }
 function ruleCells(card) {
   var out = {};
@@ -693,6 +712,7 @@ function renderTable() {
     var c = S.cards.filter(function (x) { return x.id === selected; })[0];
     if (c) cardGlow = ruleCells(c);
   }
+  renderSelNote(c, cardGlow);
   var ngCells = {};   // 案内の［表で見る］の赤い枠。今の表から数えたマスだけなので、直ると消える
   if (guideOn && S.guide) S.guide.problems.forEach(function (p) { p.cells.forEach(function (c) { ngCells[c[0] + "|" + c[1]] = true; }); });
   var cellRules = cellRuleMap(S.cards, S.symbols, (S.staff || []).map(function (s) { return s.name; }));
@@ -772,7 +792,8 @@ function renderTable() {
       if (wd2 === "sat" || wd2 === "sun" || S.holidays.indexOf(d2) >= 0) td.className += " off";
       td.textContent = shown[key] !== undefined ? shown[key] : (row[d2 - 1] || "");
       td.className += toneCls(td.textContent);   // 光る間に見せる前の記号も、その記号の色で
-      if (glowCells[key] || cardGlow[key]) td.className += " glow";
+      if (glowCells[key]) td.className += " glow";
+      else if (cardGlow[key]) td.className += " rglow";
       if (whyKey === key) td.className += " picked";
       if (ngCells[key]) td.className += " ng";
       var cr = cellRules[key];
@@ -1437,7 +1458,7 @@ function makeCard(c) {
         var nb = el("div", "detail nums");
         nb.appendChild(el("div", "numline", rd.line));
         (rd.now || []).forEach(function (t) { nb.appendChild(el("div", "", t)); });
-        if (rd.glow) nb.appendChild(el("div", "glownote", rd.glow));
+        if (rd.glow) nb.appendChild(el("div", "glownote", paleGlow(rd.glow)));
         b.appendChild(nb);
       }
       var dt = el("div", "detail");
