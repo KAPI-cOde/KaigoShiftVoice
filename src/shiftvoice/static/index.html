@@ -37,7 +37,7 @@
   .grid th.prev, .grid td.prev { color: #777; background: #f6f6f6; }
   .grid td.cell.prev { opacity: .65; cursor: default; }
   .grid .prevlast { border-right: 2px solid #000; }
-  .card .broken { margin-left: 6px; font-size: 11px; font-weight: 700; color: #b00; border: 1px solid #b00; border-radius: 3px; padding: 0 4px; }
+  .card .broken { white-space: nowrap; display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; color: #b00; border: 1px solid #b00; border-radius: 3px; padding: 0 4px; }
   .grid td.glow { background: #fff3a0; font-weight: 700; box-shadow: inset 0 0 0 2px #d4a800; }
 
   .said { margin-top: 10px; min-height: 22px; }
@@ -151,12 +151,46 @@
   #vrules { display: none; max-width: 860px; margin: 0 auto; padding: 14px 20px 0; }
   #vrules h1 { font-size: 22px; margin: 6px 0 10px; }
   #vrules .cards { max-height: none; overflow: visible; }
-  /* 右の欄の上。今の表で守れていないルールだけ */
-  .brokenhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .brokenhead .bt { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; font-size: 18px; font-weight: 700; }
-  .brokenhead .bt.bad { color: #b00; }
-  .brokenhead button { font-size: 12px; padding: 2px 10px; white-space: nowrap; }
-  .blist { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 34vh; overflow-y: auto; padding-right: 2px; }
+  /* 帯の中の「ルールの外れ N件」。外れがある時だけ赤で、押すと帯の下に守れていないルールのカードが開く */
+  .tablebar .rulebits { display: flex; gap: 6px; align-items: center; }
+  .tablebar .brokenbtn { border: none; background: none; padding: 3px 4px; font-size: 13px; font-weight: 700; cursor: default; }
+  .tablebar .brokenbtn:hover { background: none; }
+  .tablebar .brokenbtn.bad { color: #b00; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  .tablebar #toallrules { font-size: 12px; padding: 3px 10px; }
+  .blist { display: none; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px; margin: 0 0 8px; }
+
+  /* 右の欄は Claude とのチャットだけの縦1本（作者 2026-11-08「Notion AI のように」「今しゃべったことが上に出ては次々消える」）。
+     画面の高さいっぱいに右へ留め、一言（右寄せ）と Claude の返事（左寄せ）を積む。いちばん新しい返事が入力欄のすぐ上 */
+  :root { --chatw: clamp(340px, 27vw, 432px); }   /* 1600 幅で 432、1280 幅で 345（表の日の欄を細くしすぎない） */
+  main#v11 { display: block; max-width: none; padding: 14px calc(var(--chatw) + 20px) 0 20px; }
+  #topbar { max-width: none; padding-right: calc(var(--chatw) + 20px); }
+  #keybar { padding-right: calc(var(--chatw) + 20px); }
+  footer { max-width: none; padding-left: 20px; padding-right: calc(var(--chatw) + 20px); }
+  .right { position: fixed; top: 0; right: 0; bottom: 0; width: var(--chatw); z-index: 5; background: #fff; border-left: 1px solid #000;
+           display: flex; flex-direction: column; padding: 12px 16px 10px; }
+  .chathead { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; font-size: 16px; font-weight: 700; padding-bottom: 8px; border-bottom: 1px solid #ddd; }
+  .chatlog { flex: 1 1 auto; min-height: 0; overflow-y: auto; position: relative; display: flex; flex-direction: column; gap: 10px; padding: 10px 2px 10px; }
+  .chatlog.faded { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 48px); mask-image: linear-gradient(to bottom, transparent 0, #000 48px); }
+  .chatlog > * { flex-shrink: 0; }   /* 入りきらない時に吹き出しが縮んで重ならないように（あふれた分は上へ流す） */
+  .chatspace { flex: 1 0 0; }
+  .msg { max-width: 100%; border-radius: 12px; padding: 8px 12px; line-height: 1.6; overflow-wrap: anywhere; }
+  .msg.me { align-self: flex-end; max-width: 88%; background: #ececec; border-bottom-right-radius: 3px; }
+  .msg.ai { align-self: flex-start; border: 1px solid #999; border-bottom-left-radius: 3px; }
+  .msg.ai::before { content: "Claude"; display: block; font-size: 10px; color: #777; margin-bottom: 2px; font-weight: 400; }
+  .msg.ai:empty { display: none; }
+  .msg.old { opacity: .5; }
+  .msg.old button, .msg.old select { pointer-events: none; }
+  .chatlog .reply { margin-top: 0; min-height: 0; }
+  .right form { flex-wrap: wrap; margin-top: 8px; padding-top: 10px; border-top: 1px solid #ddd; }
+  .right form input[type=text] { flex: 1 0 100%; padding: 8px 10px; }
+  .right form #undo { margin-right: auto; }
+  .right .ptt { order: 9; flex-basis: 100%; }
+  .right .hint { margin-top: 6px; font-size: 11px; }
+  @media (max-width: 900px) {
+    main#v11 { padding-right: 20px; }
+    #topbar, #keybar, footer { padding-right: 20px; }
+    .right { position: static; width: auto; height: 80vh; border-left: none; border-top: 1px solid #000; margin-top: 16px; }
+  }
   #vclean h1 { font-family: "Hiragino Mincho ProN", serif; font-size: 22px; margin: 6px 0 6px; }
   .cl-head { margin: 0 0 14px; line-height: 1.7; }
   .cl-grp { border: 1px solid #bbb; border-radius: 3px; padding: 12px 16px; margin: 10px 0; }
@@ -315,7 +349,7 @@
     html, body { font-size: 11px; }
     #keybar, #topbar, #guide, #banner, #diffs, .right, #accrows, #why, .said, .reply, #form, #hint, .tablebar button, .tablebar .viewtogs, .tablebar .exportlinks, .exportnote, footer, #vsetup, #vclean, #vrules, #vres { display: none !important; }
     .tablebar { display: block; margin: 0; }
-    main { display: block; max-width: none; padding: 0; }
+    main, main#v11 { display: block; max-width: none; padding: 0; }
     h2 { font-size: 16px; }
     table.grid { font-size: 10px; }
     .grid .name { width: 110px; }
@@ -349,9 +383,11 @@
     <div class="tablebar" id="toolbar">
       <h2 id="tabletitle">表</h2>
       <button type="button" class="primary" id="rebuild">全部のルールで一から作り直す</button>
+      <span class="rulebits"><button type="button" class="brokenbtn" id="brokenbtn"></button><button type="button" id="toallrules">ルール</button></span>
       <span class="viewtogs"><button type="button" class="vtog" id="toggleprev" aria-pressed="false"></button><button type="button" class="vtog" id="toggleunits" aria-pressed="false"></button></span>
       <span class="exportlinks" id="exportlinks"><button type="button" id="copytsv">表をコピー（Excel に貼る）</button><button type="button" id="printtable">印刷</button></span>
     </div>
+    <div class="blist" id="brokenbox"></div>
     <div id="copynote" class="exportnote"></div>
     <div id="printnote" class="printonly"></div>
     <div id="returnednote" class="small" style="display:none"></div>
@@ -359,20 +395,19 @@
     <div class="legend" id="legend"></div>
     <div class="accrows" id="accrows"></div>
     <div id="why"></div>
-    <div class="said" id="said"></div>
-    <div class="reply" id="reply"></div>
+  </section>
+  <section class="right" id="chatpane">
+    <div class="chathead">Claude と話す</div>
+    <div class="chatlog" id="chatlog"><div class="chatspace"></div><div class="reply msg ai" id="reply"></div></div>
     <form id="form" autocomplete="off">
       <input type="text" id="input" placeholder="気づいたことを一言で入れてください">
-      <button type="submit" id="send">伝える</button>
-      <button type="button" id="talk" style="display:none">話す</button>
-      <span class="ptt" id="ptt" style="display:none">スペースを押している間、聞きます</span>
       <button type="button" id="undo" disabled>ひとつ戻す</button>
+      <span class="ptt" id="ptt" style="display:none">スペースを押している間、聞きます</span>
+      <button type="button" id="talk" style="display:none">話す</button>
+      <button type="submit" id="send">伝える</button>
     </form>
     <div class="hint" id="pubnote" style="display:none"></div>
     <div class="hint" id="hint">例「岡田さん、15と16は法事で休み」「遅番の次の日に早番はきついから、やめてあげて」。名簿の名前は番号に伏せてから Claude へ送ります。直した後も［ひとつ戻す］で戻せます。</div>
-  </section>
-  <section class="right">
-    <div class="brokenbox" id="brokenbox"></div>
   </section>
 </main>
 <section id="vrules">
@@ -959,26 +994,29 @@ function revealNew(g) {
   Object.keys(newIds).forEach(function (id) { revealed[id] = true; });
 }
 
-// 右の欄の上は、今の表で守れていないルールだけ（作者 2026-11-08「右に全てのルールを置くのはやめて。『外れ何件』のように、
-// うまく適用できなかったものだけを載せていく。ルールの一覧は詳細のページに」）。数え方はカードの「外れ」の印と同じで、
-// 相談できるルールの外れは数えない。カードは一覧と同じ物なので、押すと表の届いているマスが光る
+// 表の上の帯の「ルールの外れ N件」（作者 2026-11-08「『外れ何件』のように、うまく適用できなかったものだけを載せていく。
+// ルールの一覧は詳細のページに」）。数え方はカードの「外れ」の印と同じで、相談できるルールの外れは数えない。外れがある時は
+// 赤で、押すと帯の下に守れていないルールのカードが開く（押すと表の届いているマスが光る）。0件の時は黒で件数だけ
+var brokenOpen = false;
+function brokenCards() { return (S.cards || []).filter(function (c) { return c.broken && c.flex !== "negotiable"; }); }
 function renderBroken() {
+  var bad = brokenCards();
+  var b = document.getElementById("brokenbtn");
+  b.textContent = "ルールの外れ " + bad.length + "件" + (bad.length ? (brokenOpen ? " ▴" : " ▾") : "");
+  b.className = "brokenbtn" + (bad.length ? " bad" : "");
+  b.setAttribute("aria-expanded", bad.length && brokenOpen ? "true" : "false");
+  var g = groupCards(S.cards || [], (S.staff || []).map(function (s) { return s.name; })), n = g.total + g.only.length;   // ページの一覧に並ぶ数
+  document.getElementById("toallrules").textContent = "ルール" + (n ? "（" + n + "件）" : "");
   var box = document.getElementById("brokenbox");
   box.textContent = "";
-  var bad = (S.cards || []).filter(function (c) { return c.broken && c.flex !== "negotiable"; });
-  var head = el("div", "brokenhead");
-  head.appendChild(el("span", "bt" + (bad.length ? " bad" : ""), "ルールの外れ " + bad.length + "件"));
-  var g = groupCards(S.cards || [], (S.staff || []).map(function (s) { return s.name; })), n = g.total + g.only.length;   // ページの一覧に並ぶ数
-  var all = el("button", "", "ルールを全部見る" + (n ? "（" + n + "件）" : ""));
-  all.type = "button"; all.id = "toallrules";
-  all.addEventListener("click", function () { showRules(true); });
-  head.appendChild(all);
-  box.appendChild(head);
-  if (!bad.length) return;
-  var list = el("div", "blist");
-  bad.forEach(function (c) { list.appendChild(makeCard(c)); });
-  box.appendChild(list);
+  box.style.display = bad.length && brokenOpen ? "grid" : "none";
+  if (bad.length && brokenOpen) bad.forEach(function (c) { box.appendChild(makeCard(c)); });
 }
+document.getElementById("brokenbtn").addEventListener("click", function () {
+  if (!brokenCards().length) return;
+  brokenOpen = !brokenOpen; renderBroken();
+});
+document.getElementById("toallrules").addEventListener("click", function () { showRules(true); });
 function showRules(on) {
   document.getElementById("v11").style.display = on ? "none" : "";
   document.getElementById("topbar").style.display = on ? "none" : "";
@@ -1475,24 +1513,80 @@ function makeBundle(bd) {
   return wrap;
 }
 
+// 右の欄のチャット（作者 2026-11-08「今しゃべったことが上に出ては次々消える、という形で最短でチャット型に」）。
+// 返事はいつも #reply（いちばん新しい Claude の吹き出し）に描く。次の一言やボタンの答えが来たら、今の #reply を古い吹き出しと
+// して残し（ボタンは押せなくする）、一言の吹き出しと新しい #reply を下に足す。残すのは4往復ほどで、古い物から消す
+var CHAT_KEEP = 8;
 function renderSaid() {
-  var box = document.getElementById("said");
-  box.textContent = "";
-  saidList.slice(-3).forEach(function (s) { box.appendChild(el("p", "", "「" + s + "」")); });
+  var log = document.getElementById("chatlog");
+  var msgs = log.querySelectorAll(".msg:not(#reply)");
+  for (var i = 0; i < msgs.length - CHAT_KEEP; i++) log.removeChild(msgs[i]);
 }
+function chatTurn(text) {
+  var log = document.getElementById("chatlog");
+  var cur = document.getElementById("reply");
+  if (cur.childNodes.length) {
+    cur.removeAttribute("id");
+    cur.classList.add("old");
+    cur.querySelectorAll("button, select, input").forEach(function (b) { b.disabled = true; });
+  } else log.removeChild(cur);
+  var said = document.getElementById("said");
+  if (said) { said.removeAttribute("id"); said.classList.add("old"); }
+  if (text) { var me = el("div", "msg me", text); me.id = "said"; log.appendChild(me); }
+  var nr = el("div", "reply msg ai"); nr.id = "reply";
+  log.appendChild(nr);
+  renderSaid();
+  chatScroll();
+}
+function chatWait(text) {
+  var rb = document.getElementById("reply");
+  rb.textContent = "";
+  var w = el("div", "q2", text);
+  w.setAttribute("role", "status");
+  rb.appendChild(w);
+  chatScroll();
+}
+function chatClear() {
+  var log = document.getElementById("chatlog");
+  log.querySelectorAll(".msg").forEach(function (m) { log.removeChild(m); });
+  var nr = el("div", "reply msg ai"); nr.id = "reply";
+  log.appendChild(nr);
+  chatScroll();
+}
+// いちばん新しい返事を入力欄のすぐ上に。入りきらない長い返事（休みを移す日の候補など）は頭から見せる
+function chatScroll() {
+  var log = document.getElementById("chatlog"), r = document.getElementById("reply");
+  if (!log) return;
+  log.scrollTop = r && r.offsetHeight > log.clientHeight ? r.offsetTop - 8 : log.scrollHeight;
+  log.classList.toggle("faded", log.scrollTop > 4);
+}
+window.addEventListener("resize", chatScroll);   // 窓の大きさが変わっても、いちばん新しい返事を入力欄の上に
+document.getElementById("chatlog").addEventListener("scroll", function () {
+  var log = document.getElementById("chatlog");
+  log.classList.toggle("faded", log.scrollTop > 4);
+});
 
 var sentExplained = false;
 var spokenExplained = false;
 function renderReply(r) {
   renderReplyBody(r);
-  if (!r || !r.sent_known) return;   // 一言の返事だけ。Claude へ送った文（伏せた後）を灰色で1行
   var box = document.getElementById("reply");
-  var line = el("div", "sentline", r.sent === null || r.sent === undefined
-    ? "Claude へは送っていません"
-    : "Claude へ送った文　" + r.sent);
-  if (!sentExplained && r.sent) { line.appendChild(el("div", "sentnote", "名簿の名前は番号に置き換えて送ります")); sentExplained = true; }
-  if (!spokenExplained && /勤務[A-Z]/.test(r.sent || "")) { line.appendChild(el("div", "sentnote", "足した勤務は「勤務A」のように置き換えて送ります")); spokenExplained = true; }
-  box.appendChild(line);
+  // 直した後の表にルールの外れが残っていて、返事の文がそれに触れていない時は、件数と外れたルールの名前を1行足す
+  // （作者 2026-11-08「組み直した後に外れが出た時は、チャットの返事の中にも」）
+  if (r && r.kind === "applied" && !(r.extra && r.extra.broken) && !/外れ/.test((r.message || "") + (r.warning || "") + (r.summary || ""))) {
+    var bad = S ? brokenCards() : [];
+    if (bad.length) box.appendChild(el("div", "warning", "ルールの外れが" + bad.length + "件あります。" +
+      bad.slice(0, 2).map(function (c) { return "「" + c.name + "」"; }).join("・") + (bad.length > 2 ? "ほか" : "") + "（表の上の「ルールの外れ」を押すと見られます）"));
+  }
+  if (r && r.sent_known) {   // 一言の返事だけ。Claude へ送った文（伏せた後）を灰色で1行
+    var line = el("div", "sentline", r.sent === null || r.sent === undefined
+      ? "Claude へは送っていません"
+      : "Claude へ送った文　" + r.sent);
+    if (!sentExplained && r.sent) { line.appendChild(el("div", "sentnote", "名簿の名前は番号に置き換えて送ります")); sentExplained = true; }
+    if (!spokenExplained && /勤務[A-Z]/.test(r.sent || "")) { line.appendChild(el("div", "sentnote", "足した勤務は「勤務A」のように置き換えて送ります")); spokenExplained = true; }
+    box.appendChild(line);
+  }
+  chatScroll();
 }
 
 function renderReplyBody(r) {
@@ -1560,7 +1654,7 @@ function renderReplyBody(r) {
     [["了承をもらって直す", "accept", "primary"], ["断られた", "refuse", ""], ["やめる", "cancel", ""]].forEach(function (p) {
       var b = el("button", p[2], p[0]);
       b.type = "button";
-      b.addEventListener("click", function () { sendOffer(p[1], r.uid, p[1] === "accept" && cur ? { pick: pick } : null); });
+      b.addEventListener("click", function () { sendOffer(p[1], r.uid, p[1] === "accept" && cur ? { pick: pick } : null, p[0]); });
       ob.appendChild(b);
     });
     box.appendChild(ob);
@@ -1573,7 +1667,7 @@ function renderReplyBody(r) {
     [["記録する", "accept", "primary"], ["やめる", "cancel", ""]].forEach(function (p) {
       var b = el("button", p[2], p[0]);
       b.type = "button";
-      b.addEventListener("click", function () { sendOffer(p[1], r.uid); });
+      b.addEventListener("click", function () { sendOffer(p[1], r.uid, null, p[0]); });
       cvb.appendChild(b);
     });
     box.appendChild(cvb);
@@ -1590,7 +1684,7 @@ function renderReplyBody(r) {
     [["これで直す", "accept", "primary"], ["やめる", "cancel", ""]].forEach(function (p) {
       var b = el("button", p[2], p[0]);
       b.type = "button";
-      b.addEventListener("click", function () { sendOffer(p[1], r.uid); });
+      b.addEventListener("click", function () { sendOffer(p[1], r.uid, null, p[0]); });
       fb.appendChild(b);
     });
     box.appendChild(fb);
@@ -1640,7 +1734,7 @@ function renderReplyBody(r) {
     [["毎月", "rule"], ["今月だけ", "once"]].forEach(function (p) {
       var b = el("button", "", p[0]);
       b.type = "button";
-      b.addEventListener("click", function () { sendAnswer(p[1]); });
+      b.addEventListener("click", function () { sendAnswer(p[1], null, p[0]); });
       bs.appendChild(b);
     });
     box.appendChild(bs);
@@ -1656,7 +1750,7 @@ function renderReplyBody(r) {
     [["置き換える", "replace"], ["別に足す", "add"]].forEach(function (p) {
       var b = el("button", "", p[0]);
       b.type = "button";
-      b.addEventListener("click", function () { sendAnswer(p[1]); });
+      b.addEventListener("click", function () { sendAnswer(p[1], null, p[0]); });
       rp.appendChild(b);
     });
     box.appendChild(rp);
@@ -1679,7 +1773,7 @@ function renderReplyBody(r) {
     [["ほかの人に頼む案を見る", "wider", "primary"], ["やめる", "cancel", ""]].forEach(function (p) {
       var b = el("button", p[2], p[0]);
       b.type = "button";
-      b.addEventListener("click", function () { sendOffer(p[1], r.uid); });
+      b.addEventListener("click", function () { sendOffer(p[1], r.uid, null, p[0]); });
       wb.appendChild(b);
     });
     box.appendChild(wb);
@@ -1709,6 +1803,7 @@ function renderReplyBody(r) {
 function chooseName(uid, wrong, right) {
   if (busy) return;
   setBusy(true);
+  chatTurn(right + "さん");
   post("choose_name", { uid: uid, wrong: wrong, right: right }).then(function (res) {
     setBusy(false);
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
@@ -1748,7 +1843,7 @@ function holeButtons(box, h) {
   ok.addEventListener("click", function () { sendHole(h.uid, null); });
   hb.appendChild(ok);
   var no = el("button", "", "やめる"); no.type = "button";
-  no.addEventListener("click", function () { sendOffer("cancel", h.uid); });
+  no.addEventListener("click", function () { sendOffer("cancel", h.uid, null, "やめる"); });
   hb.appendChild(no);
   box.appendChild(hb);
   if ((h.others || []).length) {
@@ -1767,17 +1862,15 @@ function holeButtons(box, h) {
 }
 function sendHole(uid, pick) {
   if (busy) return;
-  var rb = document.getElementById("reply");
-  rb.textContent = "";
-  var w = el("div", "q", "引き受けを記録して、全部のルールで作り直しています（1〜3分ほどかかります）");
-  w.setAttribute("role", "status");
-  rb.appendChild(w);
+  chatTurn(pick === null ? "了承をもらって入れる" : "この案で入れる");
+  chatWait("引き受けを記録して、全部のルールで作り直しています（1〜3分ほどかかります）");
   sendOffer("accept", uid, pick === null ? null : { pick: pick });
 }
 
-function sendOffer(path, uid, extra) {
+function sendOffer(path, uid, extra, label) {
   if (busy) return;
   setBusy(true);
+  if (label) chatTurn(label);   // 押したボタンの語を一言の吹き出しに（穴埋めの［了承をもらって入れる］は sendHole が先に出す）
   var body = { uid: uid };
   Object.keys(extra || {}).forEach(function (k) { body[k] = extra[k]; });
   post(path, body).then(function (res) {
@@ -1864,7 +1957,7 @@ function renderGuide() {
   r1.appendChild(x);
   box.appendChild(r1);
   var t2 = p.now > 0
-    ? "直すには、下の欄に「" + p.say + "」と打つか話してください。ほかの頼みも、ふだんの言葉で話してかまいません。"
+    ? "直すには、右の欄に「" + p.say + "」と打つか話してください。ほかの頼みも、ふだんの言葉で話してかまいません。"
     : "ほかの頼みも、ふだんの言葉で話してかまいません（［ひとつ戻す］で前の表に戻せます）。";
   box.appendChild(el("div", "", t2));
 }
@@ -1925,15 +2018,13 @@ function fail(e) {
   renderReply({ kind: "failed_solve", message: "うまくつながりませんでした。もう一度試してください" });
 }
 
-function sendAnswer(text, inp) {
+function sendAnswer(text, inp, label) {
   if (busy || !ask) return;
   setBusy(true);
-  // 答えた後の作り直しは数十秒かかることがある。押した手応えが無いと、押せていないように見えた（作者 2026-11-07）
-  var rb = document.getElementById("reply");
-  rb.querySelectorAll(".btns button").forEach(function (b) { b.disabled = true; });
-  var wait = el("div", "q2", "答えを受け取りました。表を作り直しています（30秒ほどかかることがあります）");
-  wait.setAttribute("role", "status");
-  rb.appendChild(wait);
+  // 答えた後の作り直しは数十秒かかることがある。押した手応えが無いと、押せていないように見えた（作者 2026-11-07）。
+  // 問いの吹き出しは残してボタンを押せなくし、答えを一言の吹き出しにして、その下で待つ
+  chatTurn(label || text);
+  chatWait("答えを受け取りました。表を作り直しています（30秒ほどかかることがあります）");
   post("answer", { uid: ask.uid, text: text }).then(function (res) {
     setBusy(false);
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
@@ -1957,6 +2048,7 @@ function doRetry(uid) {
 function doUndo() {
   if (busy || !S || !S.can_undo) return;
   setBusy(true);
+  chatTurn("ひとつ戻す");
   post("undo", {}).then(function (res) {
     setBusy(false);
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
@@ -2020,7 +2112,7 @@ function stopTalk() {
         document.getElementById("input").value = res.text;   // 答えでない一言は捨てずに入力欄へ（答えた後に［伝える］で送れる）
       } else {
         saidList.push(res.text);
-        renderSaid();
+        chatTurn(res.text);
       }
       handle(res);
     }).catch(fail);
@@ -2077,7 +2169,8 @@ document.getElementById("form").addEventListener("submit", function (ev) {
   if (ask) { sendAnswer(text, inp); return; }   // 聞き返しの間は、答えとして使われた時だけ入力欄を消す
   inp.value = "";
   saidList.push(text);
-  renderSaid();
+  chatTurn(text);
+  chatWait("読んでいます");
   setBusy(true);
   post("say", { text: text }).then(function (res) {
     setBusy(false);
@@ -2592,14 +2685,14 @@ function showDiffs(diffs, fromMonth, sr) {
     var ex = (diffs.filter(function (d) { return d.say; })[0] || {}).say || "井上さんは日勤だけ";
     // 理由は、出した違いの種類ごとの一文（平日と土日の分け方など）。無ければ今までの一文
     var why = (diffs.filter(function (d) { return d.why; })[0] || {}).why || ("ルールにしていない形は、" + fromMonth + "月と変わることがあります");
-    box.appendChild(el("div", "hint2", why + "。違う所は、下の欄に一言で直せます（例「" + ex + "」）"));
+    box.appendChild(el("div", "hint2", why + "。違う所は、右の欄に一言で直せます（例「" + ex + "」）"));
   }
   box.style.display = "block";
 }
 function resetForFacility(st, bannerText) {
   S = st; selected = null; newIds = {}; glowCells = {}; shown = {}; ask = null; saidList = []; offerR = null;
   document.getElementById("diffs").style.display = "none";
-  document.getElementById("reply").textContent = "";
+  chatClear(); brokenOpen = false;
   var b = document.getElementById("banner");
   b.textContent = bannerText || "";
   b.style.display = bannerText ? "block" : "none";
@@ -2927,7 +3020,7 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
     var o = of.offer, rest = o.rest || {};
     var pr = function (n) { return rest[n] ? n + "さん " + rest[n][0] + "日 → " + rest[n][1] + "日" : ""; };
     saidList.push(of.text);
-    renderSaid();
+    chatTurn(of.text);
     // 開き直した時も、案に書いた文と候補（選んだ休みを移す日）で出す。文の無い前の案だけ今までの形で作る
     var shownMoves = (o.moves || []).map(function (m) {
       return { day: m.day, kind: m.kind, line: m.line, parts: m.parts, label: m.label, warn: m.warn,
@@ -2948,14 +3041,14 @@ fetch("/api/state").then(function (r) { return r.json(); }).then(function (st) {
     renderReply(offerR);
   } else if (a) {
     saidList.push(a.text);
-    renderSaid();
+    chatTurn(a.text);
     ask = a.status === "ask_replace"
       ? { uid: a.id, kind: "ask_replace", message: "前からのルールがあります。置き換えますか、別に足しますか" }
       : { uid: a.id, kind: "ask_period", message: "毎月ですか、今月だけですか" };
     renderReply(ask);
   } else if (f) {
     saidList.push(f.text);
-    renderSaid();
+    chatTurn(f.text);
     renderReply({ kind: "error", uid: f.id, message: "読み取れませんでした" });
   }
 });
@@ -3043,11 +3136,8 @@ function startRebuild() {
   // 根本のルールを足した後は、一言の狭い直しではなく、全部のルールで白紙から作り直す（作者 2026-11-07）
   if (busy || !S) return;
   setBusy(true);
-  var rb = document.getElementById("reply");
-  rb.textContent = "";
-  var w = el("div", "q", "全部のルールで一から作り直しています。何回か作って、いちばん良い表を出します（1〜3分ほどかかります）");
-  w.setAttribute("role", "status");
-  rb.appendChild(w);
+  chatTurn("全部のルールで一から作り直す");
+  chatWait("全部のルールで一から作り直しています。何回か作って、いちばん良い表を出します（1〜3分ほどかかります）");
   post("rebuild", {}).then(function (res) {
     setBusy(false);
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
