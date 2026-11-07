@@ -59,5 +59,14 @@
  "公休は月9日で": "{\"items\":[{\"type\":\"unclear\",\"question\":\"公休を月9日にするのは、全員ですか。それとも特定の職員の方ですか。特定の方なら職員の番号を教えてください。\"}]}",
  "夜勤は各ユニット1人": "{\"items\":[{\"type\":\"coverage\",\"shift\":\"夜\",\"min\":1,\"max\":1,\"weekdays\":null,\"holidays\":false,\"strength\":\"operational\",\"reason\":null}]}",
  "強めのソフトで、連勤は4日まで": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":null,\"max\":4,\"except_staff\":null,\"strength\":\"operational\",\"reason\":null}]}",
- "できれば連勤は3日までにしたい": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":null,\"max\":3,\"except_staff\":null,\"strength\":\"negotiable\",\"reason\":null}]}"
+ "できれば連勤は3日までにしたい": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":null,\"max\":3,\"except_staff\":null,\"strength\":\"negotiable\",\"reason\":null}]}",
+ "早番も遅番も、可能な範囲で平均化して": "{\"items\":[{\"type\":\"even_out\",\"staff\":null,\"shift\":[\"早\",\"遅\"],\"reason\":null}]}",
+ "早番と遅番の回数を、できるだけみんな同じくらいにして": "{\"items\":[{\"type\":\"even_out\",\"staff\":null,\"shift\":[\"早\",\"遅\"],\"reason\":null}]}",
+ "夜勤の回数をなるべく平等にして": "{\"items\":[{\"type\":\"even_out\",\"staff\":null,\"shift\":[\"夜\"],\"reason\":null}]}",
+ "遅番が偏らないようにして": "{\"items\":[{\"type\":\"even_out\",\"staff\":null,\"shift\":[\"遅\"],\"reason\":null}]}",
+ "早番をみんなで均等に分けて": "{\"items\":[{\"type\":\"even_out\",\"staff\":null,\"shift\":[\"早\"],\"reason\":null}]}",
+ "可能な範囲で平均化して、早番と遅番": "{\"items\":[{\"type\":\"even_out\",\"staff\":null,\"shift\":[\"早\",\"遅\"],\"reason\":null}]}",
+ "みんなの早番の回数、ばらつきすぎ。できるだけそろえて": "{\"items\":[{\"type\":\"even_out\",\"staff\":null,\"shift\":[\"早\"],\"reason\":null}]}",
+ "遅番の回数に差がありすぎるから、ならしてほしい": "{\"items\":[{\"type\":\"even_out\",\"staff\":null,\"shift\":[\"遅\"],\"reason\":null}]}",
+ "みんな、遅番が3日も4日も続くのはやめて": "{\"items\":[{\"type\":\"consecutive_limit\",\"staff\":null,\"shift\":\"遅\",\"max\":2,\"except_staff\":null,\"strength\":\"negotiable\",\"reason\":null}]}"
 }

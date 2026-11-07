@@ -997,6 +997,22 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
                 p.rules.append({"name": f"{jp}の{sname}は{n}人" + {"==": "", ">=": "以上", "<=": "まで"}[op] + each,
                                 "kind": "coverage", "flex": _count_strength(it.get("strength"), text, len(real) == 1),
                                 "params": params, "who": None, "when": dated or None})
+        elif t == "even_out":
+            # 「早番も遅番も、可能な範囲で平均化して」。何回から何回とは決めず、人ごとの回数をできるだけそろえる（solver._even）。
+            # 数を決めると組めるか分からないので、施設では数を言わずにならすよう頼む（作者 2026-11-08）。外れを持たない
+            who = _names(it.get("staff"), names)
+            v = it.get("shift")
+            if isinstance(v, str) and v not in facility.symbols:
+                v = [x for x in re.split(r"[・、,，/と＋+\s]+", v) if x]   # 「早・遅」を1つの文字で返した時
+            raw = [x for x in (v if isinstance(v, list) else [v]) if x]
+            if not raw:
+                raise Clarify("どの勤務の回数をそろえるか教えてください（例「早番の回数をそろえて」）")
+            syms = list(dict.fromkeys(_sym(x, facility) for x in raw))
+            if any(facility.shift(x).kind != "work" for x in syms):
+                raise Clarify("休みの日数をそろえる頼みは、まだ扱えません。勤務の回数（早番・遅番など）で言ってください")
+            what = "と".join(facility.shift(x).name for x in syms)
+            p.rules.append({"name": f"{_who(who)} {what}の回数を、{'それぞれ' if len(syms) > 1 else ''}できるだけそろえる",
+                            "kind": "even", "flex": "negotiable", "params": {"shifts": syms}, "who": who, "when": None})
         elif t == "consecutive_limit":
             who = _names(it.get("staff"), names)
             mx = _num(it.get("max"))

@@ -1,13 +1,35 @@
 """「早番も遅番も、可能な範囲で平均化して」。何回から何回とは決めず、人ごとの回数をできるだけそろえる（作者 2026-11-08
 「月3〜4回にして、とは通常言わない。それで組めるか分からないから。『可能な範囲で平均化して』が通る方が良い」）。
 
+- 読み取り（本物の Haiku で録った8つの言い回し）から、全員の「回数をそろえる」ルールになる。毎月か今月だけかは聞く
 - 外れを持たない（守れなかった件に数えない）。前に足したルール（遅番の次の日の早番・遅番の3連続）を崩してまでならさない
 - 数えるのはその勤務に入れる人だけ。名指しの回数のルールや本人の希望が先に効く
 """
+import shutil
+
+import pytest
+
+from shiftvoice.build import month_rules
 from shiftvoice.model import Facility, Month, Rule, ShiftType, Staff
+from shiftvoice.quiet import candidates
 from shiftvoice.resolve import resolve
 from shiftvoice.rules import check_table
 from shiftvoice.solver import solve_month
+
+SCENE = [("遅番の次の日に早番はきついから、やめてあげて", "毎月"),
+         ("みんな、遅番が3日も4日も続くのはやめて", "毎月")]
+EVEN = "早番も遅番も、可能な範囲で平均化して"
+
+PHRASES = {   # 本物の Haiku で3回ずつ読ませ、3回とも同じ読みだった（2026-11-08）
+    "早番も遅番も、可能な範囲で平均化して": ["早", "遅"],
+    "早番と遅番の回数を、できるだけみんな同じくらいにして": ["早", "遅"],
+    "夜勤の回数をなるべく平等にして": ["夜"],
+    "遅番が偏らないようにして": ["遅"],
+    "早番をみんなで均等に分けて": ["早"],
+    "可能な範囲で平均化して、早番と遅番": ["早", "遅"],
+    "みんなの早番の回数、ばらつきすぎ。できるだけそろえて": ["早"],
+    "遅番の回数に差がありすぎるから、ならしてほしい": ["遅"],
+}
 
 
 def _spread(table, staff, sym):
@@ -29,6 +51,75 @@ def _late_runs3(table, month):
             run = run + 1 if v == "遅" else 0
             n += run == 3 and i >= len(tail)
     return n
+
+
+@pytest.mark.parametrize("text", list(PHRASES))
+def test_phrase_becomes_even_rule_for_everyone(sess, text):
+    """名前を言わない言い回しは全員のルール。「なるべく」「可能な範囲で」でも止まらず、聞き返しにも読み直しにも落ちない。
+    直す前は読み取りの型に無く、読めない返事として止まった。"""
+    r = sess.say(text)
+    assert r.kind == "ask_period", r.message
+    r = sess.answer(r.uid, "毎月")
+    assert r.kind == "applied", r.message
+    assert r.warning == ""
+    assert sess.reader.reread_sent == []
+    card = next(c for c in sess.state()["cards"] if c["id"] == r.rule_ids[0])
+    assert card["kind"] == "even" and card["who"] is None and card["scope"] == "rule"
+    assert card["params"]["shifts"] == PHRASES[text]
+    assert card["broken"] == 0
+    assert "できるだけそろえる" in card["name"] and card["name"].startswith("全員")
+
+
+def test_scene_narrows_without_breaking_earlier_rules(sess):
+    """動画の3つ目の場面。遅番の次の日の早番と、遅番の3連続をやめた後に平均化を頼む。早番・遅番の幅は狭まり、
+    前の2つのルールは0か所のまま、ルールの外れは増えない。直す前は「まだ扱えません」から読み直しで回数を聞き返した。"""
+    for text, ans in SCENE:
+        r = sess.say(text)
+        r = sess.answer(r.uid, ans)
+        assert r.kind == "applied", (text, r.message)
+    st = sess.store
+    staff = st.staff_on(2026, 11)
+    m = st.month(2026, 11)
+    before = {sym: _spread(m.table, staff, sym) for sym in ("早", "遅")}
+    rules = month_rules(st, 2026, 11, with_premise=False)
+    broken_before = check_table(rules, st.facility(), staff, m, m.table)
+    assert _late_then_early(m.table) == 0 and _late_runs3(m.table, m) == 0
+    assert before["早"][1] - before["早"][0] >= 4 and before["遅"][1] - before["遅"][0] >= 4   # 2〜7回・1〜6回
+
+    r = sess.say(EVEN)
+    r = sess.answer(r.uid, "毎月")
+    assert r.kind == "applied", r.message
+    m = st.month(2026, 11)
+    for sym in ("早", "遅"):
+        lo, hi = _spread(m.table, staff, sym)
+        assert hi - lo <= 1, (sym, lo, hi)   # 16人で月30回なので、3〜4回
+    assert _late_then_early(m.table) == 0
+    assert _late_runs3(m.table, m) == 0
+    rules = month_rules(st, 2026, 11, with_premise=False)
+    assert len(check_table(rules, st.facility(), staff, m, m.table)) <= len(broken_before)
+    for name, row in m.table.items():   # 公休9日・夜勤3〜5回（入れる人）は動かせない・運用の都合のまま
+        assert row.count("公") == 9
+    assert all(3 <= m.table[s.name].count("夜") <= 5 for s in staff if "夜" in s.can)
+
+
+def test_even_rule_is_not_a_cleanup_or_quiet_candidate(sess):
+    """場面を持たないので、当てはまる場面が無いことを理由に片付け・静かなルールの札にしない。"""
+    r = sess.answer(sess.say(EVEN).uid, "毎月")
+    rid = r.rule_ids[0]
+    assert rid not in candidates(sess.store, 2026, 11)
+    view = sess.cleanup()
+    assert all(rid not in str(g) for g in view["groups"].values())
+
+
+def test_rule_detail_counts_only_people_who_can_work_it(sess):
+    """夜勤に入れない人（杉山さん。12月から入れる）を0回として数えない。"""
+    r = sess.answer(sess.say("夜勤の回数をなるべく平等にして").uid, "毎月")
+    d = sess.rule_detail(r.rule_ids[0])
+    staff = sess.store.staff_on(2026, 11)
+    n = sum(1 for s in staff if "夜" in s.can)
+    assert n == len(staff) - 1
+    assert any(f"入れる{n}人" in x for x in d["now"]), d
+    assert not any("0〜" in x for x in d["now"]), d
 
 
 # ---- 小さな施設で、偏った表からならす（一言の直しと同じ resolve）
@@ -109,3 +200,29 @@ def test_named_count_rule_and_wish_come_first():
     others = [t[n].count("早") for n in NAMES if n != "井上"]
     assert max(others) - min(others) <= 1, others   # 残り20回を4人で5回ずつ
     assert check_table(rs, fac, staff, month, t) == []
+
+
+def test_named_people_only(sess):
+    """人を言えば、その人たちだけをならす（ルールの人は名指しの2人）。"""
+    from shiftvoice.reader import RecordedReader
+    sess.reader = RecordedReader({"職員09さんと職員10さんの早番を同じくらいにして":
+                                  '{"items":[{"type":"even_out","staff":["職員09","職員10"],"shift":["早"],"reason":null}]}'})
+    r = sess.say("菊池さんと久保さんの早番を同じくらいにして")
+    r = sess.answer(r.uid, "毎月")
+    assert r.kind == "applied", r.message
+    card = next(c for c in sess.state()["cards"] if c["id"] == r.rule_ids[0])
+    assert card["who"] == ["菊池", "久保"] and card["kind"] == "even"
+    t = sess.store.month(2026, 11).table
+    assert abs(t["菊池"].count("早") - t["久保"].count("早")) <= 1
+
+
+def test_rest_days_are_not_evened(sess):
+    """休みの日数は数で決まる（公休9日など）ので、そろえる頼みにしない。止まって表もルールも変えない。"""
+    from shiftvoice.reader import RecordedReader
+    sess.reader = RecordedReader({"公休をみんな同じくらいにして":
+                                  '{"items":[{"type":"even_out","staff":null,"shift":["公"],"reason":null}]}'})
+    before = sess.store.month(2026, 11).table
+    r = sess.say("公休をみんな同じくらいにして")
+    assert r.kind in ("ask", "error")
+    assert sess.store.month(2026, 11).table == before
+    assert not any(c["kind"] == "even" for c in sess.state()["cards"])

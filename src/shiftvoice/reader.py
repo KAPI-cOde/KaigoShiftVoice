@@ -17,7 +17,7 @@ MAX_TOKENS = 800   # 400 では、8人の勤務を1回で言った一言の返�
 
 TYPES = ("day_off", "set_cell", "avoid_cell", "move", "swap", "forbid_sequence", "pair_apart",
          "count_limit", "coverage", "weekday_pref", "consecutive_limit", "rest_after_night", "around_off",
-         "leave_count", "weigh", "explain", "custom", "staff_info", "cancel", "cover", "none", "unclear")
+         "leave_count", "weigh", "explain", "custom", "staff_info", "cancel", "cover", "none", "unclear", "even_out")
 
 
 class ReadError(Exception):
@@ -49,6 +49,7 @@ SYSTEM = """あなたは介護施設の勤務表アプリの読み取り係で�
 - weekday_pref 人の曜日の頼み。staff, weekdays(mon〜sun), shift, avoid(避けるなら true), until_month(「12月いっぱい」なら 12。なければ null), reason。その曜日を休みにする頼みは shift 公 と avoid false
 - coverage 1日に入る人数（勤務の記号の人数だけ）。shift, min(「2人に」「2人ほしい」「2人以上」なら 2), max(「3人まで」なら 3。ちょうどなら min と同じ。言っていなければ null), weekdays(曜日を言ったら mon〜sun の並び。毎日なら null), holidays(「祝日も」「土日祝」と言った時だけ true), strength, reason
 - consecutive_limit 続けて働く日数の上限。staff, shift(「夜勤は続けて2日まで」のように勤務を言った時だけ記号。言っていなければ null), max, except_staff(「ただし職員07さんは当たらない」「職員07さんは除く」の人の並び。なければ null), strength, reason。「夜勤は単発で」「夜勤を続けないで」は shift 夜・max 1。表に無い当番の話ではない。「なるべく2回まで、どうしようもない時は3回まで」は、max 2 の negotiable と max 3 の operational の2件にする。除く人は別の件にせず、両方の件の except_staff に入れる
+- even_out 人ごとの勤務の回数をならす頼み（「平均化して」「平等に」「均等に」「偏らないように」「同じくらいに」「そろえて」）で、何回から何回と数を言っていない時。staff(並び。全員なら null), shift(記号の並び。「早番も遅番も」なら ["早","遅"]), reason。数を言った時は count_limit にする
 - staff_info 職員の情報の変更（できる勤務など）。staff, from_month, can_add(記号の並び), can_remove
 - leave_count 有給の日数の頼み（日付は任せる）。staff, count(日数。言っていなければ null), reason
 - cancel 前の頼みの取り消し（「やっぱりいらない」）。staff, days(取り消す日だけ。日を言っていなければ null), shift(取り消す勤務の記号。休みなら 公)。「そのままで」「触らないで」の日と人は書かない。数を言って「〜に戻して」「〜に変えて」と言う一言は取り消しではなく、その数のルールの型にする（「夜勤は4回に戻して」は count_limit の max 4）
@@ -88,6 +89,8 @@ cover は、人が残った・早く来たなど、もう済んだ穴埋めを�
 {"items":[{"type":"consecutive_limit","staff":"職員07","shift":"夜","max":1,"strength":"operational","reason":null}]}
 一言「早番はなるべく続けて2回まで、どうしようもない時は3回まで。ただし職員09さんは当たらない」
 {"items":[{"type":"consecutive_limit","staff":null,"shift":"早","max":2,"except_staff":["職員09"],"strength":"negotiable","reason":null},{"type":"consecutive_limit","staff":null,"shift":"早","max":3,"except_staff":["職員09"],"strength":"operational","reason":null}]}
+一言「日勤も夜勤も、回数がばらつかないようにして」
+{"items":[{"type":"even_out","staff":null,"shift":["日","夜"],"reason":null}]}
 一言「平日の夜は、休みの人から呼び出し当番を2人決めて。電話はその2人にだけ」
 {"items":[{"type":"custom","summary":"平日の夜の呼び出し当番"}]}
 """
@@ -310,6 +313,7 @@ RULE_KINDS = """表で数えられるルールの種類（手元の計算が扱�
 - max_run 続けて働く日数の上限。shifts（なければ勤務の全部）、max、除く人。型は consecutive_limit
 - sequence 並び。ある日の勤務の次の日に置ける・置けない勤務。型は forbid_sequence
 - weekday 人の曜日の頼み。その曜日にその勤務にする・しない。型は weekday_pref
+- even 人ごとの勤務の回数を、数を決めずにできるだけそろえる（平均化）。shifts。型は even_out
 - 職員の情報（入れる勤務を足す・外す）は staff_info
 - ここに無い物（2人を同じ日に組ませない、休みの前後、表に無い当番など）は作れない"""
 
@@ -319,7 +323,7 @@ REREAD_EXTRA = """
 最初の読みでは、この一言を型に当てはめられず、手元で止まりました。最初の読みの答えと、止まった理由を添えます。
 今度は、添えた施設の文脈（今のルールの一覧・名簿の番号とユニットと入れる勤務・勤務の記号と名前・表の月）と、下の「表で数えられるルールの種類」を見て、上の型の組み合わせで表せるかを考えてください。
 
-- 返事は JSON だけ。形は {"items": [...]}。使える型は day_off set_cell avoid_cell move swap forbid_sequence count_limit coverage weekday_pref consecutive_limit leave_count staff_info cancel cover unclear。custom pair_apart rest_after_night around_off weigh explain は使わない
+- 返事は JSON だけ。形は {"items": [...]}。使える型は day_off set_cell avoid_cell move swap forbid_sequence count_limit coverage weekday_pref consecutive_limit leave_count even_out staff_info cancel cover unclear。custom pair_apart rest_after_night around_off weigh explain は使わない
 - 1回の答えの items は、日付の頼み（day_off set_cell avoid_cell move swap）だけか、それ以外（ルール）だけにする。混ぜると手元で止まる。一言に両方があれば、ルールの方を items にし、日付の頼みは "next" に、作成者が続けて言えばよい一言を1つだけ書く（例 "next": "職員03さん、24日と25日は夜勤にしない"）。日付の頼みだけなら日付の頼みを items にする
 - 一言が今のルールの言い直し・置き換えなら、"replace": [置き換える今のルールの id の並び] を書く。新しく足すだけなら書かない
 - 勤務の名前の言い換え（「午前の勤務」「現場」など）は、勤務の記号と名前の一覧で当てる。一覧に無い記号は使わない
