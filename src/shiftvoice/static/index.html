@@ -235,6 +235,11 @@
   #guide .g1 button.linkish { padding: 0; }
   #guide b { font-weight: 700; }
   .grid td.cell.ng { outline: 2px solid #c00; outline-offset: -2px; }
+  /* 本人の希望休のマスは赤い点線の枠。案内の赤い実線の枠・選んだマスの黒い枠（どちらもマスの縁）と、直ったマスの黄色の
+     縁取りの内側に引くので、重なっても見分けられる。枠線なので印刷にも出る */
+  .grid td.cell { position: relative; }
+  .grid td.cell.wish::after { content: ""; position: absolute; inset: 2px; border: 2px dashed #c00; pointer-events: none; }
+  .legend .wishsw { display: inline-block; width: 12px; height: 9px; border: 2px dashed #c00; vertical-align: -2px; margin: 0 2px 0 1px; }
   /* 全部の希望休を入れると組めない時の、いちばんの詰まり所（12月の案の画面の表の上。重なった希望休のマスに赤い枠） */
   .choke { border: 1px solid #000; border-radius: 3px; padding: 6px 10px; margin: 6px 0 10px; font-size: 13px; line-height: 1.6; }
   .choke .c1 { font-weight: 700; }
@@ -264,7 +269,8 @@
     .grid tfoot td { height: var(--print-foot, 13px); font-size: 8px; line-height: 1; }   /* 3ユニットでも表と人数の行が1枚に入るように */
     .grid tr.unithead td { background: #e4e4e4 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .grid tr { break-inside: avoid; }
-    .grid .acc, .grid .mark, .legend .glowkey { display: none !important; }
+    .grid .acc, .grid .mark, .legend .glowkey, .legend .wishhint { display: none !important; }
+    .grid td.cell.wish::after, .legend .wishsw { -webkit-print-color-adjust: exact; print-color-adjust: exact; }   /* 希望休の点線の枠は紙にも出す */
     .printonly { display: block !important; font-size: 10px; margin: 0 0 4px; }   /* 画面だけの書き込み（引き受けの回数・〇月から夜勤も・黄色の凡例）は紙に出さない */
   }
   .printonly { display: none; }
@@ -401,6 +407,34 @@ function ruleCells(card) {
   return out;
 }
 
+// ---- 日付を決めたマスのルール（kind が cell）を、マス "名前|日" ごとに集める（作者 2026-11-07「希望休のセルは赤枠など、
+// わかりやすく。マウスオーバーで希望休や事情が出るとなお良い」）。wish は本人の希望休（本人の希望の強さで、置ける記号が
+// 休み・休暇だけ。rules.is_day_off_wish と同じ見分け方）で、表のマスに赤い点線の枠を付ける。lines はマウスを乗せた時の文
+// CELLRULES-BEGIN
+function cellRuleMap(cards, symbols, names) {
+  var rest = {};
+  (symbols || []).forEach(function (x) { if (x.kind === "rest" || x.kind === "leave") rest[x.symbol] = true; });
+  var out = {};
+  (cards || []).forEach(function (c) {
+    if (c.kind !== "cell" || !(c.when || []).length) return;
+    var inn = (c.params || {}).in || [];
+    var wish = c.flex === "wish" && (c.who || []).length > 0 && inn.length > 0 &&
+      inn.every(function (s) { return rest[s]; });
+    var reason = String((c.meta || {}).reason || "").trim();
+    var line = wish ? "希望休（" + (reason || c.name) + "）" : c.name + (reason ? "（" + reason + "）" : "");
+    ((c.who || []).length ? c.who : (names || [])).forEach(function (n) {
+      c.when.forEach(function (d) {
+        var k = n + "|" + d;
+        var o = out[k] = out[k] || { wish: false, lines: [] };
+        if (wish) o.wish = true;
+        if (o.lines.indexOf(line) < 0) o.lines.push(line);
+      });
+    });
+  });
+  return out;
+}
+// CELLRULES-END
+
 function unitNames() {
   var out = [];
   (S.staff || []).forEach(function (st) { if (out.indexOf(st.unit) < 0) out.push(st.unit); });
@@ -478,6 +512,15 @@ function renderLegend() {
     lg.appendChild(el("span", "unitkey", x[0] + "＝" + x[1]));
   });
   if ((S.support || []).length) lg.appendChild(el("span", "unitkey", "　／　↓↑＝ほかのユニットへ応援（マスの小さい字が応援先）"));
+  var cr = cellRuleMap(S.cards, S.symbols, (S.staff || []).map(function (s) { return s.name; }));
+  if (Object.keys(cr).some(function (k) { return cr[k].wish; })) {   // 希望休のある月だけ。点線の枠の見本を添える
+    lg.appendChild(document.createTextNode("　／　"));   // 前の項目とくっつけず、ここで折り返せるように
+    var wk = el("span", "unitkey wishkey", "");
+    wk.appendChild(el("span", "wishsw", ""));
+    wk.appendChild(document.createTextNode("赤い点線の枠＝本人の希望休"));
+    lg.appendChild(wk);
+    lg.appendChild(el("span", "wishhint", "（マウスを乗せると理由）"));   // 印刷では隠す
+  }
   lg.appendChild(el("span", "glowkey", "　／　黄色＝いま直ったマス"));   // 印刷では隠す（紙に黄色は出ない）
 }
 
@@ -539,6 +582,7 @@ function renderTable() {
   }
   var ngCells = {};   // 案内の［表で見る］の赤い枠。今の表から数えたマスだけなので、直ると消える
   if (guideOn && S.guide) S.guide.problems.forEach(function (p) { p.cells.forEach(function (c) { ngCells[c[0] + "|" + c[1]] = true; }); });
+  var cellRules = cellRuleMap(S.cards, S.symbols, (S.staff || []).map(function (s) { return s.name; }));
   var t = el("table", "grid");
   var thead = el("thead");
   var ordered = [];
@@ -618,6 +662,11 @@ function renderTable() {
       if (glowCells[key] || cardGlow[key]) td.className += " glow";
       if (whyKey === key) td.className += " picked";
       if (ngCells[key]) td.className += " ng";
+      var cr = cellRules[key];
+      if (cr) {
+        if (cr.wish) td.className += " wish";
+        td.title = cr.lines.join("\n");
+      }
       if (supCell[key]) {
         var sp = el("span", "sup", supCell[key].replace("ユニット", "").slice(0, 2));
         sp.title = "この日は" + supCell[key] + "で働きます";
