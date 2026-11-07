@@ -116,3 +116,19 @@ def test_話して足した勤務の名前も手がかりに渡す(srv):
     call(base, "/api/say", {"text": "8時から17時の日8を足して"})
     speak(base)
     assert "日8" in voice.names[-1]                          # 渡さないと「日8」が「非8」になった（2026-11-06 AI のテストプレイ）
+
+
+def test_一言や答えや戻すの後の返事にも声の印が入り_スペースで続けて話せる(srv):
+    """画面は返事の state で S を置き換え、S.has_voice が偽ならスペースで話す入口を閉じる。
+    前は /api/state の返事にしか has_voice が無く、一度話す・伝える・答えると、その後スペースで話せなかった（作者 2026-11-07）。"""
+    base, _, _ = srv
+    said = call(base, "/api/say", {"text": "岡田さん、15と16は法事で休み"})          # 文字で［伝える］
+    assert said["state"]["has_voice"] is True
+    spoken = speak(base, text_only=False)                                            # 声で一言（スペースを押して離す）
+    assert spoken["state"]["has_voice"] is True
+    asked = call(base, "/api/say", {"text": "遅番の次の日に早番はきついから、やめてあげて"})
+    assert asked["reply"]["kind"] == "ask_period" and asked["state"]["has_voice"] is True
+    answered = call(base, "/api/answer", {"uid": asked["reply"]["uid"], "text": "毎月"})   # ［毎月］を押す
+    assert answered["state"]["has_voice"] is True
+    undone = call(base, "/api/undo", {})                                             # ［ひとつ戻す］
+    assert undone["state"]["has_voice"] is True

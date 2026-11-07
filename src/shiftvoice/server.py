@@ -411,14 +411,17 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
             with self.lock:
                 uid = self.headers.get("X-Answer-Uid")
                 r = self.box.session.answer(uid, text) if uid else self.box.session.say(text)
-                st = self.box.session.state()
-            st["has_key"] = has_key
+                st = self._state_out()
             self._json(200, {"text": text, "voice_seconds": round(secs, 3), "reply": r.to_dict(), "state": st})
 
         def _state_out(self) -> dict:
+            """画面へ返す state。画面は返事のたびに state を置き換えるので、/api/state と同じ印をどの返事にも付ける
+            （has_voice が無いと、画面はスペースで話す入口を閉じる）。"""
             st = self.box.session.state()
             st["has_key"] = has_key
             st["has_voice"] = self.box.voice is not None
+            if public is not None:
+                st["public"] = public.info()
             return st
 
         def _swap(self, root: Path, year: int, month: int) -> dict:
@@ -642,11 +645,7 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
                     self._json(200, self.box.session.rule_detail((q.get("id") or [""])[0]))
             elif self.path == "/api/state":
                 with self.lock:
-                    st = self.box.session.state()
-                st["has_key"] = has_key
-                st["has_voice"] = self.box.voice is not None
-                if public is not None:
-                    st["public"] = public.info()
+                    st = self._state_out()
                 self._json(200, st)
             elif self.path == "/api/table.tsv":
                 with self.lock:
@@ -761,8 +760,7 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
                     r = self.box.session.retry(data.get("uid", ""))
                 else:
                     return self._json(400, {"error": "知らない操作です"})
-                st = self.box.session.state()
-            st["has_key"] = has_key
+                st = self._state_out()
             self._json(200, {"reply": r.to_dict(), "state": st})
 
     H.box = box
