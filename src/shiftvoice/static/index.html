@@ -287,16 +287,24 @@
   .choke .c1 { font-weight: 700; }
   .choke .cn { margin-top: 2px; }
   #banner { display: none; border: 1px solid #000; border-radius: 3px; padding: 8px 12px; margin: 0 0 10px; font-weight: 700; }
-  .legendrow { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-  .legendrow .legend { flex: 1; min-width: 0; }
-  .exportlinks { display: flex; gap: 12px; flex-shrink: 0; }
-  .exportlinks button.linkish { font-size: 11px; color: #444; }
+  /* 表の上の操作の帯（作者 2026-11-08「ボタンや機能は下ではなく上に」）。主な操作は黒のボタン、表示の切り替えは押すと黒くなる札、
+     持ち出し（コピー・印刷）は右寄せの小さいボタン。凡例とは混ぜない */
+  .tablebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 8px; }
+  .tablebar h2 { margin: 0 6px 0 0; }
+  .tablebar .viewtogs, .tablebar .exportlinks { display: flex; gap: 6px; align-items: center; }
+  .tablebar .exportlinks { margin-left: auto; }
+  .tablebar .vtog, .tablebar .exportlinks button { font-size: 12px; padding: 3px 10px; }
+  .tablebar .vtog { border-color: #999; }
+  .tablebar .vtog[aria-pressed="true"] { background: #000; color: #fff; border-color: #000; }
+  .tablebar .vtog[aria-pressed="true"]::before { content: "✓ "; }
+  .tablebar #rebuild { font-size: 13px; padding: 4px 14px; }
   .exportnote { font-size: 12px; margin-top: 4px; }
   .exportnote textarea { display: block; width: 100%; height: 120px; margin-top: 4px; font: inherit; font-size: 11px; white-space: pre; border: 1px solid #000; border-radius: 3px; }
   @media print {
     @page { size: A4 landscape; margin: 10mm; }
     html, body { font-size: 11px; }
-    #keybar, #topbar, #guide, #banner, #diffs, .right, #accrows, #why, .said, .reply, #form, #hint, .exportlinks, .exportnote, footer, #vsetup, #vclean, #vres { display: none !important; }
+    #keybar, #topbar, #guide, #banner, #diffs, .right, #accrows, #why, .said, .reply, #form, #hint, .tablebar button, .tablebar .viewtogs, .tablebar .exportlinks, .exportnote, footer, #vsetup, #vclean, #vrules, #vres { display: none !important; }
+    .tablebar { display: block; margin: 0; }
     main { display: block; max-width: none; padding: 0; }
     h2 { font-size: 16px; }
     table.grid { font-size: 10px; }
@@ -328,12 +336,17 @@
     <div id="banner"></div>
     <div id="diffs"></div>
     <div id="guide"></div>
-    <h2 id="tabletitle">表</h2>
+    <div class="tablebar" id="toolbar">
+      <h2 id="tabletitle">表</h2>
+      <button type="button" class="primary" id="rebuild">全部のルールで一から作り直す</button>
+      <span class="viewtogs"><button type="button" class="vtog" id="toggleprev" aria-pressed="false"></button><button type="button" class="vtog" id="toggleunits" aria-pressed="false"></button></span>
+      <span class="exportlinks" id="exportlinks"><button type="button" id="copytsv">表をコピー（Excel に貼る）</button><button type="button" id="printtable">印刷</button></span>
+    </div>
+    <div id="copynote" class="exportnote"></div>
     <div id="printnote" class="printonly"></div>
     <div id="returnednote" class="small" style="display:none"></div>
     <div id="tablewrap"></div>
-    <div class="legendrow"><div class="legend" id="legend"></div><div class="exportlinks" id="exportlinks"><button type="button" class="linkish" id="rebuild">全部のルールで一から作り直す</button><button type="button" class="linkish" id="toggleprev"></button><button type="button" class="linkish" id="toggleunits"></button><button type="button" class="linkish" id="copytsv">表をコピー（Excel に貼る）</button><button type="button" class="linkish" id="printtable">印刷</button></div></div>
-    <div id="copynote" class="exportnote"></div>
+    <div class="legend" id="legend"></div>
     <div class="accrows" id="accrows"></div>
     <div id="why"></div>
     <div class="said" id="said"></div>
@@ -540,30 +553,31 @@ function cntCells(tr, row, cols) {
   });
 }
 
+// 凡例は分かりにくい物だけ（作者 2026-11-08「早＝早番のような説明は、わざわざ書く必要はない」）。記号が勤務の名前の頭の字の物
+// （早＝早番・明＝明け・有＝有給など）は出さず、話して足した勤務（日8＝8時の日勤）や、頭の字でない記号（8＝8時の日勤）だけ残す
 function renderLegend() {
-  var items = (S.shift_names || []).map(function (x) {
+  var items = (S.shift_names || []).filter(function (x) { return x[0] === x[1] || x[1].indexOf(x[0]) !== 0; }).map(function (x) {
     if (x[0] === x[1]) return [x[0], spokenTimes(x[0]) || x[1]];   // 話して足した勤務は記号と名前が同じなので、時刻を添える
     return [x[0], x[1] === "明け" ? "夜勤明け" : x[1]];
   });
-  var leave = items.filter(function (x) { return x[1] === "有給"; });
-  items = items.filter(function (x) { return x[1] !== "有給"; }).concat(leave);
   var lg = document.getElementById("legend");
   lg.textContent = "";
+  var gap = function () { if (lg.childNodes.length) lg.appendChild(document.createTextNode("　／　")); };   // 前の項目とくっつけず、ここで折り返せるように
   items.forEach(function (x, i) {   // 1項目は途中で折らない（「有＝／有給」の所など）
     if (i) lg.appendChild(document.createTextNode("　"));
     lg.appendChild(el("span", "unitkey", x[0] + "＝" + x[1]));
   });
-  if ((S.support || []).length) lg.appendChild(el("span", "unitkey", "　／　↓↑＝ほかのユニットへ応援（マスの小さい字が応援先）"));
+  if ((S.support || []).length) { gap(); lg.appendChild(el("span", "unitkey", "↓↑＝ほかのユニットへ応援（マスの小さい字が応援先）")); }
   var cr = cellRuleMap(S.cards, S.symbols, (S.staff || []).map(function (s) { return s.name; }));
   if (Object.keys(cr).some(function (k) { return cr[k].wish; })) {   // 希望休のある月だけ。点線の枠の見本を添える
-    lg.appendChild(document.createTextNode("　／　"));   // 前の項目とくっつけず、ここで折り返せるように
+    gap();
     var wk = el("span", "unitkey wishkey", "");
     wk.appendChild(el("span", "wishsw", ""));
     wk.appendChild(document.createTextNode("赤い点線の枠＝本人の希望休"));
     lg.appendChild(wk);
     lg.appendChild(el("span", "wishhint", "（マウスを乗せると理由）"));   // 印刷では隠す
   }
-  lg.appendChild(el("span", "glowkey", "　／　黄色＝いま直ったマス"));   // 印刷では隠す（紙に黄色は出ない）
+  lg.appendChild(el("span", "glowkey", (lg.childNodes.length ? "　／　" : "") + "黄色＝いま直ったマス"));   // 印刷では隠す（紙に黄色は出ない）
 }
 
 // 表の見え方の切り替え（作者 2026-11-07）。前の月の末5日（つながりを自分で確かめるため）と、ユニットごとの人数の行。
@@ -604,10 +618,13 @@ function renderViewToggles() {
   var bp = document.getElementById("toggleprev"), bu = document.getElementById("toggleunits");
   document.getElementById("rebuild").style.display = S.public || S.distributed ? "none" : "";
   bp.style.display = prevTailLen() ? "" : "none";
-  bp.textContent = showPrev ? "前の月の末を隠す" : "前の月の末" + prevTailLen() + "日を見る";
+  bp.textContent = "前の月の末" + prevTailLen() + "日";   // 押すと黒くなる切り替え。もう一度押すと隠す
+  bp.setAttribute("aria-pressed", showPrev ? "true" : "false");
   var st = shiftStarts();
   bu.style.display = (S.day_counts || []).some(function (r) { return r.unit || !(st[r.symbol] < 9000); }) ? "" : "none";
-  bu.textContent = showUnitCounts ? "ユニットごとと公休の人数を隠す" : (multiUnit() ? "ユニットごとと公休の人数も見る" : "公休の人数も見る");
+  bu.textContent = multiUnit() ? "ユニットごとの人数" : "公休の人数";
+  bu.title = multiUnit() ? "ユニットごとの人数と、公休の人数の行を表の下に出します" : "公休の人数の行を表の下に出します";
+  bu.setAttribute("aria-pressed", showUnitCounts ? "true" : "false");
 }
 
 function renderTable() {
