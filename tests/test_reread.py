@@ -113,7 +113,7 @@ def test_parse_reread_reads_fenced_json_and_drops_unusable_types():
     assert got["replace"] == [] and got["next"] is None
 
 
-NO_REQUEST = "表を変える頼みが見つかりませんでした。もう一度言ってください"
+NO_REQUEST = "表を変える頼みが見つかりませんでした。もう一度言ってください（「使い方を教えて」で、言える一言の例が出ます）"
 LATE4 = "遅番4回はやめましょう。"   # 本物の Haiku は none を返した
 
 

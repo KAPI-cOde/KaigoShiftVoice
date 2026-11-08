@@ -698,7 +698,7 @@ def to_proposal(items: list[dict], text: str, facility: Facility, staff: list[St
     items = _tidy_leave(_no_day_avoid(_weekday_off(_was_really(_same_day_move(_self_fix(_tidy(items, month), text), text, facility, names), text, facility), text), text), text)
     real = [it for it in items if it.get("type") != "none"]
     if not real:
-        raise Clarify("表を変える頼みが見つかりませんでした。もう一度言ってください")
+        raise Clarify("表を変える頼みが見つかりませんでした。もう一度言ってください（「使い方を教えて」で、言える一言の例が出ます）")
     if (len(real) == 2 and all(it["type"] == "count_limit" for it in real)
             and re.search(r"と[^、。に]{0,8}(?:合わせて|あわせて|併せて|合計)|合計", text)
             and real[0].get("staff") == real[1].get("staff") and real[0].get("shift") != real[1].get("shift")
