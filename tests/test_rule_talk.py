@@ -267,3 +267,23 @@ def test_鍵なしでも_使い方には答える(built_dir, tmp_path):
     s.open()
     r = s.say("使い方を教えて")
     assert r.kind == "info" and r.extra["topic"] == "help" and not r.extra.get("no_key")
+
+
+# ---- 押せば済む所（取り消し・次の月・表を見せて）。前は Claude へ送り、聞き返しや「頼みが見つかりませんでした」で止まった
+
+WHERE_SAID = [("やっぱり今のなしで", "undo", "［ひとつ戻す］"), ("さっきのは取り消して", "undo", "［ひとつ戻す］"),
+              ("元に戻して", "undo", "［ひとつ戻す］"), ("12月の表を作って", "next", "［12月へ］"),
+              ("来月の表を作りたい", "next", "［12月へ］"), ("表を見せて", "table", "使い方を教えて")]
+WHERE_NOT = ["夜勤は4回に戻して", "岡田さんの15日の休みを取り消して", "いまの頼みはなしで、岡田さん15日休み",
+             "12月の早番は2人にして", "11月の表を見せて"]
+
+
+@pytest.mark.parametrize("text, topic, button", WHERE_SAID)
+def test_取り消しや次の月や表を見せては_押すボタンを言う(sess, text, topic, button):
+    r = asked(sess, text, topic)
+    assert button in r.message
+
+
+@pytest.mark.parametrize("text", WHERE_NOT)
+def test_中身のある取り消しや頼みは_今までどおりClaudeへ送る(sess, text):
+    assert rule_question(text) is None

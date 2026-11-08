@@ -4,6 +4,7 @@
 - broken  外れを聞く（「外れているルールは？」）。今の表で守れていないルールを、ルールごとに1行（どこで外れたか）
 - tidy    整理を頼む（「ルールを整理して」「いらないルールある？」）。整理の画面と同じ見立て（tidy.py と cleanup.py）を1件1行
 - list    一覧を頼む（「ルールを見せて」）。右の一覧と同じ分け方で、種類ごとの件数を1行ずつ
+- undo・next・table  「今のなしで」「12月の表を作って」「表を見せて」。押すボタンの場所だけを言う（where_answer）
 - help    使い方を聞く（「使い方を教えて」「何ができるの？」）・あいさつ（「こんにちは」）・お礼（「ありがとう」）。言える一言の
           例を返す。初めて触る人の最初の一言が、前は「表を変える頼みが見つかりませんでした」で止まった（2026-11-08、本物の Claude で確かめた）
 
@@ -100,7 +101,17 @@ _HELP = (r"(?:使い方|つかいかた|使いかた)(?:を|は|が)?(?:教え�
          r"(?:どう|どうやって)(?:使う|使えば|使えばいい|つかう|すれば|すればいい|したら|したらいい)(?:の|んですか|ですか)?" + _END,
          r"(?:ヘルプ|help|へるぷ|説明して|せつめいして)" + _POL + _END,
          r"(?:例|れい|話し方|言い方)(?:を|は)?(?:教えて|見せて|出して)" + _POL + _END)
+_UNDO = (r"(?:やっぱり|やっぱ|あ)?(?:今の|いまの|さっきの|直前の|最後の)(?:は|も)?(?:なし|無し|ナシ|取り消し|取り消して|とりけし|とりけして|"
+         r"やめ|やめて|キャンセル|戻して|もどして|なかったことに|なかったことにして)(?:で|にして|に)?" + _POL + _END,
+         r"(?:元に|もとに)(?:戻して|もどして|戻したい)" + _POL + _END,
+         r"(?:取り消して|取り消したい|とりけして|キャンセルして|やり直したい)" + _POL + _END)
+_NEXT = (r"(?:来月|次の月|翌月|\d{1,2}月)(?:の)?(?:表|勤務表|シフト)(?:を|は)?(?:作って|つくって|作りたい|作れる|作れますか|"
+         r"どうやって作るの|どう作るの|どうやって作る)" + _POL + _END,)
+_SHOW_TABLE = (r"(?:今の|いまの|この月の)?(?:表|勤務表|シフト表)(?:を|は)?(?:見せて|出して|表示して|見たい|どこ|どこですか)?" + _POL + _END,)
 _TOPICS = _TOPICS + (
+    ("undo", tuple(_F + u for u in _UNDO)),
+    ("next", tuple(_F + n for n in _NEXT)),
+    ("table", tuple(_F + t for t in _SHOW_TABLE)),
     ("help", tuple(_F + h for h in _HELP)),
     ("hello", (_F + _HELLO + r"(?:です|ございます)?" + _END,)),
     ("thanks", (_F + _THANKS + r"(?:です|ございます)?" + _END,)),
@@ -332,10 +343,26 @@ def help_answer(store: Store, topic: str) -> tuple[str, dict]:
     return _message(head, lines, foot), _extra(topic, lines, [], [OPEN_RULES])
 
 
+def where_answer(topic: str, month: int) -> tuple[str, dict]:
+    """どこを押せばよいかだけを言う。表もルールも変えない。前は Claude へ送り、「取り消したいのはどの頼みですか」と聞き返したり、
+    「表を変える頼みが見つかりませんでした」と返したりして、押せば済む所で止まった（2026-11-08、本物の Claude で確かめた）。"""
+    nxt = month % 12 + 1
+    if topic == "undo":
+        msg = "直前の直しを取り消す時は、チャットの下の［ひとつ戻す］を押してください。押すたびに、表とルールが1つ前に戻ります"
+    elif topic == "next":
+        msg = (f"次の月の表は、画面の右上の［{nxt}月へ］を押して作ります。持ち越すルールの見直しと希望休を確かめてから、"
+               f"［{nxt}月の表を作る］を押してください")
+    else:
+        msg = "表は画面の左に出ています。直したい所を一言で伝えてください（「使い方を教えて」で、言える一言の例が出ます）"
+    return msg, _extra(topic, [], [], [])
+
+
 def answer(store: Store, year: int, month: int, topic: str, ai_on_screen: bool = False) -> tuple[str, dict]:
     """問いの答え（返事の文と、Reply.extra に入れる添え物）。表とルールは変えない。"""
     if topic in ("help", "hello", "thanks"):
         return help_answer(store, topic)
+    if topic in ("undo", "next", "table"):
+        return where_answer(topic, month)
     last = calendar.monthrange(year, month)[1]
     span = (f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last:02d}")   # state の cards と同じ並び
     if topic == "tidy":
