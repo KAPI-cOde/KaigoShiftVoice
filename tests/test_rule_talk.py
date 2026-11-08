@@ -287,3 +287,16 @@ def test_取り消しや次の月や表を見せては_押すボタンを言う(
 @pytest.mark.parametrize("text", WHERE_NOT)
 def test_中身のある取り消しや頼みは_今までどおりClaudeへ送る(sess, text):
     assert rule_question(text) is None
+
+
+def test_案が出ている時の今のなしでは_ひとつ戻すを勧めず今までどおり読む(sess):
+    """急な休みの案が出ている時に［ひとつ戻す］を押すと、案ではなくその前の直しが戻る。案を断る一言として今までどおり読む。"""
+    sess.open()
+    sess.store.add_pending(2026, 11, "青木さんから電話で、11月1日の日曜、お休みしたいって", status="offer", offer={"duty": "小島"})
+    r = sess.say("今のなしで")
+    assert not (r.kind == "info" and (r.extra or {}).get("topic") == "undo"), r.message
+    assert len(sess.reader.sent) == 1
+
+
+def test_やり直したいは_取り消しとして扱わない():
+    assert rule_question("やり直したい") is None

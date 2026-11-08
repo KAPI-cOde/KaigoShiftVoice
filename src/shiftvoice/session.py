@@ -443,6 +443,8 @@ class Session:
     def say(self, text: str) -> Reply:
         text = fix_spoken(fix_heard(text.strip(), self.store.facility()), self.store.facility())
         topic = rule_question(text)
+        if topic == "undo" and any(x.get("status") == "offer" for x in self.store.pending(self.year, self.month)):
+            topic = None   # 案が出ている時の「今のなしで」は案を断る一言。［ひとつ戻す］では案でなく前の直しが戻るので、今までどおり読む
         if topic:   # ルールを見る・確かめる・整理する問い。表もルールも変えないので、Claude へ送らず手元で答える（ruleask.py）
             return self._rule_answer(topic)
         u = self.store.add_pending(self.year, self.month, text, at=self.now().isoformat(timespec="seconds"),
@@ -1472,7 +1474,7 @@ class Session:
         from dataclasses import replace
         m = self.store.month(self.year, self.month)
         if m.distributed:
-            return Reply("ask", None, "配った後の表は、一から作り直しません。直したい所を一言で伝えてください")
+            return Reply("ask", None, "配った後の表は、一から作り直しません。直したい所を一言で伝えてください", extra={"local": True})
         fac, staff = self.store.facility(), self.store.staff_on(self.year, self.month)
         rules = month_rules(self.store, self.year, self.month, with_premise=False)
         py, pm = (self.year, self.month - 1) if self.month > 1 else (self.year - 1, 12)
@@ -1485,7 +1487,7 @@ class Session:
         from .shortage import shortage_text, shortages
         short = shortages(fac, staff, rules, m)
         if short:   # 回数の上限の合計が毎日の人数に届かない。計算しても上限を外して作るだけなので、先に何が足りないかを言う
-            return Reply("ask", None, shortage_text(short), extra={"shortage": short})
+            return Reply("ask", None, shortage_text(short), extra={"shortage": short, "local": True})
         # 外れの数（was・left）は帯と同じ帳面のルールだけで数える
         solve_rules = rebuild_rules(fac, staff, rules, m, self.store.premise(self.year, self.month))
         solve = fac.settings.get("solve", {})
