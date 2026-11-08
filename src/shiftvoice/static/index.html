@@ -366,7 +366,7 @@
     .grid .name { width: 110px; }
     .grid th.cnt, .grid td.cnt { width: 16px; }
     .grid th, .grid td { height: var(--print-row, 20px); }
-    .grid td.glow, .grid td.diff, .grid td.rglow { background: none !important; font-weight: 400; box-shadow: none !important; }
+    .grid td.glow, .grid td.diff, .grid td.rglow, .grid td.cell.hov { background: none !important; font-weight: 400; box-shadow: none !important; }
     .grid td.k-early, .grid td.k-day, .grid td.k-late, .grid td.k-night, .grid td.k-ake, .grid td.k-leave { background: none !important; }   /* 紙は今どおり白黒（土日祝の列だけ灰色） */
     .grid td { box-shadow: none !important; }
     .grid td.off, .grid th.off { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -1615,6 +1615,7 @@ document.getElementById("chatlog").addEventListener("scroll", function () {
 var sentExplained = false;
 var spokenExplained = false;
 function renderReply(r) {
+  clearHover();   // 乗せたまま吹き出しの中のボタンで返事が入れ替わると、離れた合図が来ないため
   renderReplyBody(r);
   var box = document.getElementById("reply");
   // 直した後の表にルールの外れが残っていて、返事の文がそれに触れていない時は、件数と外れたルールの名前を1行足す
@@ -1635,18 +1636,23 @@ function renderReply(r) {
   // 表を直した返事にマウスを乗せると、その返事で変わったマスを表で強く光らせる
   var keys = ((r && r.kind === "applied" && r.changes) || []).map(function (c) { return c.staff + "|" + c.day; });
   box.onmouseenter = keys.length ? function () { hoverCells(keys, true); } : null;
-  box.onmouseleave = keys.length ? function () { hoverCells(keys, false); } : null;
+  box.onmouseleave = clearHover;
   box.title = keys.length ? "マウスを乗せると、この返事で変わったマスが表で光ります" : "";
   chatScroll();
 }
 
 var hoverKeys = {};   // マウスを乗せている返事で変わったマス。表を描き直しても光ったままにする
-function hoverCells(keys, on) {
+function clearHover() {
   hoverKeys = {};
-  if (on) keys.forEach(function (k) { hoverKeys[k] = true; });
+  document.querySelectorAll(".grid td.cell.hov").forEach(function (td) { td.classList.remove("hov"); });
+}
+function hoverCells(keys, on) {
+  clearHover();
+  if (!on) return;
   keys.forEach(function (k) {
+    hoverKeys[k] = true;
     var td = document.querySelector('.grid td.cell[data-k="' + CSS.escape(k) + '"]');
-    if (td) td.classList.toggle("hov", on);
+    if (td) td.classList.add("hov");
   });
 }
 
