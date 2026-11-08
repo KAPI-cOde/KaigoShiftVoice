@@ -197,3 +197,26 @@ def test_rebuild_keeps_leave_in_the_month_pasted_from_excel(sess):
     assert [(r.who, r.when) for r in keep] == [([name], [d])]
     other = replace(fac, settings={**fac.settings, "pasted_month": [2026, 10]})
     assert not [r for r in rebuild_rules(other, staff, rules, m, None) if r.meta.get("carry") and "有" in r.params["in"]]
+
+
+def test_作り直しの返事は_Claudeを呼ばないので吹き出しの札をアプリにする(sess):
+    """作り直しはアプリの計算だけで、Claude を呼ばない。吹き出しに「Claude」と出ると、Claude が作ったように読める。"""
+    from pathlib import Path
+    sess.open()
+    r = sess.rebuild(tries=1)
+    assert r.kind == "applied" and r.extra.get("local") is True
+    html = (Path(__file__).resolve().parents[1] / "src" / "shiftvoice" / "static" / "index.html").read_text(encoding="utf-8")
+    body = html.split("function renderReplyBody(r) {", 1)[1].split("\n}", 1)[0]
+    assert 'r.extra && r.extra.local' in body.split('classList.toggle("local"', 1)[1].split(";", 1)[0]
+
+
+def test_時間のかかる作り直しの待ちには経過の秒を出し_返事で止める():
+    """1〜3分の作り直しの間、文だけだと止まったように見えた（12月の表を作る時は秒が出ていた）。"""
+    from pathlib import Path
+    html = (Path(__file__).resolve().parents[1] / "src" / "shiftvoice" / "static" / "index.html").read_text(encoding="utf-8")
+    for start in ("function startRebuild()", "function sendAnswer("):
+        body = html.split(start, 1)[1].split("\n}", 1)[0]
+        assert "chatWait(" in body and ", true);" in body.split("chatWait(", 1)[1].split("\n", 1)[0], start
+    wait = html.split("function chatWait(text, clock) {", 1)[1].split("\n}", 1)[0]
+    assert "setInterval" in wait and "stopChatClock()" in wait
+    assert "stopChatClock();" in html.split("function renderReplyBody(r) {", 1)[1].split("\n", 2)[1]

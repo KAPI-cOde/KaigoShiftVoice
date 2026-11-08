@@ -269,6 +269,7 @@
   .wait { padding: 60px 0; text-align: center; }
   .wait .t { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; font-size: 20px; font-weight: 700; }
   .wait .sec { margin-top: 8px; font-size: 14px; }
+  .q2 .clock { margin-top: 4px; font-size: 13px; color: #222; }
   .res-main { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; font-size: 30px; font-weight: 700; margin: 8px 0 2px; }
   .res-sub { font-size: 13px; }
   .res-line2 { font-size: 15px; margin: 8px 0 12px; }
@@ -1565,13 +1566,27 @@ function chatTurn(text) {
   renderSaid();
   chatScroll();
 }
-function chatWait(text) {
+// 時間のかかる待ち（作り直し）は、経過の秒も出す。文だけだと、1〜3分の間に止まったように見えた（12月の表を作る時は秒が出ていた）
+var chatClock = null;
+function chatWait(text, clock) {
+  stopChatClock();
   var rb = document.getElementById("reply");
   rb.textContent = "";
   var w = el("div", "q2", text);
   w.setAttribute("role", "status");
   rb.appendChild(w);
+  if (clock) {
+    var sec = el("div", "clock", "0秒"), t0 = Date.now();
+    w.appendChild(sec);
+    chatClock = setInterval(function () {
+      if (!sec.isConnected) { stopChatClock(); return; }
+      sec.textContent = Math.floor((Date.now() - t0) / 1000) + "秒";
+    }, 500);
+  }
   chatScroll();
+}
+function stopChatClock() {
+  if (chatClock) { clearInterval(chatClock); chatClock = null; }
 }
 function chatClear() {
   var log = document.getElementById("chatlog");
@@ -1618,9 +1633,10 @@ function renderReply(r) {
 }
 
 function renderReplyBody(r) {
+  stopChatClock();
   var box = document.getElementById("reply");
   box.textContent = "";
-  box.classList.toggle("local", !!(r && r.kind === "info"));   // 手元で答えた返事は、吹き出しの札を Claude にしない
+  box.classList.toggle("local", !!(r && (r.kind === "info" || (r.extra && r.extra.local))));   // 手元で答えた返事と作り直しは、吹き出しの札を Claude にしない
   if (!r) return;
   if (r.kind === "standby_offer") {
     var ex = r.extra || {};
@@ -1916,7 +1932,7 @@ function holeButtons(box, h) {
 function sendHole(uid, pick) {
   if (busy) return;
   chatTurn(pick === null ? "了承をもらって入れる" : "この案で入れる");
-  chatWait("引き受けを記録して、全部のルールで作り直しています（1〜3分ほどかかります）");
+  chatWait("引き受けを記録して、全部のルールで作り直しています（1〜3分ほどかかります）", true);
   sendOffer("accept", uid, pick === null ? null : { pick: pick });
 }
 
@@ -2077,7 +2093,7 @@ function sendAnswer(text, inp, label) {
   // 答えた後の作り直しは数十秒かかることがある。押した手応えが無いと、押せていないように見えた（作者 2026-11-07）。
   // 問いの吹き出しは残してボタンを押せなくし、答えを一言の吹き出しにして、その下で待つ
   chatTurn(label || text);
-  chatWait("答えを受け取りました。表を作り直しています（30秒ほどかかることがあります）");
+  chatWait("答えを受け取りました。表を作り直しています（30秒ほどかかることがあります）", true);
   post("answer", { uid: ask.uid, text: text }).then(function (res) {
     setBusy(false);
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
@@ -3269,7 +3285,7 @@ function startRebuild() {
   if (busy || !S) return;
   setBusy(true);
   chatTurn("全部のルールで一から作り直す");
-  chatWait("全部のルールで一から作り直しています。何回か作って、いちばん良い表を出します（1〜3分ほどかかります）");
+  chatWait("全部のルールで一から作り直しています。何回か作って、いちばん良い表を出します（1〜3分ほどかかります）", true);
   post("rebuild", {}).then(function (res) {
     setBusy(false);
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }

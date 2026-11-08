@@ -1551,7 +1551,7 @@ class Session:
         # 外れが残った時だけ赤い知らせ（warning）にする。外れが無くなった時は、見出しの横の添え書き（note）で黒く出す
         return Reply("applied", uid, head + second, changes=changes, summary=said,
                      seconds=round(time.perf_counter() - t0, 1), warning=head + second if left else "",
-                     extra={**extra, "note": "" if left else head + second})
+                     extra={**extra, "note": "" if left else head + second, "local": True})   # Claude を呼ばない（画面の札は「アプリ」）
 
     def _drop_hole_offers(self) -> None:
         for x in self.store.pending(self.year, self.month):
