@@ -18,7 +18,7 @@ from .addshift import hide_spoken, read_spoken
 from .names import Masker
 from .period import other_month, other_month_message, relative_days
 from .nextmonth import copy_next_month, next_ym
-from .reader import LimitError, ReadError
+from .reader import KeyProblem, LimitError, ReadError
 from .review import answer, history, review_cards, undo_answer
 from .rules import dated_same_as_latest
 from .store import Store
@@ -250,7 +250,7 @@ class NextFlow:
         try:
             items = masker.unmask(read_spoken(reader, *hide_spoken(masked, fac)))
             p = to_proposal(items, text, fac, staff, self.store.month(self.ny, self.nm))
-        except LimitError as e:   # 公開版で送る前に止めた（public.py）
+        except (LimitError, KeyProblem) as e:   # 公開版で送る前に止めた（public.py）・鍵の間違いなど
             return {"error": str(e)}
         except ReadError:
             return {"error": "読み取りに失敗しました。ルールは変えていません"}
@@ -456,7 +456,7 @@ class NextFlow:
                 return {**out, "wish_error": WHO_UNKNOWN.replace("表もルールも変えていません", "何も入れていません")}
             items = masker.unmask(raw)
             p = to_proposal(items, text, fac, staff, dec)
-        except LimitError as e:
+        except (LimitError, KeyProblem) as e:
             return {**out, "wish_error": str(e)}
         except ReadError:
             if getattr(reader, "calls_claude", True) is False:

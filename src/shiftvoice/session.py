@@ -26,7 +26,7 @@ from .ledger import Ledger
 from .model import Rule
 from .names import Masker
 from .period import other_month, other_month_message, read_answer, relative_days
-from .reader import LimitError, ReadError
+from .reader import KeyProblem, LimitError, ReadError
 from .redo import BACK_WORDS, as_redo, bare_redo, fill_answer, narrowed, same_cell_drops, same_count
 from .giveback import accepted_counts
 from .model import Acceptance
@@ -564,6 +564,8 @@ class Session:
                 return Reply("error", u["id"], str(e), extra={"limit": True, "no_retry": not e.retry})
             if getattr(self.reader, "calls_claude", True) is False:   # 鍵なし（NoKeyReader）
                 return Reply("error", u["id"], NO_KEY, extra={"no_key": True})
+            if isinstance(e, KeyProblem):   # 鍵の間違い・残高・使える量の上限。何をすればよいかを言う
+                return Reply("error", u["id"], str(e), extra={"key_problem": True})
             return Reply("error", u["id"], READ_FAILED)
         items, more_fields = self._reread_if_stuck(u, items, raw, masked, spoken, masker)
         # 一度読んだら残し、AI を呼び直さない（3章 drafts）

@@ -24,6 +24,30 @@ class ReadError(Exception):
     """読み取りに失敗した（通信・途中で切れた・形が違う）。"""
 
 
+class KeyProblem(ReadError):
+    """Claude の鍵が使えない・残高が無い・使える量の上限。送り直しても直らないことが多いので、何をすればよいかを言う。"""
+
+
+KEY_BAD = ("Claude の鍵が使えませんでした。鍵が違うか、無効になっています（表もルールも変えていません）。"
+           "起動した窓で Ctrl+C を押して止め、このフォルダの .env に保存した鍵があれば直すか消してから、もう一度起動して"
+           "鍵を貼ってください（README の「動かし方・鍵の入れ方」）")
+KEY_CREDIT = "Claude の鍵の残高が足りないため、読めませんでした（表もルールも変えていません）。Claude Console で残高を確かめてください"
+KEY_RATE = "Claude の使える量の上限に一時的に達したため、読めませんでした（表もルールも変えていません）。1分ほど待ってから、もう一度伝えてください"
+
+
+def api_error(e: Exception, what: str) -> ReadError:
+    """SDK の失敗を、使う人が次にすることが分かる失敗に変える。鍵の間違いが「読み取りに失敗しました」だけだと、
+    自分の鍵を貼った人がどこで止まったか分からない（2026-11-08、間違った鍵で起動して確かめた）。"""
+    import anthropic
+    if isinstance(e, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+        return KeyProblem(KEY_BAD)
+    if isinstance(e, anthropic.BadRequestError) and "credit" in str(e).lower():
+        return KeyProblem(KEY_CREDIT)
+    if isinstance(e, anthropic.RateLimitError):
+        return KeyProblem(KEY_RATE)
+    return ReadError(f"{what}を呼べませんでした（{type(e).__name__}）")
+
+
 class LimitError(ReadError):
     """公開版で、送る前に止めた（回数・費用・終わりの日・名前らしい語）。文はそのまま画面に出す。手元では起きない。
     retry が False の時は、送り直しても同じ（名前らしい語など）なので［送り直す］を出さない。"""
@@ -183,7 +207,7 @@ class HaikuReader:
                 thinking={"type": "disabled"}, output_config={"effort": "low"},
             )
         except anthropic.APIError as e:
-            raise ReadError(f"読み取りを呼べませんでした（{type(e).__name__}）") from e
+            raise api_error(e, "読み取り") from e
         if resp.stop_reason != "end_turn":
             raise ReadError(f"返事が途中で止まりました（{resp.stop_reason}）")
         text = "".join(b.text for b in resp.content if b.type == "text")
@@ -208,7 +232,7 @@ class HaikuReader:
                 thinking={"type": "adaptive"}, output_config={"effort": "low"},
             )
         except anthropic.APIError as e:
-            raise ReadError(f"読み直しを呼べませんでした（{type(e).__name__}）") from e
+            raise api_error(e, "読み直し") from e
         self.last_reread_usage = {"input": resp.usage.input_tokens, "output": resp.usage.output_tokens}
         if resp.stop_reason != "end_turn":
             raise ReadError(f"読み直しの返事が途中で止まりました（{resp.stop_reason}）")
@@ -291,7 +315,7 @@ class SonnetBuilder:
                 thinking={"type": "between_tools"}, output_config={"effort": "low"},
             )
         except anthropic.APIError as e:
-            raise ReadError(f"組み立てを呼べませんでした（{type(e).__name__}）") from e
+            raise api_error(e, "組み立て") from e
         if resp.stop_reason != "end_turn":
             raise ReadError(f"組み立ての返事が途中で止まりました（{resp.stop_reason}）")
         return parse_build("".join(b.text for b in resp.content if b.type == "text"))
