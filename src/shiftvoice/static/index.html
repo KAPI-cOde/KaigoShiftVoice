@@ -3285,7 +3285,7 @@ function startRebuild() {
   if (busy || !S) return;
   setBusy(true);
   chatTurn("全部のルールで一から作り直す");
-  chatWait("全部のルールで一から作り直しています。何回か作って、いちばん良い表を出します（1〜3分ほどかかります）", true);
+  chatWait("全部のルールで一から作り直しています。何回か作って、いちばん良い表を出します（見本の施設は10〜30秒ほど、取り込んだ施設は1〜3分ほど）", true);
   post("rebuild", {}).then(function (res) {
     setBusy(false);
     if (res.error) { renderReply({ kind: "failed_solve", message: res.error }); return; }
