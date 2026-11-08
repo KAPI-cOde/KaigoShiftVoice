@@ -27,7 +27,7 @@
 
 ## 審査員の方へ
 
-デモ動画（3分）は11月8日に公開し、ここにリンクを置きます。
+デモ動画（2分55秒）は YouTube で見られます。 https://youtu.be/LRY1ngb7czs
 
 1. GitHub の［Code］→［Download ZIP］で取り込んで展開します（git clone でもかまいません）
 2. uv（Python のソフトウェアをそろえるプログラム）が無ければ入れます。Mac は `curl -LsSf https://astral.sh/uv/install.sh | sh`、Windows は `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"` です。入れた後はターミナルを開き直します
