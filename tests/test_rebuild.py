@@ -119,7 +119,9 @@ def test_rebuild_after_readme_phrases_counts_like_the_band_and_keeps_the_table(s
     assert _late_then_early(m.table) == 0
     r = sess.rebuild()   # 画面の黒いボタンと同じ回し方（種を変えて3回）
     assert r.kind == "applied", r.message
-    if band:
+    if r.extra.get("kept"):   # 作り直した表で守れなくなるルールがある時は、今の表のまま残してそのルールを言う
+        assert "今の表のままにしました" in r.message and r.changes == [], r.message
+    elif band:
         mm = re.search(r"外れていたルールは(\d+)件", r.message)
         assert mm and int(mm.group(1)) == band, (band, r.message)
     else:   # 押す前に外れが無い時は「0件から0件になりました」「なくなり」と言わない
@@ -258,3 +260,22 @@ def test_見本の施設の作り直しは種の違う回を同時に回し_順�
     rb = b.rebuild(tries=3)
     assert rb.kind == "applied" and used == [3]
     assert a.store.month(2026, 11).table == b.store.month(2026, 11).table
+
+
+def test_作り直した表で守れなくなるルールがある時は_今の表のまま残してそのルールを言う(sess):
+    """見本の11月で3つの一言と法事の休みの後に作り直すと、白紙から作った表では「遅番の次の日に早番を置かない」（できれば）が
+    2か所で外れ、動画の見せ場が崩れた。帯は「2か所」、返事は「0件のまま」と食い違った（チャットの測り 2026-11-08）。"""
+    from test_even_out import EVEN, SCENE, _late_then_early
+    sess.open()
+    for text, ans in SCENE + [(EVEN, "毎月")]:
+        sess.answer(sess.say(text).uid, ans)
+    assert sess.say("岡田さん、15と16は法事で休み").kind == "applied"
+    before = sess.store.month(2026, 11).table
+    hist = len(sess.store.month(2026, 11).history)
+    r = sess.rebuild()
+    m = sess.store.month(2026, 11)
+    assert _late_then_early(m.table) == 0
+    assert _hard(sess) == []
+    if r.extra.get("kept"):
+        assert m.table == before and len(m.history) == hist and r.changes == []
+        assert "今の表のままにしました" in r.message and "遅番の次の日に早番を置かない" in r.message

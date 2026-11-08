@@ -1527,6 +1527,21 @@ class Session:
         if best is None:
             return Reply("failed_solve", None, (last_try.message if last_try else "") + "。全部のルールでは表が作れませんでした。表は変えていません")
         st = best[1]
+        if m.table and not pushed and op_id is None:
+            # 作り直した表のほうが今の表より外れが増える時は置き換えない。白紙から作ると、一言で守らせた「できれば」の
+            # ルールが崩れることがあった（見本の11月で3つの一言と法事の休みの後、遅番の次の日の早番が0か所→2か所）
+            hard = ("fixed", "wish", "operational")
+            def worse(t):
+                b = check_table(rules, fac, staff, m, t)
+                return sum(1 for x in b if x["flex"] in hard), len(b), b
+            ch, ca, cb = worse(m.table)
+            nh, na, nb = worse(st.result.table)
+            if (nh, na) > (ch, ca):
+                lost = [n for n in dict.fromkeys(x["name"] for x in nb) if n not in {x["name"] for x in cb}][:2]
+                why = ("「" + "」「".join(lost) + "」が守れなくなる") if lost else "守れないルールが増える"
+                msg = f"一から作り直しましたが、作り直した表では{why}ので、今の表のままにしました。表は変えていません"
+                return Reply("applied", None, msg, changes=[], summary=said, seconds=round(time.perf_counter() - t0, 1),
+                             extra={"note": msg, "local": True, "kept": True})
         uid = op_id or f"rebuild-{self.now().strftime('%Y%m%d%H%M%S')}"
         before = m.table
         self._drop_hole_offers()   # 前の作り直しの提案は、新しい表には当てない
