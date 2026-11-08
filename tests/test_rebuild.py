@@ -220,3 +220,41 @@ def test_時間のかかる作り直しの待ちには経過の秒を出し_返�
     wait = html.split("function chatWait(text, clock) {", 1)[1].split("\n}", 1)[0]
     assert "setInterval" in wait and "stopChatClock()" in wait
     assert "stopChatClock();" in html.split("function renderReplyBody(r) {", 1)[1].split("\n", 2)[1]
+
+
+def test_見本の施設の作り直しは種の違う回を同時に回し_順番に回した時と同じ表を選ぶ(built_dir, tmp_path, monkeypatch):
+    """作り直しのボタンは、見本の11月で3回作って選ぶので、順番だと50秒ほど待った（3つの一言の後）。1人の作業者で決まった
+    計算の量だけ探す施設は、同時に回しても各回の表は変わらない。同時に回したこと（直す前は順番）と、選んだ表が順番に回した
+    時と同じことを見る。"""
+    import concurrent.futures as cf
+    import shutil
+    from conftest import FIXED_NOW, REPLIES
+    from shiftvoice.reader import RecordedReader
+    from shiftvoice.session import Session
+    from shiftvoice.store import Store
+
+    def fresh(name):
+        d = tmp_path / name
+        shutil.copytree(built_dir, d)
+        s = Session(Store(d), 2026, 11, RecordedReader.from_file(REPLIES), now=lambda: FIXED_NOW)
+        s.open()
+        return s
+
+    used = []
+    real = cf.ThreadPoolExecutor
+
+    class Counting(real):
+        def __init__(self, n, *a, **k):
+            used.append(n)
+            super().__init__(n, *a, **k)
+
+    monkeypatch.setattr(cf, "ThreadPoolExecutor", Counting)
+    monkeypatch.setattr("os.cpu_count", lambda: 8)
+    a = fresh("par")
+    ra = a.rebuild(tries=3)
+    assert ra.kind == "applied" and used == [3], used
+    monkeypatch.setattr("os.cpu_count", lambda: 1)   # 1コアの PC では今までどおり順番
+    b = fresh("seq")
+    rb = b.rebuild(tries=3)
+    assert rb.kind == "applied" and used == [3]
+    assert a.store.month(2026, 11).table == b.store.month(2026, 11).table

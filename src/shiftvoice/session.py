@@ -1491,18 +1491,37 @@ class Session:
         solve = fac.settings.get("solve", {})
         if f"{self.year:04d}-{self.month:02d}" in solve.get("seed_by_month", {}):
             tries = 1   # 種を決めてある月（撮影用）は、何回回しても同じ表になる
-        best, n, t0, last_try = None, 0, time.perf_counter(), None
-        for i in range(tries):
+        best, t0, last_try = None, time.perf_counter(), None
+
+        def one(i: int):
             f = replace(fac, settings={**fac.settings, "solve": {**solve, "seed": solve.get("seed", 11) + 7 * i}})
-            last_try = solve_staged(f, staff, solve_rules, m, patience=patience_of(f), explain=True, even_leave=True, last_leave=last)
-            n += 1
-            if last_try.ok:
-                r = last_try.result
+            return solve_staged(f, staff, solve_rules, m, patience=patience_of(f), explain=True, even_leave=True, last_leave=last)
+
+        def take(res) -> None:
+            nonlocal best
+            if res.ok:
+                r = res.result
                 key = (r.stage, sum(1 for b in r.broken if b["flex"] != "negotiable"), len(r.broken), r.objective or 0)
                 if best is None or key < best[0]:
-                    best = (key, last_try)
-            if time.perf_counter() - t0 > budget:
-                break
+                    best = (key, res)
+
+        from .solver import large_workers
+        par = min(tries, max(1, (os.cpu_count() or 2) - 1))
+        if par > 1 and not large_workers(fac, staff):
+            # 1人の作業者で決まった計算の量だけ探す施設（見本の施設など）は、種の違う回を同時に回す。どの回の表も順番に
+            # 回した時と1マスも変わらず、待ちは約3分の1になる（見本の11月、3つの一言の後で50秒→18秒。2026-11-08 に測った）。
+            # 作業者を何人も回す施設（取り込んだ施設・30人を超える施設）は、CPU を取り合うので今までどおり順番に回す
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(par) as ex:
+                for res in ex.map(one, range(tries)):
+                    last_try = res
+                    take(res)
+        else:
+            for i in range(tries):
+                last_try = one(i)
+                take(last_try)
+                if time.perf_counter() - t0 > budget:
+                    break
         if best is None:
             return Reply("failed_solve", None, (last_try.message if last_try else "") + "。全部のルールでは表が作れませんでした。表は変えていません")
         st = best[1]
