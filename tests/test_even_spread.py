@@ -73,3 +73,23 @@ def test_named_rule_counts_only_the_named_people(sess):
     lo, hi = min(n.values()), max(n.values())
     assert line.startswith(f"早番は1人{_fmt(lo, hi)} → "), (line, n)
     assert re.search(rf"→ {_fmt(0, n['久保'])}$", line), (line, n)
+
+
+def test_平均化を入れた月の翌月の表も_早番と遅番の回数の幅が1以内(sess):
+    """翌月へそのまま引き継いだ［毎月］の平均化が、12月の表で効いている。11月の表だけで確かめても、翌月に落ちていると気づけない。"""
+    from shiftvoice.nextflow import NextFlow
+    sess.open()
+    for text, ans in SCENE:
+        _say(sess, text, ans)
+    _say(sess, EVEN, "毎月")
+    fl = NextFlow(sess.store, 2026, 11)
+    for c in fl.review()["cards"]:
+        fl.answer(c["rule_id"], "keep")
+    b = fl.build(base_date="2026-11-30")
+    assert b["status"] == "ok", b.get("message")
+    assert all(b["checks"].values()), b["checks"]
+    staff = sess.store.staff_on(2026, 12)
+    give = b["tables"]["give"]
+    for sym in ("早", "遅"):
+        lo, hi = _range(give, staff, sym)
+        assert hi - lo <= 1, (sym, lo, hi)
