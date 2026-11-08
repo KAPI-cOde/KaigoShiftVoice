@@ -429,7 +429,7 @@ def make_handler(session: Session | None, lock: threading.Lock, has_key: bool, v
             """lock の中で session を差し替える。声の入口はそのまま使う（名前は文字にするたびに、新しい施設の名簿から渡す）。"""
             old = self.box.session
             new = Session(Store(root), year, month, old.reader, now=old.now, who=old.who, builder=old.builder,
-                          tidier=old.tidier)
+                          tidier=old.tidier, base_date=old.base_date)
             new.open()
             self.box.session = new
             return self._state_out()
