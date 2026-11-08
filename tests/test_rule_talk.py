@@ -231,3 +231,39 @@ def test_サーバーの返事に_ボタンにできる物が入る(srv, sess):
 def _reader():
     from shiftvoice.reader import RecordedReader
     return RecordedReader.from_file(REPLIES)
+
+
+# ---- 使い方・あいさつ・お礼（初めて触る人の最初の一言。前は「表を変える頼みが見つかりませんでした」で止まった）
+
+HELP_SAID = [("使い方を教えて", "help"), ("何ができるの？", "help"), ("どうやって使うの", "help"), ("ヘルプ", "help"),
+             ("例を教えて", "help"), ("こんにちは", "hello"), ("はじめまして", "hello"), ("よろしくお願いします", "hello"),
+             ("ありがとう", "thanks"), ("ありがとうございます", "thanks")]
+HELP_MIXED = ["ありがとう、それから岡田さん15日休み", "こんにちは、遅番の次の日に早番はやめて", "使い方がわからないので遅番を減らして"]
+
+
+@pytest.mark.parametrize("text, topic", HELP_SAID)
+def test_使い方やあいさつには_Claudeへ送らず言える一言の例を返す(sess, text, topic):
+    r = asked(sess, text, topic)
+    if topic == "thanks":
+        assert "一言で伝えてください" in r.message
+    else:
+        assert "遅番の次の日に早番はきついから、やめてあげて" in r.message and "外れているルールは？" in r.message
+        names = [s.name for s in sess.store.staff()]
+        assert f"「{names[0]}さん、15と16は法事で休み」" in r.message   # 例の名前は、その施設の名簿の人
+
+
+@pytest.mark.parametrize("text", HELP_MIXED)
+def test_あいさつやお礼と混ざった頼みは_今までどおり_Claudeへ送る(sess, text):
+    assert rule_question(text) is None
+    sess.open()
+    r = sess.say(text)
+    assert r.kind != "info" and len(sess.reader.sent) == 1
+
+
+def test_鍵なしでも_使い方には答える(built_dir, tmp_path):
+    d = tmp_path / "h2"
+    shutil.copytree(built_dir, d)
+    s = Session(Store(d), 2026, 11, NoKeyReader(), now=lambda: FIXED_NOW)
+    s.open()
+    r = s.say("使い方を教えて")
+    assert r.kind == "info" and r.extra["topic"] == "help" and not r.extra.get("no_key")
