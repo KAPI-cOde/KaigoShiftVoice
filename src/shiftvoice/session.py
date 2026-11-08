@@ -353,6 +353,28 @@ def top_conflict(targets: list[Rule], broken: list[dict], rules: dict[str, Rule]
     return seen[max(order, key=rank)][0]["name"] if seen else None
 
 
+
+def rebuild_rules(fac: "Facility", staff: "list[Staff]", rules: list[Rule], m: "Month", premise: dict | None) -> list[Rule]:
+    """［全部のルールで一から作り直す］で解くルール。帳面のルールに、表にある研修（carry_rules）と、撮影用の前提のうち表に残って
+    いる休み・研修・有給のマスを足す。待機の台本は小島さんの前提の公休の日に当番を置くため。前提の勤務のマス（千葉さんの9日
+    遅番など）と回数の条件は使わない。表の有給は残さない。日を頼まれた有給は帳面のルールにあり、それ以外はアプリが入れた物で、
+    作り直しで平等に入れ直すため（残すと有給の偏りが作り直しで直らない。Codex Astra 4×6）"""
+    from .build import premise_rules
+    from .resolve import carry_rules
+    from .solver import requested_cells
+    out = list(rules)
+    if not m.table:
+        return out
+    leave = {t.symbol for t in fac.shift_types if t.kind == "leave"}
+    off = {t.symbol for t in fac.shift_types if t.kind in ("rest", "leave") or t.on_request_only}
+    out += [c for c in carry_rules(fac, m.table, rules, requested_cells(rules, fac, staff, m))
+            if not set(c.params["in"]) & leave]
+    out += [p for p in premise_rules(premise)
+            if p.kind == "cell" and set(p.params["in"]) <= off
+            and (m.table.get(p.who[0]) or [])[p.when[0] - 1:p.when[0]] == p.params["in"]]
+    return out
+
+
 class Session:
     def __init__(self, store: Store, year: int, month: int, reader, *, now=None, who: str = "作成者",
                  builder=None, base_date: str | None = None, tidier=None):
@@ -1460,19 +1482,8 @@ class Session:
         short = shortages(fac, staff, rules, m)
         if short:   # 回数の上限の合計が毎日の人数に届かない。計算しても上限を外して作るだけなので、先に何が足りないかを言う
             return Reply("ask", None, shortage_text(short), extra={"shortage": short})
-        # 表にある研修・有給（carry_rules）と、撮影用の前提のうち表に残っている休み・研修・有給のマスは残して作る。待機の台本は
-        # 小島さんの前提の公休の日に当番を置くため。前提の勤務のマス（千葉さんの9日遅番など）と回数の条件は使わない。
         # 外れの数（was・left）は帯と同じ帳面のルールだけで数える
-        from .build import premise_rules
-        from .resolve import carry_rules
-        from .solver import requested_cells
-        solve_rules = list(rules)
-        if m.table:
-            off = {t.symbol for t in fac.shift_types if t.kind in ("rest", "leave") or t.on_request_only}
-            solve_rules += carry_rules(fac, m.table, rules, requested_cells(rules, fac, staff, m)) + [
-                p for p in premise_rules(self.store.premise(self.year, self.month))
-                if p.kind == "cell" and set(p.params["in"]) <= off
-                and (m.table.get(p.who[0]) or [])[p.when[0] - 1:p.when[0]] == p.params["in"]]
+        solve_rules = rebuild_rules(fac, staff, rules, m, self.store.premise(self.year, self.month))
         solve = fac.settings.get("solve", {})
         if f"{self.year:04d}-{self.month:02d}" in solve.get("seed_by_month", {}):
             tries = 1   # 種を決めてある月（撮影用）は、何回回しても同じ表になる

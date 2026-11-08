@@ -157,3 +157,23 @@ def test_rebuild_after_readme_phrases_keeps_training_and_rest_so_standby_script_
     # README の手順4で使うのは1日の電話だけ。14日・22日の決め打ちは昔の台本の終わりの状態を作る時のもので、作り直した後は
     # 前の日の勤務しだいで待機に入れないことがある（休みのマスが残ることは上で見ている）
     assert assign["1"] == ["小島"]
+
+
+def test_rebuild_does_not_pin_leave_the_app_placed_but_keeps_training(sess):
+    """作り直しは、表にある研修は残すが、表の有給は残さない。日を頼まれた有給は帳面のルールにあり、表にあるだけの有給はアプリが
+    入れた物なので、作り直しで平等に入れ直す。残すと、有給を4日と0日に偏って入れた表を作り直しても偏りが直らなかった
+    （Codex Astra 2026-11-08。2人の小さな表で 4日・0日のまま）。"""
+    from shiftvoice.session import rebuild_rules
+    sess.open()
+    st = sess.store
+    m = st.month(2026, 11)
+    fac, staff = st.facility(), st.staff_on(2026, 11)
+    rules = __import__("shiftvoice.build", fromlist=["month_rules"]).month_rules(st, 2026, 11, with_premise=False)
+    name = next(n for n, row in m.table.items() if row.count("日") >= 4)
+    days = [d for d, x in enumerate(m.table[name], 1) if x == "日"][:4]
+    for d in days:
+        m.table[name][d - 1] = "有"
+    got = rebuild_rules(fac, staff, rules, m, st.premise(2026, 11))
+    carried = [r for r in got if r.meta.get("carry")]
+    assert not [r for r in carried if "有" in r.params["in"]], [r.name for r in carried]
+    assert [r for r in carried if r.params["in"] == ["研"] and r.who == ["上野"] and r.when == [12]]
