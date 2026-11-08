@@ -129,3 +129,31 @@ def test_rebuild_after_readme_phrases_counts_like_the_band_and_keeps_the_table(s
     for sym in ("早", "遅"):
         lo, hi = _spread(m.table, staff, sym)
         assert hi - lo <= wide[sym][1] - wide[sym][0], (sym, wide[sym], (lo, hi))
+
+
+def test_rebuild_after_readme_phrases_keeps_training_and_rest_so_standby_script_runs(sess):
+    """作り直しても、表にある研修（上野さんの12日）と、見本の前提の公休（小島さんの1・14・22日。待機の台本で小島さんが
+    当番になる日）は残る。前提の勤務のマスと回数の条件は使わない。直す前は前提を丸ごと外していたので、研修が遅番に、
+    小島さんの3日が遅・夜・遅になった（Astra 2026-11-08）。作り直すと青木さんの1日は早番から夜勤に変わりうるので、
+    台本の電話（青木さんの1日）が待機の小島さんだけで埋まるかは確かめない。"""
+    from test_act2 import STANDBY
+    from test_even_out import EVEN, SCENE
+    from conftest import REPLIES
+    from shiftvoice.reader import RecordedBuilder
+    sess.builder = RecordedBuilder.from_file(REPLIES.parent / "builds.json")
+    sess.base_date = "2026-11-01"
+    sess.open()
+    for text, ans in SCENE + [(EVEN, "毎月")]:
+        r = sess.answer(sess.say(text).uid, ans)
+        assert r.kind == "applied", (text, r.message)
+    r = sess.rebuild(tries=1)
+    assert r.kind == "applied", r.message
+    t = sess.store.month(2026, 11).table
+    assert t["上野"][11] == "研"
+    assert [t["小島"][d - 1] for d in (1, 14, 22)] == ["公"] * 3
+    r = sess.say(STANDBY)
+    assert r.kind == "applied", r.message
+    assign = sess.state()["layers"]["standby"]["assign"]
+    # README の手順4で使うのは1日の電話だけ。14日・22日の決め打ちは昔の台本の終わりの状態を作る時のもので、作り直した後は
+    # 前の日の勤務しだいで待機に入れないことがある（休みのマスが残ることは上で見ている）
+    assert assign["1"] == ["小島"]

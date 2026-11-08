@@ -1460,13 +1460,26 @@ class Session:
         short = shortages(fac, staff, rules, m)
         if short:   # 回数の上限の合計が毎日の人数に届かない。計算しても上限を外して作るだけなので、先に何が足りないかを言う
             return Reply("ask", None, shortage_text(short), extra={"shortage": short})
+        # 表にある研修・有給（carry_rules）と、撮影用の前提のうち表に残っている休み・研修・有給のマスは残して作る。待機の台本は
+        # 小島さんの前提の公休の日に当番を置くため。前提の勤務のマス（千葉さんの9日遅番など）と回数の条件は使わない。
+        # 外れの数（was・left）は帯と同じ帳面のルールだけで数える
+        from .build import premise_rules
+        from .resolve import carry_rules
+        from .solver import requested_cells
+        solve_rules = list(rules)
+        if m.table:
+            off = {t.symbol for t in fac.shift_types if t.kind in ("rest", "leave") or t.on_request_only}
+            solve_rules += carry_rules(fac, m.table, rules, requested_cells(rules, fac, staff, m)) + [
+                p for p in premise_rules(self.store.premise(self.year, self.month))
+                if p.kind == "cell" and set(p.params["in"]) <= off
+                and (m.table.get(p.who[0]) or [])[p.when[0] - 1:p.when[0]] == p.params["in"]]
         solve = fac.settings.get("solve", {})
         if f"{self.year:04d}-{self.month:02d}" in solve.get("seed_by_month", {}):
             tries = 1   # 種を決めてある月（撮影用）は、何回回しても同じ表になる
         best, n, t0, last_try = None, 0, time.perf_counter(), None
         for i in range(tries):
             f = replace(fac, settings={**fac.settings, "solve": {**solve, "seed": solve.get("seed", 11) + 7 * i}})
-            last_try = solve_staged(f, staff, rules, m, patience=patience_of(f), explain=True, even_leave=True, last_leave=last)
+            last_try = solve_staged(f, staff, solve_rules, m, patience=patience_of(f), explain=True, even_leave=True, last_leave=last)
             n += 1
             if last_try.ok:
                 r = last_try.result
@@ -1508,7 +1521,7 @@ class Session:
                 else "一から作り直しました（外れているルールは0件のままです）。")
         if before and not was and not left:
             second = "［ひとつ戻す］で前の表に戻せます。"
-        hole = (self._hole_offer(fac, staff, rules, m, st.choke[0])
+        hole = (self._hole_offer(fac, staff, solve_rules, m, st.choke[0])
                 if left and st.result.stage != 1 and st.choke else None)
         if hole:
             second = hole["message"]
