@@ -1528,20 +1528,29 @@ class Session:
             return Reply("failed_solve", None, (last_try.message if last_try else "") + "。全部のルールでは表が作れませんでした。表は変えていません")
         st = best[1]
         if m.table and not pushed and op_id is None:
-            # 作り直した表のほうが今の表より外れが増える時は置き換えない。白紙から作ると、一言で守らせた「できれば」の
-            # ルールが崩れることがあった（見本の11月で3つの一言と法事の休みの後、遅番の次の日の早番が0か所→2か所）
-            hard = ("fixed", "wish", "operational")
-            def worse(t):
-                b = check_table(rules, fac, staff, m, t)
-                return sum(1 for x in b if x["flex"] in hard), len(b), b
-            ch, ca, cb = worse(m.table)
-            nh, na, nb = worse(st.result.table)
-            if (nh, na) > (ch, ca):
-                lost = [n for n in dict.fromkeys(x["name"] for x in nb) if n not in {x["name"] for x in cb}][:2]
-                why = ("「" + "」「".join(lost) + "」が守れなくなる") if lost else "守れないルールが増える"
-                msg = f"一から作り直しましたが、作り直した表では{why}ので、今の表のままにしました。表は変えていません"
-                return Reply("applied", None, msg, changes=[], summary=said, seconds=round(time.perf_counter() - t0, 1),
-                             extra={"note": msg, "local": True, "kept": True})
+            # 今の表も候補の1つとして、何回か作った表と同じ物差し（外れの強さと数、次に計算のスコア）で比べ、いちばん良い表を
+            # 採る（作者「複数回回して、一番良いスコアから始める」）。白紙から作った表は、計算の量の上限の中では今の表ほど
+            # 良くならないことがあり、一言で守らせた「できれば」のルールが崩れた（見本の11月で3つの一言と法事の休みの後、
+            # 今の表のスコア380・外れ0に対し、作り直した3回は10780〜34140で、遅番の次の日の早番が0か所→2か所）。
+            # 今の表のスコアは、マスを全部固定して同じルールで解いて出す（1秒ほど）
+            from .build import impossible_wishes
+            from .rules import fair_on
+            from .solver import solve_month
+            fixed = {(n, d + 1): v for n, row in m.table.items() for d, v in enumerate(row)}
+            eval_rules, _ = impossible_wishes(fac, fair_on(solve_rules), m)
+            cur = solve_month(fac, staff, eval_rules, m, fixed_cells=fixed)
+            if cur.status == "ok":
+                hard = ("fixed", "wish", "operational")
+                cur_key = (1, sum(1 for b in cur.broken if b["flex"] != "negotiable"), len(cur.broken), cur.objective or 0)
+                if cur_key <= best[0]:
+                    nb = check_table(rules, fac, staff, m, st.result.table)
+                    cb = {x["name"] for x in check_table(rules, fac, staff, m, m.table)}
+                    lost = [n for n in dict.fromkeys(x["name"] for x in nb) if n not in cb][:2]
+                    why = ("作り直した表では「" + "」「".join(lost) + "」が守れなくなる" if lost
+                           else "今の表のほうが、偏りや並びが整っていた")
+                    msg = f"一から何回か作りましたが、{why}ので、今の表のままにしました。表は変えていません"
+                    return Reply("applied", None, msg, changes=[], summary=said, seconds=round(time.perf_counter() - t0, 1),
+                                 extra={"note": msg, "local": True, "kept": True})
         uid = op_id or f"rebuild-{self.now().strftime('%Y%m%d%H%M%S')}"
         before = m.table
         self._drop_hole_offers()   # 前の作り直しの提案は、新しい表には当てない
