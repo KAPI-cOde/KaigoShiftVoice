@@ -177,3 +177,23 @@ def test_rebuild_does_not_pin_leave_the_app_placed_but_keeps_training(sess):
     carried = [r for r in got if r.meta.get("carry")]
     assert not [r for r in carried if "有" in r.params["in"]], [r.name for r in carried]
     assert [r for r in carried if r.params["in"] == ["研"] and r.who == ["上野"] and r.when == [12]]
+
+
+def test_rebuild_keeps_leave_in_the_month_pasted_from_excel(sess):
+    """Excel から貼った月の有給は、施設で決まっていた予定なので作り直しでも残す。帳面のルールに無いので、残さないと
+    勤務の日に変わった（Codex Astra 2026-11-08 の 3×8）。アプリが作った月の有給は、上の試験のとおり残さない。"""
+    from dataclasses import replace
+    from shiftvoice.session import rebuild_rules
+    sess.open()
+    st = sess.store
+    m = st.month(2026, 11)
+    fac, staff = st.facility(), st.staff_on(2026, 11)
+    rules = __import__("shiftvoice.build", fromlist=["month_rules"]).month_rules(st, 2026, 11, with_premise=False)
+    name = next(n for n, row in m.table.items() if row.count("日") >= 4)
+    d = m.table[name].index("日") + 1
+    m.table[name][d - 1] = "有"
+    pasted = replace(fac, settings={**fac.settings, "pasted_month": [2026, 11]})
+    keep = [r for r in rebuild_rules(pasted, staff, rules, m, None) if r.meta.get("carry") and "有" in r.params["in"]]
+    assert [(r.who, r.when) for r in keep] == [([name], [d])]
+    other = replace(fac, settings={**fac.settings, "pasted_month": [2026, 10]})
+    assert not [r for r in rebuild_rules(other, staff, rules, m, None) if r.meta.get("carry") and "有" in r.params["in"]]

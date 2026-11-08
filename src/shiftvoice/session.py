@@ -358,7 +358,8 @@ def rebuild_rules(fac: "Facility", staff: "list[Staff]", rules: list[Rule], m: "
     """［全部のルールで一から作り直す］で解くルール。帳面のルールに、表にある研修（carry_rules）と、撮影用の前提のうち表に残って
     いる休み・研修・有給のマスを足す。待機の台本は小島さんの前提の公休の日に当番を置くため。前提の勤務のマス（千葉さんの9日
     遅番など）と回数の条件は使わない。表の有給は残さない。日を頼まれた有給は帳面のルールにあり、それ以外はアプリが入れた物で、
-    作り直しで平等に入れ直すため（残すと有給の偏りが作り直しで直らない。Codex Astra 4×6）"""
+    作り直しで平等に入れ直すため（残すと有給の偏りが作り直しで直らない。Codex Astra 4×6）。ただし Excel から貼った月の
+    有給は施設で決まっていた予定なので残す（帳面のルールに無く、残さないと勤務の日に変わった。Codex Astra 3×8）"""
     from .build import premise_rules
     from .resolve import carry_rules
     from .solver import requested_cells
@@ -367,8 +368,9 @@ def rebuild_rules(fac: "Facility", staff: "list[Staff]", rules: list[Rule], m: "
         return out
     leave = {t.symbol for t in fac.shift_types if t.kind == "leave"}
     off = {t.symbol for t in fac.shift_types if t.kind in ("rest", "leave") or t.on_request_only}
+    pasted = list(fac.settings.get("pasted_month") or []) == [m.year, m.month]
     out += [c for c in carry_rules(fac, m.table, rules, requested_cells(rules, fac, staff, m))
-            if not set(c.params["in"]) & leave]
+            if pasted or not set(c.params["in"]) & leave]
     out += [p for p in premise_rules(premise)
             if p.kind == "cell" and set(p.params["in"]) <= off
             and (m.table.get(p.who[0]) or [])[p.when[0] - 1:p.when[0]] == p.params["in"]]
