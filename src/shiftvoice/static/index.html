@@ -1776,6 +1776,8 @@ function renderReplyBody(r) {
   }
   if (r.kind === "ask_period") {
     if (r.extra && r.extra.kept) box.appendChild(el("div", "summary", r.extra.kept + "。毎月なら来月からのルールに残し、今月だけなら何も変えません"));
+    // 選ぶ前に、何と読んだかを見せる。前は答えた後に初めてルールの名前が出て、読み違いに気づけないまま選んでいた（重さ8）
+    else if (r.summary) box.appendChild(el("div", "summary", "「" + r.summary + "」と読みました"));
     box.appendChild(el("div", "q", "毎月ですか、今月だけですか"));
     var bs = el("div", "btns");
     [["毎月", "rule"], ["今月だけ", "once"]].forEach(function (p) {
