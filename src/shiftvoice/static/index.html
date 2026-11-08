@@ -1989,7 +1989,8 @@ function renderHint() {
   if (HINT_DEMO === null) HINT_DEMO = el.textContent;
   var names = (S.staff || []).map(function (s) { return s.name; });
   // 例の名前は、開いている施設の名簿にある人にする（ほかの施設で知らない名前の例を出さない）
-  el.textContent = (!names.length || names.indexOf("岡田") >= 0) ? HINT_DEMO
+  el.textContent = (S && S.public) ? "例「遅番の次の日に早番はきついから、やめてあげて」"
+    : (!names.length || names.indexOf("岡田") >= 0) ? HINT_DEMO
     : HINT_DEMO.replace("岡田さん、15と16は法事で休み", names[0] + "さん、15と16は用事で休み");
   el.style.display = saidList.length ? "none" : "block";  // 初めの一言までだけ出す
 }
@@ -3114,8 +3115,7 @@ function setupPublic(pub) {
   document.getElementById("tosetup").remove();
   document.getElementById("input").maxLength = pub.max_text || 200;
   var note = document.getElementById("pubnote");
-  note.textContent = "公開版です。施設と職員は架空です。実在の人の名前や、病気などの個人の事情は入れないでください。" +
-    "名前・電話番号・病気のことらしい言葉を見つけた時は Claude へ送りませんが、見つけきれないこともあります。試せるのは " + pub.until.slice(5).replace("-", "月").replace(/^0/, "") + "日まで、一言は1時間に" + (pub.reads_per_hour || 30) + "回までです";
+  note.textContent = "公開版（架空の施設・" + pub.until.slice(5).replace("-", "月").replace(/^0/, "") + "日まで）。声はブラウザの音声認識で文字にします。実在の人の名前は入れないでください。";
   note.style.display = "block";
   var kb = document.getElementById("keybar");
   kb.textContent = "この公開版には Claude の鍵が入っていないので、一言で直すことはできません。表と翌月の案は見られます";
@@ -3125,11 +3125,10 @@ function setupPublic(pub) {
       webVoice = true;
       document.getElementById("talk").style.display = "";
       document.getElementById("ptt").style.display = "";
-      vn.textContent = "公開版の声は、お使いのブラウザの音声認識で文字にします。文字にした後は、打った一言と同じく名前を番号に伏せてから Claude へ送ります";
     } else {
       vn.textContent = "このブラウザでは声が使えません。打って伝えてください（Chrome か Edge なら、スペースを押している間に話せます）";
+      vn.style.display = "block";
     }
-    vn.style.display = "block";
   }
   if (pub.closed) {
     note.textContent = pub.closed_message;
