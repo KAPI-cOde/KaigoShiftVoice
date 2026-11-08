@@ -112,3 +112,20 @@ def test_期限つきのルールは効く日だけで外れを数える(sess):
     sess.store.save_month(m)
     cards = {c["id"]: c for c in sess.state()["cards"]}
     assert cards["t-until"]["broken"] == 0
+
+
+def test_ぶつかった時のボタンの下に_押すと何が起きるかの説明がある():
+    """［一から作り直す］と［ひとつ戻す］は、押す前に何が起きるか分からないと選べない。説明はボタンの並びの下に置き、
+    赤い本文（2文まで）には足さない"""
+    from pathlib import Path
+    import shiftvoice
+    html = (Path(shiftvoice.__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
+    both = ("［一から作り直す］は、全部のルールで白紙から何回か作り、今の表より良い時だけ置き換えます（数分かかることがあります）。"
+            "［ひとつ戻す］は、表とルールを1つ前に戻します。")
+    undo_only = "［ひとつ戻す］は、表とルールを1つ前に戻します。"
+    made = html.index('var bb = el("div", "btns brokenbtns");')
+    appended = html.index("box.appendChild(bb);", made)
+    assert html.count(both) == 1 and html.index(both) > appended
+    # 戻すだけの文は、両方の文とは別に、ボタンの並びより後に1回ある
+    assert html.index(undo_only, appended) < html.index('var det = el("details", "brokenlist");')
+    assert html.count(undo_only) == 2

@@ -1761,6 +1761,10 @@ function renderReplyBody(r) {
       ubb.addEventListener("click", doUndo);
       bb.appendChild(ubb);
       box.appendChild(bb);
+      var canRebuild = bx.rebuild && !(S && (S.public || S.distributed));
+      box.appendChild(el("div", "sentline", canRebuild
+        ? "［一から作り直す］は、全部のルールで白紙から何回か作り、今の表より良い時だけ置き換えます（数分かかることがあります）。［ひとつ戻す］は、表とルールを1つ前に戻します。"
+        : "［ひとつ戻す］は、表とルールを1つ前に戻します。"));
       var det = el("details", "brokenlist");
       det.appendChild(el("summary", "", "外れたルール（" + (bx.count || 0) + "件）"));
       if (bx.lead) det.appendChild(el("div", "q2", bx.lead));
