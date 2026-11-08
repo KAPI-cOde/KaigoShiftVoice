@@ -287,6 +287,7 @@
   /* 土日祝の列（見出しは灰色）。マスは勤務の色の上から少しだけ暗くする */
   .grid td.cell.off, .grid td.cell.hol { box-shadow: inset 0 0 0 99px rgba(0, 0, 0, .045); }
   .grid td.cell.glow, .grid td.cell.diff { background: #fff3a0; box-shadow: inset 0 0 0 2px #d4a800; }
+  .grid td.cell.hov { background: #ffd84d !important; box-shadow: inset 0 0 0 2px #b07800 !important; }
   .ppl div { margin-bottom: 3px; }
   .warn { color: #c0392b; }
   #res-side { font-size: 13px; }
@@ -789,6 +790,8 @@ function renderTable() {
     for (var d2 = 1; d2 <= S.days; d2++) {
       var key = st.name + "|" + d2;
       var td = el("td", "cell");
+      td.dataset.k = key;   // チャットの返事にマウスを乗せた時に、変わったマスを探すため
+      if (hoverKeys[key]) td.className += " hov";
       var wd2 = S.weekdays[d2 - 1];
       if (wd2 === "sat" || wd2 === "sun" || S.holidays.indexOf(d2) >= 0) td.className += " off";
       td.textContent = shown[key] !== undefined ? shown[key] : (row[d2 - 1] || "");
@@ -1629,7 +1632,22 @@ function renderReply(r) {
     if (!spokenExplained && /勤務[A-Z]/.test(r.sent || "")) { line.appendChild(el("div", "sentnote", "足した勤務は「勤務A」のように置き換えて送ります")); spokenExplained = true; }
     box.appendChild(line);
   }
+  // 表を直した返事にマウスを乗せると、その返事で変わったマスを表で強く光らせる
+  var keys = ((r && r.kind === "applied" && r.changes) || []).map(function (c) { return c.staff + "|" + c.day; });
+  box.onmouseenter = keys.length ? function () { hoverCells(keys, true); } : null;
+  box.onmouseleave = keys.length ? function () { hoverCells(keys, false); } : null;
+  box.title = keys.length ? "マウスを乗せると、この返事で変わったマスが表で光ります" : "";
   chatScroll();
+}
+
+var hoverKeys = {};   // マウスを乗せている返事で変わったマス。表を描き直しても光ったままにする
+function hoverCells(keys, on) {
+  hoverKeys = {};
+  if (on) keys.forEach(function (k) { hoverKeys[k] = true; });
+  keys.forEach(function (k) {
+    var td = document.querySelector('.grid td.cell[data-k="' + CSS.escape(k) + '"]');
+    if (td) td.classList.toggle("hov", on);
+  });
 }
 
 function renderReplyBody(r) {
